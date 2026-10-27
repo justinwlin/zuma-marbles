@@ -166,7 +166,7 @@ export class UI {
       <div class="size-row"><span>Marble size</span><div class="seg">
         <button data-a="size" data-v="0" class="${large ? '' : 'on'}">Normal</button>
         <button data-a="size" data-v="1" class="${large ? 'on' : ''}">Large</button></div>
-        <small>${large ? 'Bigger marbles on a smaller board — easier to see and hit on phones.' : 'Large: 25% bigger marbles. It has its own levels & progress.'}</small>
+        <small>${large ? 'Bigger marbles on a smaller board — easier to see and hit on phones.' : 'Large: 50% bigger marbles. It has its own levels & progress.'}</small>
       </div>
       <div class="legend"><span><span class="bd boss">BOSS</span> boss</span><span><span class="bd mini">MINI</span> mini-boss</span><span><span class="bd">2×</span> two chains</span><span><span class="bd">⚡</span> power surge</span><span><span class="bd">🌈</span> streaky</span></div>
       <div class="grid">${cards.join('')}</div>

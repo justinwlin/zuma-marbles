@@ -47,6 +47,7 @@ import {
   endlessSeed,
   freshSave,
   levelsUpdated,
+  largeOnPhones,
   loadSave,
   parseLevelCode,
   type SaveData,
@@ -62,7 +63,7 @@ const renderer = new Renderer(canvas);
 const fx = new Particles();
 const audio = new Audio();
 const haptics = new Haptics();
-let save: SaveData = loadSave();
+let save: SaveData = largeOnPhones(loadSave(), Math.min(innerWidth, innerHeight) < 600);
 
 let mode: Mode = 'title';
 let attract = true; // bot plays behind the title screen

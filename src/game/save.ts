@@ -4,7 +4,7 @@
 import type { MetaProgress } from '../sim/achievements';
 import type { RunEco } from '../sim/economy';
 import type { GameState } from '../sim/game';
-import { GEN_VERSION } from '../sim/levelgen';
+import { GEN_VERSION, isLargeCampaign, LARGE_PREFIX } from '../sim/levelgen';
 import type { CharacterId } from './characters';
 
 export interface Settings {
@@ -93,6 +93,16 @@ export interface CampaignProgress {
   best: Record<number, LevelRecord>;
   totalScore: number;
   snapshot: SaveData['snapshot'];
+}
+
+/**
+ * Phones start on large marbles: a save nobody has played yet (and that never switched
+ * marble size) moves to the large-marble version of its campaign on small screens.
+ */
+export function largeOnPhones(d: SaveData, smallScreen: boolean): SaveData {
+  const untouched = d.unlocked === 0 && !Object.keys(d.best).length && !d.totalScore && !d.archive && !d.endless && !d.endlessBest && !d.snapshot;
+  if (!smallScreen || !untouched || isLargeCampaign(d.campaignSeed)) return d;
+  return { ...d, campaignSeed: LARGE_PREFIX + d.campaignSeed };
 }
 
 /** Switch to another campaign, keeping each campaign's progress (and in-progress level). */

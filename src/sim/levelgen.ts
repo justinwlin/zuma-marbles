@@ -10,7 +10,7 @@ import { hash32, Rng } from './rng';
 import { buildTrack, chaikin, type Pt, type Track, TRACK_STEP } from './track';
 
 /** Bump when generated levels change; saves made with an older generator drop their mid-level snapshot. */
-export const GEN_VERSION = 9;
+export const GEN_VERSION = 10;
 
 export const WORLD_W = 1280;
 export const WORLD_H = 720;
@@ -21,7 +21,7 @@ export const WORLD_H = 720;
  * Physics stays in px; only the board shrinks — deterministic and shareable per campaign.
  */
 export const LARGE_PREFIX = 'xl-';
-export const LARGE_SCALE = 1.25;
+export const LARGE_SCALE = 1.5;
 export function isLargeCampaign(seed: string) {
   return seed.startsWith(LARGE_PREFIX);
 }
@@ -347,7 +347,7 @@ export function generateLevel(campaignSeed: string, index: number): Level {
     let found = 0;
     for (let k = 0; k < 12 && found < 3 && attempts < 90; k++) {
       attempts++;
-      const cand = GENERATORS[family](rng, { index, off });
+      const cand = fillBoard(GENERATORS[family](rng, { index, off }));
       const lens = validateLevel(cand.paths, cand.launcher, twin, undefined, cand.crossings, cand.rail);
       if (!lens) continue;
       if (boss === 'mini') {
@@ -368,6 +368,8 @@ export function generateLevel(campaignSeed: string, index: number): Level {
 
   const { cand, family } = best;
   diff.speed *= FAMILY_SPEED[family] ?? 1;
+  // Board-filling tracks put the chain farther from the launcher: roll a little slower (tuned with scripts/balance.ts).
+  if (!cand.rail) diff.speed *= 0.95;
   // Armored marbles cost extra shots: chains roll a little slower to pay that back (tuned with scripts/balance.ts).
   diff.speed *= 1 - 2 * variety(index).armorChance;
   const name = `${rng.pick(NAMES_A)} ${rng.pick(NAMES_B[family])}`;
@@ -455,6 +457,49 @@ function withEntry(raw: Pt[], len = 260): Pt[] {
   else if (m === dt) e = { x: a.x, y: -len };
   else e = { x: a.x, y: GH + len };
   return [e, ...pts];
+}
+
+/** Most a track is stretched per axis, and most one axis may stretch beyond the other. */
+const FILL_MAX = 1.8;
+const FILL_SKEW = 1.6;
+
+/**
+ * Stretch a candidate (launcher included) to reach the board edges, so a track of a given
+ * length spreads over the whole board instead of coiling in the middle (phones show the
+ * board edge to edge). Scaling up only moves points apart, so spacing stays valid.
+ * Boss rails keep their layout.
+ */
+function fillBoard(c: Cand): Cand {
+  if (c.rail || c.paths.some((p) => p.length < 2)) return c;
+  const m = BALL_D * 1.2;
+  let x0 = Infinity;
+  let x1 = -Infinity;
+  let y0 = Infinity;
+  let y1 = -Infinity;
+  // Measure the smoothed track (it bulges past its points), skipping the run-in from the edge.
+  for (const p of c.paths) {
+    const t = buildTrack(p, { w: GW, h: GH });
+    for (let i = Math.ceil((t.visibleFrom + 140) / TRACK_STEP); i < t.xs.length; i++) {
+      x0 = Math.min(x0, t.xs[i]);
+      x1 = Math.max(x1, t.xs[i]);
+      y0 = Math.min(y0, t.ys[i]);
+      y1 = Math.max(y1, t.ys[i]);
+    }
+  }
+  let sx = Math.max(1, Math.min(FILL_MAX, (GW - 2 * m) / (x1 - x0)));
+  let sy = Math.max(1, Math.min(FILL_MAX, (GH - 2 * m) / (y1 - y0)));
+  sx = Math.min(sx, sy * FILL_SKEW);
+  sy = Math.min(sy, sx * FILL_SKEW);
+  if (sx < 1.02 && sy < 1.02) return c;
+  // Keep the stretched shape centred where it was, nudged back inside the board.
+  const cx = (x0 + x1) / 2;
+  const cy = (y0 + y1) / 2;
+  const hw = ((x1 - x0) * sx) / 2;
+  const hh = ((y1 - y0) * sy) / 2;
+  const nx = Math.min(GW - m - hw, Math.max(m + hw, cx));
+  const ny = Math.min(GH - m - hh, Math.max(m + hh, cy));
+  const f = (p: Pt) => ({ x: q(nx + (p.x - cx) * sx), y: q(ny + (p.y - cy) * sy) });
+  return { ...c, paths: c.paths.map((p) => p.map(f)), launcher: f(c.launcher), crossings: c.crossings?.map(f) };
 }
 
 const clampIn = (pts: Pt[]) => {
@@ -801,7 +846,8 @@ const GENERATORS: Record<TrackFamily, Gen> = {
     const rail: Rail = { a: { x: q(xr), y: q(70 * ks) }, dir: { x: 0, y: 1 }, n: { x: -1, y: 0 }, len: q(GH - 140 * ks) };
     const boss = { x: q(96 * kx), y: q(GH / 2), r: 54 };
     const n = rng.int(4, 7);
-    const gap = rng.range(100, 118) * kx;
+    // Lanes (wobble included) never closer than the validator's minimum spacing, even on small large-marble boards.
+    const gap = Math.max(rng.range(100, 118) * kx, BALL_D * 2.8);
     const x1 = xr - rng.range(300, 340) * kx;
     const xs: number[] = [];
     for (let i = n - 1; i >= 0; i--) xs.push(x1 - i * gap);
@@ -811,7 +857,7 @@ const GENERATORS: Record<TrackFamily, Gen> = {
     let down = rng.chance(0.5);
     const way: Pt[] = [];
     for (const cx of xs) {
-      const amp = rng.range(0, 14);
+      const amp = rng.range(0, 14) * kx;
       const ph = rng.range(0, 6);
       const a = down ? top : bottom;
       const b = down ? bottom : top;

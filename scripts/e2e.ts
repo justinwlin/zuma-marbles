@@ -235,7 +235,7 @@ async function runProfile(name: string, opts: BrowserContextOptions) {
   await page.locator('#btn-help').click();
   await page.waitForTimeout(300);
   check('? opens the power-ups sheet and pauses', (await page.locator('[data-screen=powerups]').count()) === 1 && (await page.evaluate(() => (window as unknown as { __zuma: Z }).__zuma.mode)) === 'paused');
-  check('sheet shows 6 power-up icons', (await page.locator('.powers-sheet img').count()) === 6);
+  check('sheet shows 9 power-up icons', (await page.locator('.powers-sheet img').count()) === 9);
   await page.screenshot({ path: `${OUT}/${name}-8-powerups.png` });
   await page.locator('[data-screen=powerups] [data-a=back]').click();
   await page.waitForTimeout(200);
@@ -340,8 +340,11 @@ async function runProfile(name: string, opts: BrowserContextOptions) {
       check('hold: shooting stops when the finger lifts', total === lifted, `${lifted} at lift, ${total} after 0.7 s`);
       // A drag followed by a pause is aiming, not rapid fire: exactly one shot on release.
       h0 = await shotsNow();
-      await t3('touchStart', [{ x: hb.x + 40, y: hb.y + 40, id: 1 }]);
-      for (let i = 1; i <= 4; i++) await t3('touchMove', [{ x: hb.x + 40 - 10 * i, y: hb.y + 40 - 10 * i, id: 1 }]);
+      // Start 40 px from the marble toward the screen centre, so the touch lands on the board, not the HUD.
+      const ox = hb.x > vp.width / 2 ? -40 : 40;
+      const oy = hb.y > vp.height / 2 ? -40 : 40;
+      await t3('touchStart', [{ x: hb.x + ox, y: hb.y + oy, id: 1 }]);
+      for (let i = 1; i <= 4; i++) await t3('touchMove', [{ x: hb.x + ox - (ox / 4) * i, y: hb.y + oy - (oy / 4) * i, id: 1 }]);
       await page.waitForTimeout(900);
       await t3('touchEnd', []);
       await page.waitForTimeout(300);
@@ -382,22 +385,29 @@ async function runProfile(name: string, opts: BrowserContextOptions) {
   const resumed = await page.evaluate(() => (window as unknown as { __zuma: Z }).__zuma.state() as unknown as { tick: number });
   check('snapshot resumes where it left off', resumed.tick >= tickAtPause.tick && resumed.tick - tickAtPause.tick < 30, `paused@${tickAtPause.tick} resumed@${resumed.tick}`);
 
-  // ---- Large-marble campaign: switch on the Levels screen, marbles render 25% bigger.
-  const normalScale = await page.evaluate(() => (window as unknown as { __zuma: Z }).__zuma.layout().scale);
-  const unlockedBefore = await page.evaluate(() => (window as unknown as { __zuma: Z & { save(): { unlocked: number } } }).__zuma.save().unlocked);
-  await page.locator('#btn-pause').click();
-  await page.waitForTimeout(200);
-  await page.locator('[data-a=quit]').click();
-  await page.waitForTimeout(200);
-  await page.locator('[data-a=levels]').click();
-  await page.waitForTimeout(200);
-  await page.locator('[data-a=size][data-v="1"]').click();
-  await page.waitForTimeout(300);
-  check('large toggle switches to an xl- campaign', (await page.evaluate(() => (window as unknown as { __zuma: Z & { save(): { campaignSeed: string } } }).__zuma.save().campaignSeed)).startsWith('xl-'));
-  await page.locator('[data-a=lv]').first().click();
-  await page.waitForTimeout(3500);
-  const bigScale = await page.evaluate(() => (window as unknown as { __zuma: Z }).__zuma.layout().scale);
-  check('large campaign marbles render ~25% bigger', Math.abs(bigScale / normalScale - 1.25) < 0.03, `⌀ ${(36 * normalScale).toFixed(1)} → ${(36 * bigScale).toFixed(1)} css px`);
+  // ---- Large-marble campaign: phones start on it; the Levels toggle switches, marbles render 50% bigger.
+  type ZC = Z & { save(): { campaignSeed: string; unlocked: number } };
+  const seedNow = () => page.evaluate(() => (window as unknown as { __zuma: ZC }).__zuma.save().campaignSeed);
+  const phone = Math.min(vp.width, vp.height) < 600;
+  check(phone ? 'phones start on large marbles' : 'desktops start on normal marbles', (await seedNow()).startsWith('xl-') === phone);
+  const scaleFor = async (large: boolean) => {
+    await page.locator('#btn-pause').click();
+    await page.waitForTimeout(200);
+    await page.locator('[data-a=quit]').click();
+    await page.waitForTimeout(200);
+    await page.locator('[data-a=levels]').click();
+    await page.waitForTimeout(200);
+    await page.locator(`[data-a=size][data-v="${large ? 1 : 0}"]`).click();
+    await page.waitForTimeout(300);
+    await page.locator('[data-a=lv]').first().click();
+    await page.waitForTimeout(3500);
+    return page.evaluate(() => (window as unknown as { __zuma: Z }).__zuma.layout().scale);
+  };
+  const normalScale = await scaleFor(false);
+  const unlockedBefore = await page.evaluate(() => (window as unknown as { __zuma: ZC }).__zuma.save().unlocked);
+  const bigScale = await scaleFor(true);
+  check('large toggle switches to an xl- campaign', (await seedNow()).startsWith('xl-'));
+  check('large campaign marbles render ~50% bigger', Math.abs(bigScale / normalScale - 1.5) < 0.05, `⌀ ${(36 * normalScale).toFixed(1)} → ${(36 * bigScale).toFixed(1)} css px`);
   const bL = await page.evaluate(() => (window as unknown as { __zuma: Z }).__zuma.layout().board);
   check('large board still fits the screen', bL.x >= -0.5 && bL.y >= -0.5 && bL.x + bL.w <= vp.width + 0.5 && bL.y + bL.h <= vp.height + 0.5);
   await page.screenshot({ path: `${OUT}/${name}-11-large.png` });

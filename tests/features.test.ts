@@ -250,7 +250,8 @@ describe('boss fights (frog on a rail)', () => {
 describe('power-up spawn mix', () => {
   it('all six power-ups show up', () => {
     const seen = new Set<number>();
-    for (let i = 0; i < 12 && seen.size < 6; i++) {
+    const all = () => [1, 2, 3, 4, 5, 6].every((p) => seen.has(p));
+    for (let i = 0; i < 24 && !all(); i++) {
       const level = generateLevel('mix', 6 + i);
       const st = createGame(level);
       for (let t = 0; t < 60 * TICK_HZ && st.phase === 'playing'; t++) {
@@ -258,7 +259,7 @@ describe('power-up spawn mix', () => {
         if (t % 30 === 0) for (const ch of st.chains) for (const b of ch.balls) if (b.p) seen.add(b.p);
       }
     }
-    expect([...seen].sort()).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(all()).toBe(true);
   });
 });
 

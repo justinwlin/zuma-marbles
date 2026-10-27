@@ -125,7 +125,8 @@ describe('difficulty shape (sawtooth, bosses, twists, two chains)', () => {
         }
       return sum / n;
     };
-    expect(avg(40)).toBeLessThan(avg(5) - 0.05);
+    // Board-filling stretches tracks, so the drop is smaller than before (speed is tuned to make up for it).
+    expect(avg(40)).toBeLessThan(avg(5) - 0.02);
   });
 
   it('some levels move the launcher off-centre', () => {
@@ -525,15 +526,15 @@ describe('generator stability (golden)', () => {
     }
     // If this changes, every saved campaign and shared level code changes too:
     // bump GEN_VERSION (saves then drop stale mid-level snapshots) and update the hash.
-    expect(h.digest('hex').slice(0, 12)).toBe('d449de61fa72');
+    expect(h.digest('hex').slice(0, 12)).toBe('79331ad804c0');
   });
 
   it('large-marble campaigns use a smaller board with valid, varied tracks', () => {
     const fams = new Set<string>();
     for (let i = 0; i < 40; i++) {
       const l = generateLevel('xl-jade-1234', i);
-      expect(l.worldW).toBe(1024);
-      expect(l.worldH).toBe(576);
+      expect(l.worldW).toBe(853);
+      expect(l.worldH).toBe(480);
       expect(validateLevel(l.paths, l.launcher, l.paths.length > 1, { w: l.worldW, h: l.worldH }, l.crossings)).not.toBeNull();
       fams.add(l.family);
     }
