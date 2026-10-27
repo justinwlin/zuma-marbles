@@ -507,7 +507,8 @@ export class UI {
       $('hud-powers').innerHTML = pw
         .map(([p, t, max]) => {
           const c = 2 * Math.PI * 22;
-          return `<div class="power"><svg class="ring" viewBox="0 0 50 50"><circle cx="25" cy="25" r="22" fill="none" stroke="rgba(255,255,255,.12)" stroke-width="4"/><circle cx="25" cy="25" r="22" fill="none" stroke="#36e0b0" stroke-width="4" stroke-dasharray="${c}" stroke-dashoffset="${c * (1 - t / max)}" stroke-linecap="round"/></svg><span class="lbl">${POWER_NAMES[p]}</span></div>`;
+          const col = p === 2 ? '#7fbfff' : '#ffc850';
+          return `<div class="power${t < 1.5 ? ' ending' : ''}" style="--pc:${col}"><svg class="ring" viewBox="0 0 50 50"><circle cx="25" cy="25" r="22" fill="none" stroke="rgba(255,255,255,.12)" stroke-width="4"/><circle cx="25" cy="25" r="22" fill="none" stroke="${col}" stroke-width="4" stroke-dasharray="${c}" stroke-dashoffset="${c * (1 - t / max)}" stroke-linecap="round"/></svg><span class="lbl">${POWER_NAMES[p]}</span><b class="sec">${Math.ceil(t)}</b></div>`;
         })
         .join('');
     }
