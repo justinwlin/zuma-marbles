@@ -86,7 +86,7 @@ describe('difficulty shape (sawtooth, bosses, twists, two chains)', () => {
       } else expect(l.repeatChance).toBeCloseTo(0.41);
       if (l.mutators.includes('surge')) {
         surge++;
-        expect(l.powerChance).toBeGreaterThanOrEqual(0.15 - 1e-9);
+        expect(l.powerChance).toBeGreaterThanOrEqual(0.105 - 1e-9);
       }
     }
     expect(surge).toBeGreaterThan(3);

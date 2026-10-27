@@ -1583,7 +1583,7 @@ function stepClearing(st: GameState, level: Level, ci: number, ev: GameEvent[]) 
 
 function maybeSpawnPower(st: GameState, level: Level) {
   if (!st.spawning || ballCount(st) < 8) return;
-  // Expected one power-up every ~(1/powerChance) seconds.
+  // Expected one power-up every ~(1 / (2 * powerChance)) seconds.
   if (rand(st, 'chain') >= level.powerChance * st.mods.powerChanceMul * DT * 2) return;
   const cands: Ball[] = [];
   st.chains.forEach((ch, ci) => {

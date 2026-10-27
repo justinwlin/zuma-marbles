@@ -244,7 +244,7 @@ export function difficulty(index: number, endless = false) {
     // Rises quickly at first, then flattens so endless play stays fair.
     speed: 27 + 35 * (1 - Math.exp(-d / 14)),
     target: Math.min(70 + d * 6, 200),
-    powerChance: i === 0 ? 0.03 : 0.05,
+    powerChance: i === 0 ? 0.03 : 0.035,
     /** Desired track length relative to the family's typical length: shorter = harder. */
     lenRatio: 1.1 - 0.25 * (1 - Math.exp(-d / 16)),
   };
