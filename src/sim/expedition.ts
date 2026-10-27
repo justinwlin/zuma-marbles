@@ -4,7 +4,7 @@
 
 import { checkUnlocks, LevelTracker, type MetaProgress, newMeta } from './achievements';
 import { type BotOptions, playLevel } from './bot';
-import { activeItems, afterStage, priceAt, bossPicks, closeShop, gain, miniPicks, modsForStage, newEco, rerollCost, reroll, type RunEco, settleStage, shopOffers, worldOf } from './economy';
+import { activeItems, afterStage, priceAt, bossPicks, closeShop, gain, miniPicks, modsForStage, newEco, rerollCost, reroll, type RunEco, settleStage, shopOffers, traderOffers, worldOf } from './economy';
 import { createGame } from './game';
 import { ITEMS, type ItemId } from './items';
 import { generateLevel } from './levelgen';
@@ -38,6 +38,8 @@ export interface ExpeditionResult {
   unlocks: ItemId[];
   /** Coins left right after each shop (unspent surplus). */
   afterShop: number[];
+  /** Items bought from the serpent's trader. */
+  traded: ItemId[];
   log: StageLog[];
   eco: RunEco;
 }
@@ -54,7 +56,7 @@ export interface ExpeditionOpts {
 export function runExpedition(o: ExpeditionOpts): ExpeditionResult {
   const meta = o.meta ?? newMeta();
   const eco = newEco();
-  const res: ExpeditionResult = { seed: o.seed, cleared: 0, coinsByWorld: [], bought: [], picked: [], unlocks: [], afterShop: [], log: [], eco };
+  const res: ExpeditionResult = { seed: o.seed, cleared: 0, coinsByWorld: [], bought: [], picked: [], unlocks: [], afterShop: [], traded: [], log: [], eco };
   const max = o.maxStages ?? 60;
   let choice = 0; // deterministic counter for the random policy
   const pickOf = (opts: ItemId[]) => {
@@ -78,8 +80,12 @@ export function runExpedition(o: ExpeditionOpts): ExpeditionResult {
     if (o.policy === 'none') continue;
     const after = afterStage(stage);
     if (after === 'mini') {
-      const id = pickOf(miniPicks(eco, o.seed, stage, meta.unlocked));
+      // Free boost, then the trader (offers drawn before the pick, as the game does).
+      const free = miniPicks(eco, o.seed, stage, meta.unlocked);
+      const t = traderOffers(eco, o.seed, stage, meta.unlocked, free);
+      const id = pickOf(free);
       if (id && !gain(eco, id, o.seed, stage, { free: true })) res.picked.push(id);
+      for (const b of buyFrom(eco, o, stage, [...t.boosts, ...t.charms], () => choice++)) res.traded.push(b);
     } else if (after === 'boss') {
       const free = pickOf(bossPicks(eco, o.seed, stage, meta.unlocked));
       if (free) {
@@ -101,25 +107,32 @@ function worstCharm(eco: RunEco): number {
   return k;
 }
 
+/** Buy from a list of offers by the policy (best-first for greedy) while affordable; returns what was bought. */
+function buyFrom(eco: RunEco, o: ExpeditionOpts, stage: number, offers: ItemId[], next: () => number): ItemId[] {
+  let list = offers.slice();
+  if (o.policy === 'random' && list.length) {
+    const k = next() % list.length;
+    list = [...list.slice(k), ...list.slice(0, k)];
+  } else list.sort((a, b) => rank(a) - rank(b));
+  const got: ItemId[] = [];
+  for (const id of list) {
+    if (eco.coins < priceAt(id, stage)) continue;
+    let replace: number | undefined;
+    if (ITEMS[id].kind === 'charm' && eco.charms.length >= 3) {
+      const k = worstCharm(eco);
+      if (rank(id) >= rank(eco.charms[k].id)) continue;
+      replace = k;
+    }
+    if (!gain(eco, id, o.seed, stage, { replace })) got.push(id);
+  }
+  return got;
+}
+
 /** Spend in the shop: buy offers best-first while affordable; reroll once if rich. */
 function shop(eco: RunEco, o: ExpeditionOpts, stage: number, unlocked: ItemId[], res: ExpeditionResult, next: () => number) {
   for (let pass = 0; pass < 2; pass++) {
     const offers = shopOffers(eco, o.seed, stage, unlocked);
-    let list = [...offers.charms, ...offers.boosts];
-    if (o.policy === 'random' && list.length) {
-      const k = next() % list.length;
-      list = [...list.slice(k), ...list.slice(0, k)];
-    } else list.sort((a, b) => rank(a) - rank(b));
-    for (const id of list) {
-      if (eco.coins < priceAt(id, stage)) continue;
-      let replace: number | undefined;
-      if (ITEMS[id].kind === 'charm' && eco.charms.length >= 3) {
-        const k = worstCharm(eco);
-        if (rank(id) >= rank(eco.charms[k].id)) continue;
-        replace = k;
-      }
-      if (!gain(eco, id, o.seed, stage, { replace })) res.bought.push(id);
-    }
+    res.bought.push(...buyFrom(eco, o, stage, [...offers.charms, ...offers.boosts], next));
     if (o.policy !== 'greedy' || eco.coins < rerollCost(eco) + 400 || reroll(eco)) break;
   }
   closeShop(eco);

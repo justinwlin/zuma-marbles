@@ -491,6 +491,39 @@ async function runProfile(name: string, opts: BrowserContextOptions) {
   await page.waitForTimeout(300);
   check('no run left in progress after it ends', (await page.evaluate(() => (window as unknown as { __zuma: ZE & { save(): { endless?: unknown } } }).__zuma.save().endless)) == null);
 
+  // ---- Serpent trader: beating the stage-5 serpent opens one screen with a free boost and a small shop.
+  await page.evaluate(() => (window as any).__zuma.expedition(4, 2000));
+  await page.waitForTimeout(600);
+  await page.evaluate(() => (window as any).__zuma.winNow());
+  await page.waitForSelector('[data-screen=trader]', { timeout: 12000 }).catch(() => null);
+  const tr0 = await page.evaluate(() => {
+    const eco = (window as any).__zuma.run().eco;
+    return { onScreen: !!document.querySelector('[data-screen=trader]'), free: document.querySelectorAll('[data-a=take]').length, buy: document.querySelectorAll('[data-a=buy]').length, coins: eco.coins, boosts: eco.boosts.length };
+  });
+  check('trader: beating the serpent opens the trader', tr0.onScreen, JSON.stringify(tr0));
+  check('trader: 2 free boosts and up to 3 items for sale', tr0.free === 2 && tr0.buy >= 1 && tr0.buy <= 3, `${tr0.free} free, ${tr0.buy} for sale`);
+  const panel = await page.locator('[data-screen=trader] .panel').boundingBox();
+  check('trader: fits on one screen', !!panel && panel.y >= -1 && panel.y + panel.height <= vp.height + 1, panel ? `${panel.height.toFixed(0)}px tall` : 'missing');
+  await page.screenshot({ path: `${OUT}/${name}-17-trader.png` });
+  await page.locator('[data-a=take]').first().click();
+  await page.waitForTimeout(150);
+  await page.locator('[data-screen=trader] [data-a=buy]').first().click();
+  await page.waitForTimeout(150);
+  const tr1 = await page.evaluate(() => {
+    const eco = (window as any).__zuma.run().eco;
+    return { coins: eco.coins, boosts: eco.boosts.length, charms: eco.charms.length, freeLeft: document.querySelectorAll('[data-a=take]').length, yours: document.querySelectorAll('.tag.got').length };
+  });
+  check('trader: the free boost is yours and the others close', tr1.freeLeft === 0 && tr1.boosts + tr1.charms >= 2 && tr1.yours >= 2, JSON.stringify(tr1));
+  check('trader: buying costs coins', tr1.coins < tr0.coins, `${tr0.coins} → ${tr1.coins}`);
+  await page.screenshot({ path: `${OUT}/${name}-17b-trader-bought.png` });
+  await page.locator('[data-screen=trader] [data-a=go]').click();
+  await page.waitForTimeout(700);
+  const tr2 = await page.evaluate(() => ({ mode: (window as any).__zuma.mode, hud: document.getElementById('hud-level')!.textContent, trader: (window as any).__zuma.run().trader }));
+  check('trader: Continue starts stage 6 with the items', tr2.mode === 'playing' && tr2.hud === 'Stage 6' && !tr2.trader, JSON.stringify(tr2));
+  await page.evaluate(() => (window as any).__zuma.pause());
+  await page.locator('[data-a=quit]').click().catch(() => {});
+  await page.waitForTimeout(300);
+
   // ---- Two chains: both roll in, shots can land in the second chain.
   await page.evaluate(() => (window as unknown as { __zuma: ZE }).__zuma.load('e2e-fixed', 13));
   await page.waitForTimeout(3500);

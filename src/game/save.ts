@@ -4,6 +4,7 @@
 import type { MetaProgress } from '../sim/achievements';
 import type { RunEco } from '../sim/economy';
 import type { GameState } from '../sim/game';
+import type { ItemId } from '../sim/items';
 import { GEN_VERSION, isLargeCampaign, LARGE_PREFIX } from '../sim/levelgen';
 import type { CharacterId } from './characters';
 
@@ -78,6 +79,17 @@ export interface EndlessRun {
   eco?: RunEco;
   /** A free pick or the shop still to show before `stage` starts (survives closing the app). */
   pending?: 'mini' | 'boss' | 'shop' | null;
+  /** The serpent's trader screen, drawn once so closing the app can't re-roll it. */
+  trader?: TraderVisit | null;
+}
+
+/** One visit to the trader after a serpent: the free boosts, what's for sale, and what was taken. */
+export interface TraderVisit {
+  free: ItemId[];
+  buy: ItemId[];
+  /** The free boost taken (null = not yet). */
+  took: ItemId | null;
+  bought: ItemId[];
 }
 
 /** Endless seeds: a daily one everybody shares, or a random one. */

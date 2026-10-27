@@ -2,8 +2,9 @@
 // Plain JSON state (RunEco) + pure functions, shared by the game and the headless simulator.
 //
 // A world is 10 stages: a mini-boss at stage index 4, 14, 24… and a boss at 9, 19, 29….
-// After a mini-boss you pick 1 of 2 boosts for free; after a boss you pick 1 of 3 charms
-// for free, then the shop opens. Boosts run out when the next boss is beaten.
+// After a mini-boss you pick 1 of 2 boosts for free and can buy from a small trader
+// (2 boosts + 1 charm, no rerolls); after a boss you pick 1 of 3 charms for free, then the
+// full shop opens. Boosts run out when the next boss is beaten.
 
 import { bossKind } from './levelgen';
 import { ITEMS, type ItemId, type Mods, modsFor } from './items';
@@ -13,6 +14,9 @@ import { hash32, Rng } from './rng';
 export const CHARM_SLOTS = 3;
 export const BOOST_SLOTS = 3;
 export const SHOP_OFFERS = 3;
+/** The trader after a serpent: a smaller shop, same prices. */
+export const TRADER_BOOSTS = 2;
+export const TRADER_CHARMS = 1;
 export const REROLL_COST = 50;
 export const REROLL_STEP = 25;
 export const RESERVE_COST = 50;
@@ -111,6 +115,17 @@ export function miniPicks(eco: RunEco, seed: string, stage: number, unlocked: re
 export function shopOffers(eco: RunEco, seed: string, stage: number, unlocked: readonly ItemId[]) {
   const rng = rngFor(seed, stage, `shop${eco.rerolls}`);
   return { charms: draw(rng, pool(eco, unlocked, 'charm', stage), SHOP_OFFERS), boosts: draw(rng, pool(eco, unlocked, 'boost', stage), SHOP_OFFERS), reserved: eco.reserved };
+}
+
+/**
+ * The trader after mini-boss `stage`, shown beside the free boost pick: 2 boosts (never the
+ * free ones in `exclude`) and 1 charm, at the usual shop prices. Drawn once per serpent.
+ */
+export function traderOffers(eco: RunEco, seed: string, stage: number, unlocked: readonly ItemId[], exclude: readonly ItemId[] = []) {
+  const rng = rngFor(seed, stage, 'trader');
+  const boosts = draw(rng, pool(eco, unlocked, 'boost', stage).filter((id) => !exclude.includes(id)), TRADER_BOOSTS);
+  const charms = draw(rng, pool(eco, unlocked, 'charm', stage), TRADER_CHARMS);
+  return { boosts, charms };
 }
 
 // ------------------------------------------------------------------ actions

@@ -68,6 +68,9 @@ if (!isMainThread) {
       const picked = count(res.flatMap((r) => r.picked));
       const ids = ITEM_IDS.filter((id) => bought[id] || picked[id]);
       console.log('items            ' + ids.map((id) => `${ITEMS[id].icon}${ITEMS[id].name} ${bought[id] ?? 0}b/${picked[id] ?? 0}p`).join('  '));
+      const traded = count(res.flatMap((r) => r.traded));
+      const visits = res.filter((r) => r.cleared >= 5).length;
+      console.log(`trader           ${res.reduce((n, r) => n + r.traded.length, 0)} buys over ${visits} runs that beat a serpent  ` + Object.entries(traded).map(([id, n]) => `${ITEMS[id as ItemId].icon}${ITEMS[id as ItemId].name} ${n}`).join('  '));
       const un = count(res.flatMap((r) => r.unlocks));
       if (Object.keys(un).length) console.log('unlocked in run  ' + Object.entries(un).map(([id, n]) => `${ITEMS[id as ItemId].name} ${n}`).join('  '));
       for (let k = 0; k < 3; k++) {

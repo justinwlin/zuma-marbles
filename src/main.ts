@@ -31,7 +31,7 @@ import { assistAim, type Slot } from './sim/aim';
 import { characterNoun } from './game/characters';
 import { Rng } from './sim/rng';
 import { checkUnlocks, LevelTracker, newMeta, withStarters } from './sim/achievements';
-import { afterStage, bossPicks, closeShop, gain, miniPicks, modsForStage, newEco, reroll, reserve, sellCharm, settleStage, shopOffers } from './sim/economy';
+import { afterStage, bossPicks, closeShop, gain, miniPicks, modsForStage, newEco, reroll, reserve, sellCharm, settleStage, shopOffers, traderOffers } from './sim/economy';
 import { ITEMS, type Mods, NO_MODS } from './sim/items';
 import { pointAt, type Pt } from './sim/track';
 import { computeLayout, type Layout, screenToWorld } from './game/layout';
@@ -234,6 +234,7 @@ function continueEndless() {
 /** Start the run's current stage with its items. */
 function playStage(r: EndlessRun) {
   r.pending = null;
+  r.trader = null;
   save.endless = r;
   writeSave(save);
   loadLevel(r.seed, r.stage, undefined, modsForStage(r.eco!, r.stage));
@@ -253,16 +254,32 @@ function betweenStages(r: EndlessRun) {
     writeSave(save);
   };
   if (r.pending === 'mini') {
-    ui.pick({
-      title: 'Serpent slain!',
-      sub: 'Pick a free boost. It lasts until you beat this world\'s boss.',
+    // One screen: a free boost plus the trader (drawn once, so reopening the app can't re-roll it).
+    if (!r.trader) {
+      const free = miniPicks(eco, r.seed, won, meta.unlocked);
+      const t = traderOffers(eco, r.seed, won, meta.unlocked, free);
+      r.trader = { free, buy: [...t.boosts, ...t.charms], took: null, bought: [] };
+      persist();
+    }
+    const visit = r.trader;
+    ui.trader({
       eco,
       stage: won,
-      ids: miniPicks(eco, r.seed, won, meta.unlocked),
-      onPick: (id, replace) => {
-        if (id) gain(eco, id, r.seed, won, { free: true, replace });
-        playStage(r);
+      visit,
+      take: (id, replace) => {
+        if (visit.took) return 'owned';
+        const f = gain(eco, id, r.seed, won, { free: true, replace });
+        if (!f) visit.took = id;
+        persist();
+        return f;
       },
+      buy: (id, replace) => {
+        const f = gain(eco, id, r.seed, won, { replace });
+        if (!f) visit.bought.push(id);
+        persist();
+        return f;
+      },
+      done: () => playStage(r),
     });
   } else if (r.pending === 'boss') {
     ui.pick({

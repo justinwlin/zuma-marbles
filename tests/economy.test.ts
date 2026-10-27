@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { generateLevel } from '../src/sim/levelgen';
 import { createGame, Power, progress, stateHash, step, TICK_HZ, TUNING } from '../src/sim/game';
 import { ITEMS, NO_MODS } from '../src/sim/items';
-import { activeItems, bossPicks, priceAt, gain, miniPicks, modsForStage, newEco, reroll, rerollCost, reserve, sellCharm, settleStage, shopOffers } from '../src/sim/economy';
+import { activeItems, bossPicks, priceAt, gain, miniPicks, modsForStage, newEco, reroll, rerollCost, reserve, sellCharm, settleStage, shopOffers, traderOffers, TRADER_BOOSTS, TRADER_CHARMS } from '../src/sim/economy';
 import { checkUnlocks, LevelTracker, newMeta } from '../src/sim/achievements';
 import { runExpedition } from '../src/sim/expedition';
 import { BOT_PRESETS } from '../src/sim/bot';
@@ -317,6 +317,52 @@ describe('run economy', () => {
     eco.coins = 5000;
     expect(gain(eco, 'rainbow', seed, 19)).toBeNull();
     expect(eco.reserved).toBeNull();
+  });
+});
+
+describe('serpent trader', () => {
+  const seed = 'endless-trader';
+  const unlocked = ['shockwave', 'bomber', 'quickDraw', 'rainbow', 'scout', 'slowpoke', 'powerSurge', 'pocketBomb', 'longFuse'] as const;
+
+  it('offers 2 boosts and 1 charm, never the free picks or anything owned, the same every time', () => {
+    const eco = newEco();
+    gain(eco, 'shockwave', seed, 0, { free: true });
+    const free = miniPicks(eco, seed, 4, unlocked);
+    const a = traderOffers(eco, seed, 4, unlocked, free);
+    expect(a.boosts.length).toBe(TRADER_BOOSTS);
+    expect(a.charms.length).toBe(TRADER_CHARMS);
+    for (const id of a.boosts) {
+      expect(ITEMS[id].kind).toBe('boost');
+      expect(free).not.toContain(id);
+    }
+    expect(ITEMS[a.charms[0]].kind).toBe('charm');
+    expect(a.charms).not.toContain('shockwave');
+    expect(traderOffers(eco, seed, 4, unlocked, free)).toEqual(a);
+    expect(traderOffers(eco, seed, 14, unlocked, free)).not.toEqual(a);
+  });
+
+  it('sells at shop prices; bought boosts last until this world\'s boss', () => {
+    const eco = newEco();
+    eco.coins = 2000;
+    const free = miniPicks(eco, seed, 4, unlocked);
+    const t = traderOffers(eco, seed, 4, unlocked, free);
+    expect(gain(eco, free[0], seed, 4, { free: true })).toBeNull();
+    expect(gain(eco, t.boosts[0], seed, 4)).toBeNull();
+    expect(gain(eco, t.charms[0], seed, 4)).toBeNull();
+    expect(eco.coins).toBe(2000 - priceAt(t.boosts[0], 4) - priceAt(t.charms[0], 4));
+    expect(eco.boosts.map((b) => b.until)).toEqual([9, 9]);
+    expect(activeItems(eco, 9)).toContain(t.boosts[0]);
+    expect(activeItems(eco, 10)).not.toContain(t.boosts[0]);
+    expect(activeItems(eco, 10)).toContain(t.charms[0]);
+  });
+
+  it('the simulator shops the trader after a serpent', () => {
+    // A seed where the good bot beats the stage-5 serpent.
+    const r = runExpedition({ seed: 'endless-trader-6', bot: BOT_PRESETS.good, policy: 'greedy', maxStages: 6 });
+    expect(r.cleared).toBeGreaterThanOrEqual(5);
+    expect(r.picked.length).toBe(1);
+    expect(r.traded.length).toBeGreaterThanOrEqual(1);
+    for (const id of r.traded) expect(activeItems(r.eco, 5)).toContain(id);
   });
 });
 

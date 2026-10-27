@@ -12,7 +12,7 @@ The long background version with inspiration and game theory is in [game-loop.md
 
 1. **Play a world.** A world is 10 levels: a mini-boss at level 5, a boss at level 10.
 2. **Earn coins** as you play. Skillful play earns more.
-3. **Halfway (after the mini-boss):** pick 1 of 2 small boosts for free.
+3. **Halfway (after the mini-boss):** pick 1 of 2 boosts for free, and buy from a small **trader** (2 boosts and 1 charm) on the same screen.
 4. **Beat the boss.** Pick 1 of 3 charms for free.
 5. **Shop.** Spend your coins on boosts and charms.
 6. **Next world.** Your boosts run out when you beat that world's boss. Your charms stay.
@@ -131,9 +131,18 @@ The shop opens after every boss (after levels 10, 20, 30…).
 
 ---
 
-## The mini-boss pick (level 5)
+## The mini-boss pick and trader (level 5)
 
-After the mini-boss, choose 1 of 2 boosts for free. It lasts until the end of the world (level 10). This puts a decision in the middle of each world without needing a second shop screen.
+After the mini-boss, one screen offers:
+
+- **A free boost:** choose 1 of 2. It lasts until the end of the world (level 10).
+- **The trader:** 2 boosts and 1 charm for sale at normal shop prices, never the same items as the free picks. There are no rerolls or holds; those stay special to the boss shop.
+
+The trader was added because, in simulated runs, only about a third of good-bot runs reach the stage-10 boss, so most players never saw the shop. By stage 5 a run has roughly 800–1,000 coins, enough for one boost or a cheap charm: a taste of the shop, not a power spike.
+
+The offers are drawn once per serpent and saved with the run, so closing the app can't re-roll them.
+
+In `npm run expedition` (64 runs, greedy policy), runs that beat a serpent bought about 2 items from the trader. Survival stayed level within noise: an average of 10.8 stages cleared against 11.5 before, and 22% reaching world 3 against 19%. Spending moves earlier rather than runs getting stronger.
 
 ---
 

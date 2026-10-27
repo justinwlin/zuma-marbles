@@ -7,7 +7,7 @@ import type { Level } from '../sim/levelgen';
 import { PALETTE, powerIconUrl } from './render';
 import { CHARACTERS, characterThumb, type CharacterId } from './characters';
 import { TICK_HZ, TUNING } from '../sim/game';
-import { dailySeed, type EndlessRun, levelCode, type SaveData, type Settings } from './save';
+import { dailySeed, type EndlessRun, levelCode, type SaveData, type Settings, type TraderVisit } from './save';
 import { ITEMS, type ItemId, STARTER_ITEMS } from '../sim/items';
 import { activeItems, BOOST_SLOTS, bossStageFor, CHARM_SLOTS, type Fail, priceAt, RESERVE_COST, rerollCost, type RunEco } from '../sim/economy';
 import { type MetaProgress, UNLOCKS } from '../sim/achievements';
@@ -21,6 +21,17 @@ export interface ShopApi {
   sell(index: number): void;
   reroll(): Fail | null;
   reserve(id: ItemId): Fail | null;
+  done(): void;
+}
+
+/** The trader after a serpent: one free boost plus a small shop, on one screen. */
+export interface TraderApi {
+  eco: RunEco;
+  stage: number;
+  visit: TraderVisit;
+  /** Take the free boost (replace = live boost to give up when full). */
+  take(id: ItemId, replace?: number): Fail | null;
+  buy(id: ItemId, replace?: number): Fail | null;
   done(): void;
 }
 
@@ -79,9 +90,11 @@ export class UI {
   }
 
   private show(name: string, html: string, handlers: Record<string, (el: HTMLElement) => void>, cls = '') {
+    // Re-rendering the same screen (shop after a purchase, etc.) shouldn't replay the pop-in.
+    const again = this.current === name;
     this.current = name;
     this.handlers = handlers;
-    this.root.innerHTML = `<div class="screen ${cls}" data-screen="${name}">${html}</div>`;
+    this.root.innerHTML = `<div class="screen ${cls}${again ? ' again' : ''}" data-screen="${name}">${html}</div>`;
   }
 
   /** Escape / browser-back on a menu: run its Back (or Resume) action if it has one. */
@@ -232,7 +245,7 @@ export class UI {
     this.show(
       'endless',
       `<div class="panel"><h2>Endless</h2>
-        <p class="sub">Stages roll straight into each other — one life, the score carries over. Pop marbles to earn 🪙 coins. Beat the serpent (every 5 stages) for a free boost, and the boss (every 10) for a free charm and a shop.</p>
+        <p class="sub">Stages roll straight into each other — one life, the score carries over. Pop marbles to earn 🪙 coins. Beat the serpent (every 5 stages) for a free boost and a small trader, and the boss (every 10) for a free charm and the full shop.</p>
         <div class="btns" style="margin:0 auto">
           ${run ? `<button class="btn gold" data-a="cont">Continue run<small>${run.daily ? 'Daily' : 'Random'} · stage ${run.stage + 1} · ${run.runScore.toLocaleString()} pts</small></button>` : ''}
           <button class="btn primary" data-a="random">Random run<small>${fmt(save.endlessBest)}</small></button>
@@ -617,6 +630,95 @@ export class UI {
           },
           reroll: () => {
             msg = fail(api.reroll());
+            render();
+          },
+          go: () => api.done(),
+        },
+        'fit-screen',
+      );
+    };
+    render();
+  }
+
+  /**
+   * After a serpent: take one free boost and shop a small trader (2 boosts + 1 charm, shop
+   * prices, no rerolls) on a single screen. Re-renders after every action.
+   */
+  trader(api: TraderApi) {
+    let replacing: { id: ItemId; free: boolean } | null = null;
+    let msg = '';
+    const fail = (f: Fail | null) => (f === 'coins' ? 'Not enough coins.' : f === 'slots' ? 'No free slot.' : f === 'owned' ? 'You already have that.' : '');
+    const render = () => {
+      const { eco, visit } = api;
+      const boss = bossStageFor(api.stage + 1);
+      const liveBoosts = eco.boosts.filter((b) => b.until > api.stage).length;
+      const freeCards = visit.free
+        .map((id) => {
+          if (visit.took) return this.card(id, { price: 0, disabled: true, hold: id === visit.took ? '<span class="tag got">✓ yours</span>' : '' });
+          return this.card(id, { price: 0, action: 'take', luckyColor: eco.luckyColor });
+        })
+        .join('');
+      const buyCards = visit.buy
+        .map((id) => {
+          if (visit.bought.includes(id)) return this.card(id, { disabled: true, hold: '<span class="tag got">✓ bought</span>' });
+          const price = priceAt(id, api.stage);
+          const charm = ITEMS[id].kind === 'charm';
+          const refund = charm && eco.charms.length >= CHARM_SLOTS ? Math.max(...eco.charms.map((c) => Math.floor(c.paid / 2))) : 0;
+          const off = charm ? eco.coins + refund < price : eco.coins < price || liveBoosts >= BOOST_SLOTS;
+          return this.card(id, { price, action: 'buy', disabled: off, luckyColor: eco.luckyColor });
+        })
+        .join('');
+      const html = replacing
+        ? `<div class="panel wide fit"><h2>No room</h2><p class="sub">Your ${ITEMS[replacing.id].kind}s are full. Pick one to replace with <b>${ITEMS[replacing.id].icon} ${ITEMS[replacing.id].name}</b>${ITEMS[replacing.id].kind === 'charm' ? ' (a bought charm sells for half)' : ''}.</p>
+            ${this.owned(eco, api.stage, ITEMS[replacing.id].kind === 'charm' ? 'replace-charm' : 'replace-boost')}
+            <div class="fit-actions"><button class="btn ghost" data-a="cancel">Back</button></div></div>`
+        : `<div class="panel wide fit shop trader">
+            <div class="shop-head"><h2>Serpent slain!</h2><span class="coins-big">🪙 ${eco.coins.toLocaleString()}</span></div>
+            <p class="sub">Take a free boost and see what the trader has. Boosts last until this world's boss (stage ${boss + 1}).</p>
+            ${msg ? `<p class="shop-msg">${msg}</p>` : ''}
+            <div class="shop-body">
+              <div class="shop-offers">
+                <h3>Free boost <small>${visit.took ? 'taken' : 'pick one'}</small></h3>
+                <div class="cards">${freeCards || '<p class="sub">Nothing left to offer.</p>'}</div>
+                <h3>Trader <small>a taste of the shop</small></h3>
+                <div class="cards">${buyCards || '<p class="sub">Nothing left to offer.</p>'}</div>
+              </div>
+              <div class="shop-side">
+                ${this.owned(eco, api.stage, 'view')}
+                <div class="fit-actions row"><button class="btn primary" data-a="go">${visit.took || !visit.free.length ? 'Continue ▶' : 'Continue without a boost ▶'}</button></div>
+              </div>
+            </div>
+          </div>`;
+      this.show(
+        'trader',
+        html,
+        {
+          take: (el) => {
+            const id = el.dataset.id as ItemId;
+            if (liveBoosts >= BOOST_SLOTS) {
+              replacing = { id, free: true };
+              return render();
+            }
+            msg = fail(api.take(id));
+            render();
+          },
+          buy: (el) => {
+            const id = el.dataset.id as ItemId;
+            if (ITEMS[id].kind === 'charm' && eco.charms.length >= CHARM_SLOTS) {
+              replacing = { id, free: false };
+              return render();
+            }
+            msg = fail(api.buy(id));
+            render();
+          },
+          replace: (el) => {
+            const r = replacing!;
+            msg = fail(r.free ? api.take(r.id, Number(el.dataset.i)) : api.buy(r.id, Number(el.dataset.i)));
+            replacing = null;
+            render();
+          },
+          cancel: () => {
+            replacing = null;
             render();
           },
           go: () => api.done(),
