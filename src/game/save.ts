@@ -78,13 +78,25 @@ export interface EndlessRun {
   /** Coins and items for this run. */
   eco?: RunEco;
   /** A free pick or the shop still to show before `stage` starts (survives closing the app). */
-  pending?: 'mini' | 'boss' | 'shop' | 'retry' | null;
+  pending?: 'mini' | 'boss' | 'shop' | 'retry' | 'next' | null;
+  /** The stage just cleared, for the between-stage page. */
+  last?: StageSummary | null;
   /** Lost the current stage: its score (counted if the run ends here). */
   lostScore?: number;
   /** Paid retries so far this run. */
   retries?: number;
   /** The serpent's trader screen, drawn once so closing the app can't re-roll it. */
   trader?: TraderVisit | null;
+}
+
+/** What the between-stage page shows about the stage just cleared. */
+export interface StageSummary {
+  stage: number;
+  score: number;
+  seconds: number;
+  ace: boolean;
+  coins: number;
+  coinsBy: Record<string, number>;
 }
 
 /** One visit to the trader after a serpent: the free boosts, what's for sale, and what was taken. */

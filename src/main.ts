@@ -31,7 +31,7 @@ import { assistAim, type Slot } from './sim/aim';
 import { characterNoun } from './game/characters';
 import { Rng } from './sim/rng';
 import { checkUnlocks, LevelTracker, newMeta, withStarters } from './sim/achievements';
-import { afterStage, bossPicks, canRetry, closeShop, gain, miniPicks, modsForStage, newEco, payRetry, reroll, reserve, retryCost, sellCharm, settleStage, shopOffers, traderOffers, worldOf } from './sim/economy';
+import { activeItems, afterStage, bossPicks, canRetry, closeShop, gain, miniPicks, modsForStage, newEco, payRetry, reroll, reserve, retryCost, sellCharm, settleStage, shopOffers, traderOffers, worldOf } from './sim/economy';
 import { ITEMS, type Mods, NO_MODS } from './sim/items';
 import { pointAt, type Pt } from './sim/track';
 import { computeLayout, type Layout, screenToWorld } from './game/layout';
@@ -40,7 +40,7 @@ import { Particles } from './game/fx';
 import { FEEL, feedbackFor, shakeOffset, springAngle } from './game/feel';
 import { Audio } from './game/audio';
 import { Haptics } from './game/haptics';
-import { UI } from './game/ui';
+import { levelMeta, UI } from './game/ui';
 import {
   dailySeed,
   type EndlessRun,
@@ -236,6 +236,7 @@ function continueEndless() {
 /** Start the run's current stage with its items. */
 function playStage(r: EndlessRun) {
   r.pending = null;
+  r.last = null;
   r.trader = null;
   save.endless = r;
   writeSave(save);
@@ -314,6 +315,22 @@ function betweenStages(r: EndlessRun) {
       done: () => {
         closeShop(eco);
         playStage(r);
+      },
+    });
+  } else if (r.pending === 'next' && r.last) {
+    const lv = generateLevel(r.seed, r.stage);
+    ui.stageClear({
+      last: r.last,
+      runScore: r.runScore,
+      coins: eco.coins,
+      daily: r.daily,
+      next: { stage: r.stage, name: lv.name, meta: levelMeta(r.seed, r.stage), ace: lv.ace },
+      items: activeItems(eco, r.stage),
+      onNext: () => playStage(r),
+      onMenu: () => {
+        // The run is saved with this page pending: Continue comes back here.
+        persist();
+        toTitle();
       },
     });
   } else playStage(r);
@@ -412,7 +429,9 @@ function endlessStageDone(won: boolean, r: EndlessRun) {
     r.runScore += st.score;
     r.stage = level.index + 1;
     r.snapshot = null;
-    r.pending = afterStage(level.index);
+    // Serpents and bosses lead to their pick/shop screens; every other stage to the between-stage page.
+    r.pending = afterStage(level.index) ?? 'next';
+    r.last = { stage: level.index, score: st.score, seconds: st.tick / TICK_HZ, ace: !!st.bonus?.ace, coins: st.coinsEarned.total, coinsBy: { ...st.coinsEarned.by } };
     save.endless = r;
     writeSave(save);
     betweenStages(r);

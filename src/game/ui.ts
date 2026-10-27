@@ -7,7 +7,7 @@ import type { Level } from '../sim/levelgen';
 import { PALETTE, powerIconUrl } from './render';
 import { CHARACTERS, characterThumb, type CharacterId } from './characters';
 import { TICK_HZ, TUNING } from '../sim/game';
-import { dailySeed, type EndlessRun, levelCode, type SaveData, type Settings, type TraderVisit } from './save';
+import { dailySeed, type EndlessRun, levelCode, type SaveData, type Settings, type StageSummary, type TraderVisit } from './save';
 import { ITEMS, type ItemId, STARTER_ITEMS } from '../sim/items';
 import { activeItems, BOOST_SLOTS, bossStageFor, CHARM_SLOTS, type Fail, priceAt, RESERVE_COST, rerollCost, type RunEco } from '../sim/economy';
 import { type MetaProgress, UNLOCKS } from '../sim/achievements';
@@ -262,6 +262,62 @@ export class UI {
         back: () => this.title(save),
       },
     );
+  }
+
+  /**
+   * Endless, between stages: what you just did, the run so far, and what's next. A natural
+   * place to take a break — Menu saves the run and Continue comes back here.
+   */
+  stageClear(o: {
+    last: StageSummary;
+    runScore: number;
+    coins: number;
+    daily: boolean;
+    next: { stage: number; name: string; meta: LevelMeta; ace: number };
+    items: ItemId[];
+    onNext: () => void;
+    onMenu: () => void;
+  }) {
+    const l = o.last;
+    const src: [string, string][] = [
+      ['pops', 'pops'],
+      ['combos', 'combos'],
+      ['floating', 'coins shot'],
+      ['gems', 'gems'],
+      ['ace', 'ace time'],
+      ['clean', 'clean clear'],
+      ['boss', 'boss'],
+    ];
+    const by = src.filter(([k]) => (l.coinsBy[k] ?? 0) > 0).map(([k, name]) => `<span>${name} +${l.coinsBy[k]}</span>`).join('');
+    const n = o.next;
+    const kind = n.meta.boss === 'boss' ? '<b class="warn">Boss fight</b>' : n.meta.boss === 'mini' ? '<b class="warn">Mini-boss: the serpent</b>' : '';
+    const notes = [kind, n.meta.twin ? 'two chains' : '', ...n.meta.mutators.map((m) => `<b>${MUTATOR_INFO[m].name}</b>: ${MUTATOR_INFO[m].desc}`), `ace time ${mm2(n.ace)}`].filter(Boolean);
+    this.show(
+      'stage-clear',
+      `<div class="panel solid stage-clear">
+        <h2>Stage ${l.stage + 1} clear!</h2>
+        <p class="sub">${o.daily ? 'Daily run' : 'Endless run'}</p>
+        <div class="sc-row">
+          <div><small>Stage score</small><b>${l.score.toLocaleString()}</b></div>
+          <div><small>Run score</small><b>${o.runScore.toLocaleString()}</b></div>
+          <div><small>Coins</small><b>🪙 ${o.coins.toLocaleString()}</b></div>
+        </div>
+        <p class="sc-coins">+${l.coins.toLocaleString()} coins this stage${by ? `<span class="sc-by">${by}</span>` : ''}</p>
+        <p class="sc-time">${mm2(l.seconds)}${l.ace ? ' · <b class="ace">Ace time!</b>' : ''}</p>
+        <div class="sc-next">
+          <small>Up next</small>
+          <b>Stage ${n.stage + 1} · ${n.name} ${badges(n.meta)}</b>
+          <span>${notes.join(' · ')}</span>
+          ${o.items.length ? `<span class="sc-items">${o.items.map((id) => `<span title="${ITEMS[id].name}: ${ITEMS[id].desc}">${ITEMS[id].icon}</span>`).join('')}</span>` : ''}
+        </div>
+        <div class="btns" style="margin:0 auto">
+          <button class="btn primary" data-a="next">Next stage ▶</button>
+          <button class="btn ghost" data-a="menu">Take a break · Menu</button>
+        </div>
+      </div>`,
+      { next: () => o.onNext(), menu: () => o.onMenu() },
+    );
+    (this.root.querySelector('[data-a=next]') as HTMLElement | null)?.focus();
   }
 
   /** Endless: a stage was lost. Retry it for half your coins, or end the run. */
@@ -902,7 +958,7 @@ function mm2(sec: number) {
   return `${Math.floor(sec / 60)}:${String(Math.floor(sec % 60)).padStart(2, '0')}`;
 }
 
-interface LevelMeta {
+export interface LevelMeta {
   name: string;
   boss: BossKind;
   mutators: Mutator[];

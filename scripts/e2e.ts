@@ -473,9 +473,22 @@ async function runProfile(name: string, opts: BrowserContextOptions) {
     s.chains.forEach((c) => (c.balls = []));
     s.shots = [];
   });
-  await page.waitForTimeout(4800);
+  // A cleared stage shows the between-stage page (take a break, or go on).
+  await page.waitForSelector('[data-screen=stage-clear]', { timeout: 9000 }).catch(() => null);
+  const sc = await page.evaluate(() => ({ on: !!document.querySelector('[data-screen=stage-clear]'), title: document.querySelector('[data-screen=stage-clear] h2')?.textContent, next: document.querySelector('.sc-next b')?.textContent ?? '' }));
+  check('a cleared stage shows the between-stage page with what\'s next', sc.on && sc.title === 'Stage 1 clear!' && sc.next.includes('Stage 2'), JSON.stringify(sc));
+  await page.screenshot({ path: `${OUT}/${name}-14b-stage-clear.png` });
+  // Take a break: Menu saves the run; Continue returns to the page; Next starts stage 2.
+  await page.locator('[data-screen=stage-clear] [data-a=menu]').click();
+  await page.waitForTimeout(300);
+  await page.locator('[data-a=endless]').click();
+  await page.locator('[data-a=cont]').click();
+  await page.waitForTimeout(300);
+  check('a break keeps the run: Continue comes back to the page', (await page.locator('[data-screen=stage-clear]').count()) === 1);
+  await page.locator('[data-screen=stage-clear] [data-a=next]').click();
+  await page.waitForTimeout(600);
   const e2 = await page.evaluate(() => ({ hud: document.getElementById('hud-level')!.textContent, score: Number(document.getElementById('hud-score')!.textContent!.replace(/\D/g, '')), mode: (window as unknown as { __zuma: ZE }).__zuma.mode }));
-  check('a cleared stage rolls straight into the next, score carried', e2.hud === 'Stage 2' && e2.score >= 5000 && e2.mode === 'playing', JSON.stringify(e2));
+  check('Next stage starts stage 2, score carried', e2.hud === 'Stage 2' && e2.score >= 5000 && e2.mode === 'playing', JSON.stringify(e2));
   await page.waitForTimeout(1500);
   await page.evaluate(() => {
     const z = (window as unknown as { __zuma: ZE }).__zuma;

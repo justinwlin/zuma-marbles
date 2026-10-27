@@ -49,6 +49,13 @@ A Zuma-style marble shooter for phone (portrait) and desktop. It installs as a P
     - After each **serpent**, one screen offers a free boost and a small **trader** (2 boosts and 1 charm for sale).
     - After each **boss** you get a free charm and then the full **shop**, with rerolls and a hold slot.
     - Charms last the whole run; boosts last until the next boss.
+    - **Between stages** a "Stage N clear!" page shows:
+      - the stage score, the run score and your coins, with where this stage's coins came from;
+      - your time, plus Ace time! if you beat it;
+      - a preview of the next stage: name, boss or mini-boss, twists, two chains, ace time;
+      - the items active for it.
+
+      **Next stage ▶** goes on. **Take a break · Menu** saves the run, and Continue later returns to this page. Serpent and boss stages lead to their trader, pick and shop screens instead.
     - **Lost a stage?** Retry it for **half your coins** (at least 🪙100), keeping your charms and boosts, or end the run. A failed attempt banks no coins, and an Extra Life it used stays used. The loss is saved the moment a chain reaches the skull, so closing the app brings back the retry screen rather than the stage. The design is in [`docs/charms-and-boosts.md`](docs/charms-and-boosts.md).
 - **Level updates**: saves record the generator version (`GEN_VERSION`). When the generator changes, unlocked levels and stars are kept and a one-time notice shows; a level you were in the middle of restarts, because its track changed.
 - **Skipping levels**: on the Levels screen, tap the 🔒 card to unlock the next level (or the next 5 or 10). After losing, or from the pause menu, **Skip to level N** moves on. Skipped levels keep 0 stars and stay playable.
