@@ -4,7 +4,7 @@ Status: design draft. Nothing here is built yet. Numbers are starting points to 
 
 This doc proposes an economy for the game: **pop marbles → earn coins → spend them in a shop → play differently → pop more**. It covers what it looks like, how it fits the campaign and endless mode, and the game design thinking behind it.
 
-For the short, concrete version (3 charm slots, 3 boost slots, full item lists), see [charms-and-boosts.md](charms-and-boosts.md). This doc is the longer background.
+For the short, concrete version (3 charm slots, 3 boost slots, full item lists), see [charms-and-boosts.md](charms-and-boosts.md). This doc is the longer background. Where the two disagree, charms-and-boosts.md wins.
 
 Related docs: [power-ups](powerups.md), [music](music.md), [development](development.md).
 
