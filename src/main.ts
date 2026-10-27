@@ -117,6 +117,7 @@ function loadLevel(seed: string, index: number, state?: GameState) {
   rawAim = aimTarget;
   aimSlot = null;
   aimLocked = false;
+  hold = null;
   ui.resetHud();
 }
 
@@ -144,7 +145,7 @@ function startLevel(index: number, fromSnapshot = false) {
         : save.settings.touchAim === 'tap'
           ? `Tap to shoot · tap the ${noun} to swap`
           : `Drag to aim · release to shoot · slide to ✕ to cancel · tap the ${noun} to swap`;
-    ui.toast(matchMedia('(pointer: coarse)').matches ? touchHint : 'Move to aim · click to shoot · right-click / Space to swap', 4800);
+    ui.toast(matchMedia('(pointer: coarse)').matches ? touchHint : 'Move to aim · click (or hold) to shoot · right-click / Space to swap', 4800);
   }
 }
 
@@ -353,6 +354,49 @@ let aimSlot: Slot | null = null;
 let aimLocked = false;
 const LIFTOFF_MS = 70;
 
+/**
+ * Hold to keep shooting. Mouse and Tap mode fire on press and repeat while held;
+ * Drag and Aim + tap start firing once a press is held still for HOLD_MS (a drag
+ * cancels it, so dragging to aim still works). Repeats whenever the gun is ready.
+ */
+interface Hold {
+  id: number;
+  since: number;
+  active: boolean;
+  lastShot: number;
+  shots: number;
+}
+let hold: Hold | null = null;
+const HOLD_MS = 380;
+const REPEAT_MS = 260;
+
+function startHold(id: number, firedNow: boolean) {
+  if (!save.settings.holdFire) return;
+  const now = performance.now();
+  hold = { id, since: now, active: false, lastShot: firedNow ? now : -1e9, shots: firedNow ? 1 : 0 };
+}
+
+/** Called every frame: fire along the current aim while a hold is active. */
+function pumpHold() {
+  if (!hold) return;
+  if (mode !== 'playing' || attract || st.phase !== 'playing') {
+    hold = null;
+    return;
+  }
+  const now = performance.now();
+  if (!hold.active) {
+    if (now - hold.since < HOLD_MS) return;
+    hold.active = true;
+  }
+  if (view.aimCancel || st.gun.cool > 0 || now - hold.lastShot < REPEAT_MS) return;
+  if (pending.some((c) => c.type === 'fire')) return;
+  const a = shotAngle(rawAim);
+  aimTarget = a;
+  fireAngle(a);
+  hold.lastShot = now;
+  hold.shots++;
+}
+
 const stage = document.getElementById('stage') as HTMLElement;
 const cancelZone = document.getElementById('cancel-zone') as HTMLElement;
 
@@ -418,12 +462,16 @@ stage.addEventListener('pointerdown', (e) => {
     if (e.button === 2) queueSwap();
     else if (e.button === 0) {
       if (onLauncher(w)) queueSwap();
-      else fireAngle(shotAngle(rawAim));
+      else {
+        fireAngle(shotAngle(rawAim));
+        startHold(e.pointerId, true);
+      }
     }
     return;
   }
   // A second finger while aiming cancels the shot.
   if (touchStart && touchStart.id !== e.pointerId) {
+    if (hold?.id === touchStart.id) hold = null;
     if (save.settings.touchAim === 'aimtap') return; // lifting never fires in this mode
     if (!touchStart.cancelled && view.aimActive) {
       touchStart.cancelled = true;
@@ -438,20 +486,25 @@ stage.addEventListener('pointerdown', (e) => {
   const frog = onLauncher(w);
   touchStart = { id: e.pointerId, sx: e.clientX, sy: e.clientY, onFrog: frog, moved: false, cancelled: false };
   aimHistory.length = 0;
-  // Aim + tap: decide on lift — a drag sets the aim, a tap fires.
-  if (save.settings.touchAim === 'aimtap') return;
+  // Aim + tap: decide on lift — a drag sets the aim, a tap fires (a still hold rapid-fires).
+  if (save.settings.touchAim === 'aimtap') {
+    if (aimLocked && !frog) startHold(e.pointerId, false);
+    return;
+  }
   if (save.settings.touchAim === 'tap' && !frog) {
     setRawAim(w);
     const a = shotAngle(rawAim);
     aimTarget = a;
     view.aimAngle = a;
     fireAngle(a);
+    startHold(e.pointerId, true);
     return;
   }
   if (!frog) {
     setRawAim(w);
     view.aimActive = true;
     setCancelUi(true, false);
+    startHold(e.pointerId, false);
   }
 });
 stage.addEventListener('pointermove', (e) => {
@@ -464,6 +517,13 @@ stage.addEventListener('pointermove', (e) => {
   }
   if (!touchStart || touchStart.id !== e.pointerId || touchStart.cancelled) return;
   if (Math.hypot(e.clientX - touchStart.sx, e.clientY - touchStart.sy) > 10) touchStart.moved = true;
+  // Dragging before the hold kicks in means aiming, not rapid fire.
+  if (touchStart.moved && hold && !hold.active && save.settings.touchAim !== 'tap') hold = null;
+  if (save.settings.touchAim === 'tap') {
+    // Tap mode: while holding, slide to sweep the stream of shots.
+    if (hold?.id === e.pointerId && !onLauncher(w)) setRawAim(w);
+    return;
+  }
   if (save.settings.touchAim === 'aimtap') {
     if (touchStart.moved && !(touchStart.onFrog && onLauncher(w))) {
       setRawAim(w);
@@ -491,6 +551,9 @@ function endTouch(e: PointerEvent, interrupted: boolean) {
   const w = screenToWorld(layout, e.clientX, e.clientY);
   const t = touchStart;
   touchStart = null;
+  // A hold that already fired ends the stream; lifting doesn't add a shot.
+  const held = hold?.id === e.pointerId && hold.shots > 0 && (hold.active || save.settings.touchAim === 'tap');
+  if (hold?.id === e.pointerId) hold = null;
   const cancelled = interrupted || t.cancelled || view.aimCancel || inCancelZone(e.clientX, e.clientY);
   setCancelUi(false, false);
   if (mode !== 'playing') {
@@ -499,7 +562,9 @@ function endTouch(e: PointerEvent, interrupted: boolean) {
   }
   if (t.onFrog && !t.moved) queueSwap();
   else if (save.settings.touchAim === 'aimtap') {
-    if (!t.moved && !interrupted) {
+    if (held) {
+      /* rapid fire already shot */
+    } else if (!t.moved && !interrupted) {
       if (aimLocked) {
         // A real tap: on iPhone the invisible switch under the finger gives the haptic tick.
         haptics.tickNow();
@@ -513,7 +578,9 @@ function endTouch(e: PointerEvent, interrupted: boolean) {
     view.aimActive = aimLocked;
     return;
   } else if (save.settings.touchAim === 'drag') {
-    if (cancelled || onLauncher(w)) {
+    if (held) {
+      /* rapid fire already shot */
+    } else if (cancelled || onLauncher(w)) {
       if (!interrupted && !t.cancelled) audio.play('cancel');
     } else {
       // Haptic tick *inside* the lift-off handler, while the gesture still counts as user activation.
@@ -524,6 +591,10 @@ function endTouch(e: PointerEvent, interrupted: boolean) {
   view.aimActive = false;
 }
 stage.addEventListener('pointerup', (e) => endTouch(e, false));
+window.addEventListener('pointerup', (e) => {
+  if (e.pointerType === 'mouse' && hold?.id === e.pointerId) hold = null;
+});
+window.addEventListener('blur', () => (hold = null));
 stage.addEventListener('pointercancel', (e) => endTouch(e, true));
 stage.addEventListener('pointerleave', (e) => {
   if (e.pointerType === 'mouse') view.aimActive = false;
@@ -746,6 +817,7 @@ function frame(now: number) {
   view.time += dt;
 
   const s0 = performance.now();
+  pumpHold();
   const simulate = attract || mode === 'playing';
   if (simulate) {
     let simDt = dt;

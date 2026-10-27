@@ -273,6 +273,51 @@ async function runProfile(name: string, opts: BrowserContextOptions) {
     await page.waitForTimeout(200);
   }
 
+  // ---- Hold to keep shooting: a still press rapid-fires; a drag still fires once.
+  {
+    const long = Array.from({ length: 60 }, (_, i) => i % 4);
+    const shotsNow = () => page.evaluate(() => (window as unknown as { __zuma: Z }).__zuma.state().stats.shots);
+    await page.evaluate((c) => (window as unknown as { __zuma: Z }).__zuma.setup(c, {}), long);
+    await page.waitForTimeout(150);
+    const hb = (await page.evaluate(() => (window as unknown as { __zuma: Z }).__zuma.ballScreen(20)))!;
+    let h0 = await shotsNow();
+    if (opts.hasTouch) {
+      const cdp3 = await page.context().newCDPSession(page);
+      const t3 = (type: 'touchStart' | 'touchMove' | 'touchEnd', pts: { x: number; y: number; id: number }[]) => cdp3.send('Input.dispatchTouchEvent', { type, touchPoints: pts });
+      await t3('touchStart', [{ x: hb.x, y: hb.y, id: 1 }]);
+      await page.waitForTimeout(1500);
+      const during = (await shotsNow()) - h0;
+      await t3('touchEnd', []);
+      await page.waitForTimeout(100);
+      const lifted = (await shotsNow()) - h0;
+      await page.waitForTimeout(700);
+      const total = (await shotsNow()) - h0;
+      check('hold: a still press keeps shooting', during >= 3, `${during} shots in 1.5 s`);
+      check('hold: shooting stops when the finger lifts', total === lifted, `${lifted} at lift, ${total} after 0.7 s`);
+      // A drag followed by a pause is aiming, not rapid fire: exactly one shot on release.
+      h0 = await shotsNow();
+      await t3('touchStart', [{ x: hb.x + 40, y: hb.y + 40, id: 1 }]);
+      for (let i = 1; i <= 4; i++) await t3('touchMove', [{ x: hb.x + 40 - 10 * i, y: hb.y + 40 - 10 * i, id: 1 }]);
+      await page.waitForTimeout(900);
+      await t3('touchEnd', []);
+      await page.waitForTimeout(300);
+      check('hold: drag-then-pause still fires once', (await shotsNow()) - h0 === 1, `${(await shotsNow()) - h0} shots`);
+    } else {
+      await page.mouse.move(hb.x, hb.y);
+      await page.mouse.down();
+      await page.waitForTimeout(1500);
+      await page.mouse.up();
+      await page.waitForTimeout(300);
+      const n = (await shotsNow()) - h0;
+      check('hold: holding the mouse button keeps shooting', n >= 4, `${n} shots in 1.5 s`);
+      h0 = await shotsNow();
+      await page.mouse.down();
+      await page.mouse.up();
+      await page.waitForTimeout(400);
+      check('hold: a click still fires once', (await shotsNow()) - h0 === 1, `${(await shotsNow()) - h0} shots`);
+    }
+  }
+
   // ---- Natural play for a few seconds → frame rate.
   await page.evaluate(() => (window as unknown as { __zuma: Z }).__zuma.start(0));
   await page.waitForTimeout(3500);

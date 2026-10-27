@@ -219,6 +219,7 @@ export class UI {
         <div class="setting"><label>Vibration<small>${/iP(hone|od)/.test(navigator.userAgent) ? 'iPhone: ticks on taps only (Safari limit) — Tap aiming gives a tick per shot' : 'Haptic feedback on hits & pops'}</small></label>${tog('haptics', s.haptics)}</div>
         <div class="setting"><label>Aim guide<small>Dotted line, target ring & ghost marble</small></label>${tog('guide', s.guide)}</div>
         <div class="setting"><label>Aim assist<small>Nudges shots (±3.5°) into the slot the ghost marble shows</small></label>${tog('assist', s.assist)}</div>
+        <div class="setting"><label>Hold to keep shooting<small>${coarse ? 'Press and hold (without dragging) to rapid-fire' : 'Hold the mouse button to rapid-fire'}</small></label>${tog('holdFire', s.holdFire)}</div>
         <div class="setting"><label>Colour-blind symbols</label>${tog('colorblind', s.colorblind)}</div>
         <div class="setting"><label>Reduce motion<small>No screen shake or flashes</small></label>${tog('reduceMotion', s.reduceMotion)}</div>
         ${
@@ -233,7 +234,7 @@ export class UI {
       {
         back,
         tog: (el) => {
-          const k = el.dataset.k as 'haptics' | 'guide' | 'colorblind' | 'reduceMotion' | 'assist';
+          const k = el.dataset.k as 'haptics' | 'guide' | 'colorblind' | 'reduceMotion' | 'assist' | 'holdFire';
           s[k] = !s[k];
           el.classList.toggle('on', s[k]);
           this.a.settingsChanged(s);
@@ -380,9 +381,9 @@ function thumbMarble(g: CanvasRenderingContext2D, x: number, y: number, r: numbe
 
 const AIM_LABELS = { drag: 'Drag & release', aimtap: 'Aim + tap', tap: 'Tap' } as const;
 const AIM_HINTS = {
-  drag: 'Drag to aim, lift to shoot',
-  aimtap: 'Drag to aim, tap to shoot — iPhone vibrates on every shot',
-  tap: 'Tap where you want to shoot',
+  drag: 'Drag to aim, lift to shoot · press and hold to keep shooting',
+  aimtap: 'Drag to aim, tap to shoot (hold to keep shooting) — iPhone vibrates on every shot',
+  tap: 'Tap where you want to shoot · hold and slide to keep shooting',
 } as const;
 
 const nameCache = new Map<string, string>();

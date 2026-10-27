@@ -18,6 +18,8 @@ export interface Settings {
   touchAim: 'drag' | 'aimtap' | 'tap';
   /** Nudge shots into the previewed slot (±3.5°). */
   assist: boolean;
+  /** Press and hold (without dragging) to keep shooting. */
+  holdFire: boolean;
   /** Launcher character. */
   character: CharacterId;
 }
@@ -73,6 +75,7 @@ export const DEFAULT_SETTINGS: Settings = {
   guide: true,
   touchAim: 'drag',
   assist: true,
+  holdFire: true,
   character: 'frog',
 };
 
