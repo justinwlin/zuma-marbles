@@ -12,6 +12,8 @@ export interface Settings {
   guide: boolean;
   /** Touch aiming: 'drag' = drag to aim, release to fire; 'tap' = tap fires at point. */
   touchAim: 'drag' | 'tap';
+  /** Nudge shots into the previewed slot (±3.5°). */
+  assist: boolean;
 }
 
 export interface LevelRecord {
@@ -31,6 +33,8 @@ export interface SaveData {
   /** In-progress level. */
   snapshot: { levelIndex: number; state: GameState; savedAt: number } | null;
   tutorialSeen: boolean;
+  /** Bitmask of power-up types the player has been told about. */
+  seenPowers?: number;
 }
 
 const KEY = 'zuma-marbles.save.v1';
@@ -43,6 +47,7 @@ export const DEFAULT_SETTINGS: Settings = {
   colorblind: false,
   guide: true,
   touchAim: 'drag',
+  assist: true,
 };
 
 export function randomSeed(): string {

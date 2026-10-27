@@ -3,7 +3,15 @@
 A Zuma-style marble shooter for phone (portrait) and desktop. It installs as a PWA, plays offline, and has infinite deterministic levels.
 
 - **Play**: on desktop, move to aim, click to shoot, and right-click or Space to swap. On a phone, drag to aim, release to shoot, and tap the frog or the swap button to swap.
-- **Power-ups** trigger when they pop as part of a match:
+- **Touch aiming**:
+  - Cancel a shot by sliding onto **✕ Cancel** or back onto the frog, or by touching with a second finger.
+  - **Aim assist** (`src/sim/aim.ts`, can be turned off in Settings) moves the shot by at most ±3.5° toward the middle of the slot the ghost marble shows. It sticks to the current target so the preview doesn't flicker between neighbours.
+  - The shot uses the aim from 70 ms before your finger lifts, so the wobble as you lift doesn't move it.
+  - With a ±0.6° finger wobble, 95% of assisted shots stay in the previewed slot, compared with 54% unassisted.
+- **Haptics**:
+  - Android uses `navigator.vibrate` with full patterns.
+  - iOS Safari only gives a tick when a real finger taps a switch; since iOS 26 it ignores toggles from code. So invisible switches sit under the board and inside the swap button. Taps (tap-aim shots, tapping the frog, the swap button) tick, but drag-and-release can't.
+- **Power-ups** trigger when they pop as part of a match. Tap **?** in the HUD for the reference sheet:
   - Bomb: blasts nearby marbles.
   - Slow: slows the chain.
   - Reverse: rolls the chain back.
@@ -63,7 +71,7 @@ Mechanics are ported from the Zuma Deluxe decompilation ([alula/CircleShootApp](
 
 | Command | What it checks |
 |---|---|
-| `npm test` | 41 Vitest tests (summarized below) |
+| `npm test` | 45 Vitest tests (summarized below) |
 | `npm run e2e` | Real Chromium on 6 device profiles (summarized below). Needs `npm run dev` running. |
 | `npm run pwa-check` | After `npm run build`: manifest, Chrome installability, active service worker, cold **offline** boot and play |
 | `npm run sim -- <seed> <levels>` | Bot playthroughs per level: outcome, time, peak danger, combos, gap shots, power-ups |
@@ -73,7 +81,8 @@ Mechanics are ported from the Zuma Deluxe decompilation ([alula/CircleShootApp](
 **`npm test`** covers:
 - **Mechanics**: generator validity over 120 levels, arc-length uniformity, matching, insertion side, spacing, magnet pull and its acceleration, combos, scoring, power-ups, gun colours, cooldown, win and lose.
 - **Determinism**: same inputs give the same state hash, and save → load → continue matches an uninterrupted run.
-- **Aim-preview honesty**: the highlighted ball is the ball the shot actually hits, at least 97% of the time.
+- **Aim-preview honesty**: the highlighted ball is the ball the shot actually hits, at least 97% of the time. With assist, at least 99% of shots land in the previewed slot.
+- **Aim assist**: correction stays within ±3.5° and keeps the slot you pointed at, it tolerates finger wobble better than raw aim, and the sticky target holds across slot boundaries.
 - **Game feel**:
   - Combos escalate monotonically, all effects are capped, and the bomb is the biggest moment.
   - Reduce-motion works.
@@ -85,6 +94,8 @@ Mechanics are ported from the Zuma Deluxe decompilation ([alula/CircleShootApp](
 - Orientation is detected, the board fits and uses the screen well, and marbles stay readable.
 - The HUD doesn't cover the board.
 - Real touch drag and mouse aim show the guide and predict a pop.
+- Releasing on ✕ cancels the shot, a second finger cancels it, and a normal drag still fires afterwards.
+- The "?" sheet pauses the game and resumes it.
 - One shot leads to a match, and the pop gets hit-stop, shake, particles and sound. A bomb in the match triggers.
 - Frame rate is acceptable, pause → quit → continue restores the snapshot, and there are no console errors.
 

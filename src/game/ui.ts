@@ -4,7 +4,8 @@
 import { generateLevel } from '../sim/levelgen';
 import { POWER_NAMES, type GameState, progress, type Power } from '../sim/game';
 import type { Level } from '../sim/levelgen';
-import { PALETTE } from './render';
+import { PALETTE, powerIconUrl } from './render';
+import { TUNING } from '../sim/game';
 import { levelCode, type SaveData, type Settings } from './save';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -203,8 +204,9 @@ export class UI {
       `<div class="panel"><h2>Settings</h2>
         <div class="setting"><label>Sound</label><input type="range" min="0" max="1" step="0.05" value="${s.sfx}" data-k="sfx"></div>
         <div class="setting"><label>Music</label><input type="range" min="0" max="1" step="0.05" value="${s.music}" data-k="music"></div>
-        <div class="setting"><label>Vibration<small>Haptic feedback on hits & pops</small></label>${tog('haptics', s.haptics)}</div>
+        <div class="setting"><label>Vibration<small>${/iP(hone|od)/.test(navigator.userAgent) ? 'iPhone: ticks on taps only (Safari limit) — Tap aiming gives a tick per shot' : 'Haptic feedback on hits & pops'}</small></label>${tog('haptics', s.haptics)}</div>
         <div class="setting"><label>Aim guide<small>Dotted line, target ring & ghost marble</small></label>${tog('guide', s.guide)}</div>
+        <div class="setting"><label>Aim assist<small>Nudges shots (±3.5°) into the slot the ghost marble shows</small></label>${tog('assist', s.assist)}</div>
         <div class="setting"><label>Colour-blind symbols</label>${tog('colorblind', s.colorblind)}</div>
         <div class="setting"><label>Reduce motion<small>No screen shake or flashes</small></label>${tog('reduceMotion', s.reduceMotion)}</div>
         ${
@@ -219,7 +221,7 @@ export class UI {
       {
         back,
         tog: (el) => {
-          const k = el.dataset.k as 'haptics' | 'guide' | 'colorblind' | 'reduceMotion';
+          const k = el.dataset.k as 'haptics' | 'guide' | 'colorblind' | 'reduceMotion' | 'assist';
           s[k] = !s[k];
           el.classList.toggle('on', s[k]);
           this.a.settingsChanged(s);
@@ -247,18 +249,42 @@ export class UI {
     );
   }
 
+  /** Power-up reference (HUD "?" button and title "How to play"). */
+  powerups(back: () => void, backLabel = 'Back to game') {
+    const coarse = matchMedia('(pointer: coarse)').matches;
+    const row = (p: number, color: number, name: string, text: string) =>
+      `<div class="pw-row"><img src="${powerIconUrl(p as 1, color)}" alt=""><div><b>${name}</b><span>${text}</span></div></div>`;
+    this.show(
+      'powerups',
+      `<div class="panel powers-sheet"><h2>Power-ups</h2>
+        <p class="sub">Marbles with a white ring carry a power. Pop one <b>as part of a match</b> to trigger it. They blink, then fade after ${TUNING.powerLife}s.</p>
+        ${row(1, 0, 'Bomb', 'Blasts every marble within ~3 marbles of it — even across tracks.')}
+        ${row(2, 3, 'Slow', `The chain crawls at ¼ speed for ${TUNING.slowTime}s.`)}
+        ${row(3, 1, 'Reverse', `The chain rolls backwards, away from the skull, for ${TUNING.reverseTime}s.`)}
+        ${row(4, 4, 'Laser', `A full aiming beam plus faster, double-rate shots for ${TUNING.aimTime}s.`)}
+        <div class="tips">
+          <b>Combos:</b> when a gap's two ends match, they snap together and pop again.<br>
+          <b>Gap shot:</b> shoot through a gap in the chain for bonus points.<br>
+          <b>Chain bonus:</b> 5+ popping shots in a row.<br>
+          ${coarse ? '<b>Cancel a shot:</b> slide onto <b>✕</b> (or back to the frog), or touch with a second finger.' : '<b>Swap:</b> right-click or Space.'}
+        </div>
+        <div class="btns" style="margin:14px auto 0"><button class="btn primary" data-a="back">${backLabel}</button></div></div>`,
+      { back },
+    );
+  }
+
   help(back: () => void) {
     const coarse = matchMedia('(pointer: coarse)').matches;
     this.show(
       'help',
       `<div class="panel help"><h2>How to play</h2>
         <p>Marbles roll toward the <b>skull</b>. Shoot marbles into the chain — <b>3 or more</b> of a colour pop.</p>
-        <p>${coarse ? '<b>Drag</b> to aim, <b>release</b> to shoot. Tap the frog or the swap button to swap marbles.' : '<b>Move</b> to aim, <b>click</b> to shoot. <b>Right-click</b> or <b>Space</b> swaps marbles.'}</p>
+        <p>${coarse ? '<b>Drag</b> to aim, <b>release</b> to shoot. Changed your mind? Slide onto <b>✕</b> or back to the frog, or touch with a second finger. Tap the frog or the swap button to swap.' : '<b>Move</b> to aim, <b>click</b> to shoot. <b>Right-click</b> or <b>Space</b> swaps marbles.'}</p>
         <p>When a gap opens and both sides match, they <b>snap together</b> for a combo. Fill the gold <b>ZUMA bar</b> to stop new marbles, then clear the rest.</p>
         <div class="pw"><span>Bomb</span><span>blasts nearby marbles</span><span>Slow</span><span>slows the chain</span><span>Reverse</span><span>rolls the chain back</span><span>Laser</span><span>precise aim & rapid fire</span></div>
         <p style="color:var(--muted);font-size:13px">Pop a power-up marble as part of a match to trigger it. Keep the chain far from the skull for more stars.</p>
-        <div class="btns" style="margin:12px auto 0"><button class="btn primary" data-a="back">Got it</button></div></div>`,
-      { back },
+        <div class="btns" style="margin:12px auto 0"><button class="btn primary" data-a="back">Got it</button><button class="btn ghost" data-a="pw">Power-ups in detail →</button></div></div>`,
+      { back, pw: () => this.powerups(() => this.help(back), 'Back') },
     );
   }
 

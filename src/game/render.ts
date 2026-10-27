@@ -22,7 +22,11 @@ const FRAMES = 12;
 export interface ViewState {
   time: number;
   aimAngle: number;
+  /** Direction the shot will actually travel (after aim assist). */
+  aimShot: number;
   aimActive: boolean;
+  /** Finger is over a cancel target: show the guide as 'will not fire'. */
+  aimCancel: boolean;
   aimHit: RayHit | null;
   aimWillPop: boolean;
   recoil: number; // 0..1
@@ -598,13 +602,37 @@ export class Renderer {
   private drawAim(st: GameState, v: ViewState) {
     const g = this.ctx;
     const lc = this.level.launcher;
-    const dx = Math.cos(v.aimAngle);
-    const dy = Math.sin(v.aimAngle);
+    const dx = Math.cos(v.aimShot);
+    const dy = Math.sin(v.aimShot);
     const ox = lc.x + dx * TUNING.muzzle;
     const oy = lc.y + dy * TUNING.muzzle;
     const hit = v.aimHit;
     const dist = hit ? hit.dist : 1600;
     const col = PALETTE[st.gun.cur];
+    if (v.aimCancel) {
+      // Greyed, dashed guide with an ✕: releasing now will not shoot.
+      const end = Math.min(dist, 260);
+      g.setLineDash([8, 10]);
+      g.strokeStyle = 'rgba(200,210,230,0.45)';
+      g.lineWidth = 3;
+      g.beginPath();
+      g.moveTo(ox, oy);
+      g.lineTo(ox + dx * end, oy + dy * end);
+      g.stroke();
+      g.setLineDash([]);
+      const ex = ox + dx * (end + 16);
+      const ey = oy + dy * (end + 16);
+      g.strokeStyle = '#ff5a76';
+      g.lineWidth = 4;
+      g.lineCap = 'round';
+      g.beginPath();
+      g.moveTo(ex - 9, ey - 9);
+      g.lineTo(ex + 9, ey + 9);
+      g.moveTo(ex + 9, ey - 9);
+      g.lineTo(ex - 9, ey + 9);
+      g.stroke();
+      return;
+    }
     const laser = st.aimT > 0;
     if (laser) {
       g.beginPath();
@@ -900,6 +928,32 @@ export class Renderer {
 }
 
 // ------------------------------------------------------------ helpers
+
+const iconCache = new Map<number, string>();
+/** Power-up icon on a marble, as a data URL for DOM menus. */
+export function powerIconUrl(p: Power, color = 3): string {
+  let url = iconCache.get(p * 10 + color);
+  if (url) return url;
+  const cv = document.createElement('canvas');
+  cv.width = cv.height = 96;
+  const g = cv.getContext('2d')!;
+  const col = PALETTE[color];
+  const gr = g.createRadialGradient(36, 34, 4, 48, 48, 44);
+  gr.addColorStop(0, col.light);
+  gr.addColorStop(0.5, col.base);
+  gr.addColorStop(1, col.dark);
+  g.fillStyle = gr;
+  g.beginPath();
+  g.arc(48, 48, 44, 0, Math.PI * 2);
+  g.fill();
+  g.strokeStyle = '#fff';
+  g.lineWidth = 3;
+  g.stroke();
+  Renderer.prototype.drawPowerIcon.call({ ctx: g } as unknown as Renderer, p, 48, 48, 28, 0);
+  url = cv.toDataURL();
+  iconCache.set(p * 10 + color, url);
+  return url;
+}
 
 function wrap(a: number) {
   while (a > Math.PI) a -= Math.PI * 2;

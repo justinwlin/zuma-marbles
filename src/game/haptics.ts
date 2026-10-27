@@ -1,12 +1,16 @@
-// Vibration on Android/Chrome via navigator.vibrate. iOS Safari has no Vibration
-// API; toggling a hidden <input type="checkbox" switch> produces a system haptic
-// tick on iOS 17.4+/18 (best effort — Apple may change this).
+// Vibration on Android/Chrome via navigator.vibrate (full patterns).
+// iOS Safari has no Vibration API. A *real finger tap* on an <input type="checkbox" switch>
+// gives a system haptic tick; since iOS 26 scripted toggles are ignored, so index.html puts
+// invisible switches under the board (tap shots, frog-tap swap) and the swap button.
+// The scripted path below is kept for older iOS (17.4–18.x) where it still works.
 
 export class Haptics {
   enabled = true;
   private label: HTMLLabelElement | null = null;
   private lastAt = 0;
   private readonly canVibrate = typeof navigator !== 'undefined' && 'vibrate' in navigator;
+  /** iOS without the Vibration API: haptics come from real taps on invisible switches (see index.html). */
+  readonly iosTap: boolean = !this.canVibrate && typeof navigator !== 'undefined' && (/iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1));
 
   constructor() {
     if (this.canVibrate || typeof document === 'undefined') return;

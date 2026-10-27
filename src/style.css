@@ -19,7 +19,8 @@ html, body {
   overscroll-behavior: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
   touch-action: none;
 }
-#game { position: fixed; inset: 0; width: 100vw; height: 100vh; height: 100dvh; display: block; touch-action: none; cursor: crosshair; }
+#stage { position: fixed; inset: 0; touch-action: none; }
+#game { position: absolute; inset: 0; width: 100vw; height: 100vh; height: 100dvh; display: block; touch-action: none; cursor: crosshair; }
 .hidden { display: none !important; }
 button { font: inherit; color: inherit; border: 0; background: none; cursor: pointer; touch-action: manipulation; }
 
@@ -94,7 +95,11 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
   padding: calc(var(--sat) + 20px) calc(var(--sar) + 20px) calc(var(--sab) + 20px) calc(var(--sal) + 20px);
   background: radial-gradient(ellipse at center, rgba(5,10,18,0.55), rgba(5,10,18,0.88));
   animation: fadein .25s ease-out; overflow-y: auto; touch-action: pan-y;
+  justify-content: flex-start;
 }
+.screen > * { flex-shrink: 0; }
+.screen > :first-child { margin-top: auto; }
+.screen > :last-child { margin-bottom: auto; }
 .screen.clear { background: rgba(5,10,18,0.25); }
 @keyframes fadein { from { opacity: 0; } }
 .panel {
@@ -184,8 +189,37 @@ input[type=range] { width: 140px; accent-color: var(--accent); touch-action: man
 .help .pw span:nth-child(odd) { font-weight: 800; color: var(--accent-2); }
 
 .toast {
-  position: fixed; left: 50%; bottom: calc(var(--sab) + 110px); transform: translate(-50%, 20px); opacity: 0;
+  position: fixed; left: 50%; top: calc(var(--sat) + 62px); transform: translate(-50%, -12px); opacity: 0; z-index: 5;
   background: var(--glass-2); border: 1px solid var(--line); padding: 10px 16px; border-radius: 14px; font-size: 14px; pointer-events: none;
   transition: opacity .2s, transform .2s; max-width: 90vw; text-align: center;
 }
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+/* iOS tap-haptic switches: invisible but real, so a finger tap toggles them. */
+.tapzone { position: absolute; inset: 0; z-index: 1; opacity: 0.001; touch-action: none; cursor: crosshair; }
+.tapzone input, .haptic-switch { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0.001; touch-action: none; }
+.swap-btn { position: relative; }
+#btn-help { font-size: 20px; font-weight: 900; }
+
+/* Cancel target shown while drag-aiming on touch. */
+.cancel-zone {
+  position: fixed; left: 50%; bottom: calc(var(--sab) + 18px); transform: translate(-50%, 30px) scale(.9);
+  padding: 14px 22px; border-radius: 99px; font-weight: 800; font-size: 15px; letter-spacing: .3px;
+  background: rgba(20, 30, 46, 0.85); border: 2px dashed rgba(255,255,255,0.35); color: #cfe0f0;
+  opacity: 0; pointer-events: none; transition: opacity .15s, transform .15s, background .12s, border-color .12s; white-space: nowrap;
+}
+.cancel-zone.show { opacity: 1; transform: translate(-50%, 0) scale(1); }
+.cancel-zone.armed { background: rgba(255, 59, 92, 0.9); border: 2px solid #fff; color: #fff; transform: translate(-50%, 0) scale(1.12); }
+@media (orientation: portrait) {
+  /* Sit left of the swap button in the bottom bar. */
+  .cancel-zone { left: calc(var(--sal) + 14px); transform: translate(0, 30px) scale(.9); }
+  .cancel-zone.show { transform: translate(0, 0) scale(1); }
+  .cancel-zone.armed { transform: translate(0, 0) scale(1.08); }
+}
+.powers-sheet .pw-row { display: flex; gap: 14px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.powers-sheet .pw-row:last-of-type { border-bottom: 0; }
+.powers-sheet img { width: 48px; height: 48px; flex: none; }
+.powers-sheet .pw-row b { display: block; font-size: 17px; }
+.powers-sheet .pw-row span { color: var(--muted); font-size: 14px; line-height: 1.35; }
+.tips { margin: 14px 0 4px; font-size: 13px; color: var(--muted); line-height: 1.5; }
+.tips b { color: var(--ink); }

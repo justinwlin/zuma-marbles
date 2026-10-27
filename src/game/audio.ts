@@ -167,6 +167,10 @@ export class Audio {
       },
       tick: (t, p) => this.tone(t, 'sine', 1800 * st(p), 1700, 0.018, 0.08),
       ui: (t) => this.tone(t, 'sine', 880, 990, 0.05, 0.15),
+      cancel: (t) => {
+        this.tone(t, 'sine', 520, 260, 0.12, 0.18);
+        this.noise(t, 0.08, 0.08, 'lowpass', 900, 300, 1);
+      },
       count: (t, p) => this.tone(t, 'square', 1200 * st(p), 1200 * st(p), 0.02, 0.05),
     };
   }

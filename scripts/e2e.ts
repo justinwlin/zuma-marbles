@@ -150,6 +150,61 @@ async function runProfile(name: string, opts: BrowserContextOptions) {
   check('bomb power-up triggered by match', after.events.includes('power'));
   await page.screenshot({ path: `${OUT}/${name}-5-after.png` });
 
+  // ---- Cancel gestures (touch) and the power-ups sheet.
+  if (opts.hasTouch) {
+    await page.evaluate(() => (window as unknown as { __zuma: Z }).__zuma.setup([0, 1, 2, 3, 0, 1, 2, 3], {}));
+    await page.waitForTimeout(100);
+    const shots0 = await page.evaluate(() => (window as unknown as { __zuma: Z }).__zuma.state().stats.shots);
+    const tgt = (await page.evaluate(() => (window as unknown as { __zuma: Z }).__zuma.ballScreen(3)))!;
+    const cdp = await page.context().newCDPSession(page);
+    const touch = (type: 'touchStart' | 'touchMove' | 'touchEnd', pts: { x: number; y: number; id: number }[]) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: pts });
+    // 1) drag toward a ball, then slide onto the ✕ pill and release → no shot
+    await touch('touchStart', [{ x: tgt.x, y: tgt.y + 40, id: 1 }]);
+    await touch('touchMove', [{ x: tgt.x, y: tgt.y, id: 1 }]);
+    await page.waitForTimeout(120);
+    const zone = await page.locator('#cancel-zone').boundingBox();
+    check('cancel pill appears while aiming', !!zone && (await page.locator('#cancel-zone.show').count()) === 1);
+    const zx = zone!.x + zone!.width / 2;
+    const zy = zone!.y + zone!.height / 2;
+    for (let i = 1; i <= 6; i++) await touch('touchMove', [{ x: tgt.x + ((zx - tgt.x) * i) / 6, y: tgt.y + ((zy - tgt.y) * i) / 6, id: 1 }]);
+    await page.waitForTimeout(150);
+    const armed = await page.evaluate(() => (window as unknown as { __zuma: Z }).__zuma.view() as unknown as { aimCancel: boolean });
+    check('over the pill the guide turns into "cancel"', armed.aimCancel && (await page.locator('#cancel-zone.armed').count()) === 1);
+    await page.screenshot({ path: `${OUT}/${name}-7-cancel.png` });
+    await touch('touchEnd', []);
+    await page.waitForTimeout(400);
+    let shots = await page.evaluate(() => (window as unknown as { __zuma: Z }).__zuma.state().stats.shots);
+    check('releasing on ✕ cancels the shot', shots === shots0, `${shots - shots0} shots`);
+    check('pill hides after release', (await page.locator('#cancel-zone.show').count()) === 0);
+    // 2) second finger cancels
+    await touch('touchStart', [{ x: tgt.x, y: tgt.y + 40, id: 1 }]);
+    await touch('touchMove', [{ x: tgt.x, y: tgt.y, id: 1 }]);
+    await page.waitForTimeout(80);
+    await touch('touchStart', [{ x: tgt.x, y: tgt.y, id: 1 }, { x: 40, y: 200, id: 2 }]);
+    await page.waitForTimeout(80);
+    await touch('touchEnd', [{ x: tgt.x, y: tgt.y, id: 1 }]);
+    await touch('touchEnd', []);
+    await page.waitForTimeout(400);
+    shots = await page.evaluate(() => (window as unknown as { __zuma: Z }).__zuma.state().stats.shots);
+    check('a second finger cancels the shot', shots === shots0, `${shots - shots0} shots`);
+    // 3) a normal drag still fires after cancels
+    await touch('touchStart', [{ x: tgt.x, y: tgt.y + 40, id: 1 }]);
+    await touch('touchMove', [{ x: tgt.x, y: tgt.y, id: 1 }]);
+    await page.waitForTimeout(120);
+    await touch('touchEnd', []);
+    await page.waitForTimeout(300);
+    shots = await page.evaluate(() => (window as unknown as { __zuma: Z }).__zuma.state().stats.shots);
+    check('normal drag still fires afterwards', shots === shots0 + 1);
+  }
+  await page.locator('#btn-help').click();
+  await page.waitForTimeout(300);
+  check('? opens the power-ups sheet and pauses', (await page.locator('[data-screen=powerups]').count()) === 1 && (await page.evaluate(() => (window as unknown as { __zuma: Z }).__zuma.mode)) === 'paused');
+  check('sheet shows 4 power-up icons', (await page.locator('.powers-sheet img').count()) === 4);
+  await page.screenshot({ path: `${OUT}/${name}-8-powerups.png` });
+  await page.locator('[data-screen=powerups] [data-a=back]').click();
+  await page.waitForTimeout(200);
+  check('closing the sheet resumes play', (await page.evaluate(() => (window as unknown as { __zuma: Z }).__zuma.mode)) === 'playing');
+
   // ---- Natural play for a few seconds → frame rate.
   await page.evaluate(() => (window as unknown as { __zuma: Z }).__zuma.start(0));
   await page.waitForTimeout(3500);

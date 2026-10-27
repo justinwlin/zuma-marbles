@@ -20,6 +20,7 @@ import {
   TICK_HZ,
 } from './sim/game';
 import { BOT_PRESETS, decide } from './sim/bot';
+import { assistAim, type Slot } from './sim/aim';
 import { Rng } from './sim/rng';
 import { pointAt, type Pt } from './sim/track';
 import { computeLayout, type Layout, screenToWorld } from './game/layout';
@@ -62,7 +63,9 @@ const feelLog: { tick: number; type: string; hitstop: number; trauma: number; fl
 const view: ViewState = {
   time: 0,
   aimAngle: -Math.PI / 2,
+  aimShot: -Math.PI / 2,
   aimActive: false,
+  aimCancel: false,
   aimHit: null,
   aimWillPop: false,
   recoil: 0,
@@ -108,6 +111,8 @@ function loadLevel(seed: string, index: number, state?: GameState) {
   view.flash = 0;
   aimTarget = aimAngleToward({ x: level.launcher.x, y: 0 });
   view.aimAngle = aimTarget;
+  rawAim = aimTarget;
+  aimSlot = null;
   ui.resetHud();
 }
 
@@ -128,7 +133,7 @@ function startLevel(index: number, fromSnapshot = false) {
   if (!save.tutorialSeen) {
     save.tutorialSeen = true;
     writeSave(save);
-    ui.toast(matchMedia('(pointer: coarse)').matches ? 'Drag to aim · release to shoot · tap the frog to swap' : 'Move to aim · click to shoot · right-click / Space to swap', 4200);
+    ui.toast(matchMedia('(pointer: coarse)').matches ? 'Drag to aim · release to shoot · slide to ✕ to cancel · tap the frog to swap' : 'Move to aim · click to shoot · right-click / Space to swap', 4800);
   }
 }
 
@@ -247,6 +252,7 @@ function applySettings() {
   const s = save.settings;
   audio.setVolumes(s.sfx, s.music);
   haptics.enabled = s.haptics;
+  document.getElementById('tapzone')!.classList.toggle('hidden', !(haptics.iosTap && s.haptics));
   view.colorblind = s.colorblind;
   view.showGuide = s.guide;
 }
@@ -281,7 +287,64 @@ function onLauncher(w: Pt) {
   return Math.hypot(w.x - level.launcher.x, w.y - level.launcher.y) < 58;
 }
 
-let touchStart: { id: number; w: Pt; sx: number; sy: number; onFrog: boolean; moved: boolean } | null = null;
+interface TouchAim {
+  id: number;
+  sx: number;
+  sy: number;
+  onFrog: boolean;
+  moved: boolean;
+  /** A second finger touched down: this drag will not fire. */
+  cancelled: boolean;
+}
+let touchStart: TouchAim | null = null;
+/** Raw (unassisted) aim angle from the pointer, and its recent history for lift-off compensation. */
+let rawAim = -Math.PI / 2;
+const aimHistory: { t: number; a: number }[] = [];
+let aimSlot: Slot | null = null;
+const LIFTOFF_MS = 70;
+
+const stage = document.getElementById('stage') as HTMLElement;
+const cancelZone = document.getElementById('cancel-zone') as HTMLElement;
+
+function setRawAim(w: Pt) {
+  rawAim = aimAngleToward(w);
+  aimHistory.push({ t: performance.now(), a: rawAim });
+  if (aimHistory.length > 24) aimHistory.shift();
+}
+
+/** Aim angle from ~70 ms before lift-off: fingers drift as they lift. */
+function liftoffAim(): number {
+  const now = performance.now();
+  for (let i = aimHistory.length - 1; i >= 0; i--) {
+    const h = aimHistory[i];
+    if (now - h.t >= LIFTOFF_MS) return now - h.t < 250 ? h.a : rawAim;
+  }
+  return aimHistory.length ? aimHistory[0].a : rawAim;
+}
+
+/** Final shot direction for a raw angle: aim assist keeps it in the previewed slot. */
+function shotAngle(raw: number): number {
+  if (!save.settings.assist) return raw;
+  return assistAim(st, level, raw, aimSlot).angle;
+}
+
+function fireAngle(a: number) {
+  queueFire({ x: level.launcher.x + Math.cos(a) * 300, y: level.launcher.y + Math.sin(a) * 300 });
+}
+
+function inCancelZone(clientX: number, clientY: number): boolean {
+  if (!cancelZone.classList.contains('show')) return false;
+  const r = cancelZone.getBoundingClientRect();
+  const pad = 22;
+  return clientX > r.left - pad && clientX < r.right + pad && clientY > r.top - pad && clientY < r.bottom + pad;
+}
+
+function setCancelUi(show: boolean, armed: boolean, text = '✕ Cancel') {
+  cancelZone.classList.toggle('show', show);
+  cancelZone.classList.toggle('armed', armed);
+  cancelZone.textContent = armed ? '✕ Release to cancel' : text;
+  view.aimCancel = show && armed;
+}
 
 function queueFire(w: Pt) {
   if (mode !== 'playing' || st.phase !== 'playing') return;
@@ -293,70 +356,96 @@ function queueSwap() {
   pending.push({ type: 'swap' });
 }
 
-canvas.addEventListener('contextmenu', (e) => e.preventDefault());
-canvas.addEventListener('pointerdown', (e) => {
+stage.addEventListener('contextmenu', (e) => e.preventDefault());
+stage.addEventListener('pointerdown', (e) => {
   audio.unlock();
   if (mode !== 'playing') return;
   const w = screenToWorld(layout, e.clientX, e.clientY);
   if (e.pointerType === 'mouse') {
-    aimTarget = aimAngleToward(w);
+    setRawAim(w);
     view.aimActive = true;
     if (e.button === 2) queueSwap();
     else if (e.button === 0) {
       if (onLauncher(w)) queueSwap();
-      else queueFire(w);
+      else fireAngle(shotAngle(rawAim));
     }
     return;
   }
-  canvas.setPointerCapture(e.pointerId);
+  // A second finger while aiming cancels the shot.
+  if (touchStart && touchStart.id !== e.pointerId) {
+    if (!touchStart.cancelled && view.aimActive) {
+      touchStart.cancelled = true;
+      view.aimActive = false;
+      setCancelUi(true, false, '✕ Cancelled — lift to retry');
+      audio.play('cancel');
+      haptics.pulse([8]);
+    }
+    return;
+  }
+  stage.setPointerCapture(e.pointerId);
   const frog = onLauncher(w);
-  touchStart = { id: e.pointerId, w, sx: e.clientX, sy: e.clientY, onFrog: frog, moved: false };
+  touchStart = { id: e.pointerId, sx: e.clientX, sy: e.clientY, onFrog: frog, moved: false, cancelled: false };
+  aimHistory.length = 0;
   if (save.settings.touchAim === 'tap' && !frog) {
-    aimTarget = aimAngleToward(w);
-    view.aimAngle = aimTarget;
-    queueFire(w);
+    setRawAim(w);
+    const a = shotAngle(rawAim);
+    aimTarget = a;
+    view.aimAngle = a;
+    fireAngle(a);
     return;
   }
   if (!frog) {
-    aimTarget = aimAngleToward(w);
+    setRawAim(w);
     view.aimActive = true;
+    setCancelUi(true, false);
   }
 });
-canvas.addEventListener('pointermove', (e) => {
+stage.addEventListener('pointermove', (e) => {
   if (mode !== 'playing') return;
   const w = screenToWorld(layout, e.clientX, e.clientY);
   if (e.pointerType === 'mouse') {
-    aimTarget = aimAngleToward(w);
+    setRawAim(w);
     view.aimActive = true;
     return;
   }
-  if (!touchStart || touchStart.id !== e.pointerId) return;
+  if (!touchStart || touchStart.id !== e.pointerId || touchStart.cancelled) return;
   if (Math.hypot(e.clientX - touchStart.sx, e.clientY - touchStart.sy) > 10) touchStart.moved = true;
-  if (save.settings.touchAim === 'drag' && (!onLauncher(w) || !touchStart.onFrog)) {
-    aimTarget = aimAngleToward(w);
-    view.aimActive = !onLauncher(w);
+  if (save.settings.touchAim !== 'drag') return;
+  const overFrog = onLauncher(w);
+  const overZone = inCancelZone(e.clientX, e.clientY);
+  if (touchStart.onFrog && !touchStart.moved) return;
+  // Over the frog or the cancel pill: keep the last aim but show it as cancelled.
+  if (!overFrog && !overZone) setRawAim(w);
+  view.aimActive = true;
+  const armed = overFrog || overZone;
+  if (armed !== view.aimCancel) {
+    audio.play('tick', armed ? -7 : 0);
+    if (armed) haptics.pulse([6]);
   }
+  setCancelUi(true, armed);
 });
-function endTouch(e: PointerEvent, cancelled: boolean) {
+function endTouch(e: PointerEvent, interrupted: boolean) {
   if (e.pointerType === 'mouse' || !touchStart || touchStart.id !== e.pointerId) return;
   const w = screenToWorld(layout, e.clientX, e.clientY);
   const t = touchStart;
   touchStart = null;
-  if (cancelled || mode !== 'playing') {
+  const cancelled = interrupted || t.cancelled || view.aimCancel || inCancelZone(e.clientX, e.clientY);
+  setCancelUi(false, false);
+  if (mode !== 'playing') {
     view.aimActive = false;
     return;
   }
   if (t.onFrog && !t.moved) queueSwap();
-  else if (save.settings.touchAim === 'drag' && !onLauncher(w)) {
-    // Fire along the current (sprung) aim so the shot matches the guide you were looking at.
-    aimTarget = aimAngleToward(w);
-    queueFire(w);
+  else if (save.settings.touchAim === 'drag') {
+    if (cancelled || onLauncher(w)) {
+      if (!interrupted && !t.cancelled) audio.play('cancel');
+    } else fireAngle(shotAngle(liftoffAim()));
   }
   view.aimActive = false;
 }
-canvas.addEventListener('pointerup', (e) => endTouch(e, false));
-canvas.addEventListener('pointercancel', (e) => endTouch(e, true));
-canvas.addEventListener('pointerleave', (e) => {
+stage.addEventListener('pointerup', (e) => endTouch(e, false));
+stage.addEventListener('pointercancel', (e) => endTouch(e, true));
+stage.addEventListener('pointerleave', (e) => {
   if (e.pointerType === 'mouse') view.aimActive = false;
 });
 
@@ -364,6 +453,16 @@ document.getElementById('btn-swap')!.addEventListener('pointerdown', (e) => {
   e.preventDefault();
   audio.unlock();
   queueSwap();
+});
+document.getElementById('btn-help')!.addEventListener('click', () => {
+  if (mode !== 'playing') return;
+  audio.play('ui');
+  mode = 'paused';
+  view.aimActive = false;
+  ui.powerups(() => {
+    mode = 'playing';
+    ui.hide();
+  });
 });
 document.getElementById('btn-pause')!.addEventListener('click', () => {
   audio.play('ui');
@@ -383,15 +482,31 @@ window.addEventListener('keydown', (e) => {
       e.preventDefault();
       queueSwap();
     } else if (e.code === 'ArrowLeft' || e.code === 'ArrowRight') {
-      aimTarget += (e.code === 'ArrowLeft' ? -1 : 1) * 0.06;
+      rawAim += (e.code === 'ArrowLeft' ? -1 : 1) * 0.03;
       view.aimActive = true;
     } else if (e.code === 'Enter' || e.code === 'ArrowUp') {
-      queueFire({ x: level.launcher.x + Math.cos(aimTarget) * 300, y: level.launcher.y + Math.sin(aimTarget) * 300 });
+      fireAngle(shotAngle(rawAim));
     }
   }
 });
 
 // ------------------------------------------------------------------ events → feel
+
+const POWER_HINTS = ['', 'Bomb marble! Pop it in a match to blast everything nearby', 'Slow marble! Pop it in a match to slow the chain', 'Reverse marble! Pop it in a match to roll the chain back', 'Laser marble! Pop it in a match for a laser sight & rapid fire'];
+/** First time each power-up appears on screen, explain it once (tap ? for details). */
+function announcePowers() {
+  const seen = save.seenPowers ?? 0;
+  for (const b of st.balls) {
+    if (b.p && !(seen & (1 << b.p)) && b.s > level.track.visibleFrom + 40) {
+      save.seenPowers = seen | (1 << b.p);
+      writeSave(save);
+      ui.toast(`${POWER_HINTS[b.p]} · tap ? for all power-ups`, 4200);
+      const p = pointAt(level.track, b.s);
+      fx.ring(p.x, p.y, '#fff', 20, 120, 0.8);
+      return;
+    }
+  }
+}
 
 function handleEvents(events: GameEvent[]) {
   const head = progress(st, level).head;
@@ -578,6 +693,7 @@ function frame(now: number) {
     if (!attract && st.phase === 'playing') {
       const head = progress(st, level).head;
       peakDanger = Math.max(peakDanger, head);
+      announcePowers();
     }
   }
   if (resultTimer > 0) {
@@ -637,11 +753,22 @@ function updateView(dt: number) {
 
   // Aim raycast + lock-on tick
   if (st && st.phase === 'playing' && view.aimActive && !attract) {
-    const hit = raycast(st, level, Math.cos(view.aimAngle), Math.sin(view.aimAngle));
+    // Preview exactly what the shot will do: aim assist + hysteresis around the raw pointer angle.
+    let hit;
+    if (save.settings.assist) {
+      const r = assistAim(st, level, rawAim, aimSlot);
+      hit = r.hit;
+      aimTarget = r.angle;
+    } else {
+      aimTarget = rawAim;
+      hit = raycast(st, level, Math.cos(rawAim), Math.sin(rawAim));
+    }
+    aimSlot = hit ? { ballId: hit.ballId, front: hit.front } : null;
+    view.aimShot = aimTarget;
     view.aimHit = hit;
     view.aimWillPop = !!hit && runIfInserted(st, hit, st.gun.cur) >= 2;
     const id = hit ? hit.ballId : -1;
-    if (id !== lastHitBall && id >= 0) {
+    if (id !== lastHitBall && id >= 0 && !view.aimCancel) {
       audio.play('tick', view.aimWillPop ? 7 : 0);
       if (touchStart) haptics.pulse([4]);
     }
@@ -728,7 +855,7 @@ window.__zuma = {
   state: () => st,
   level: () => ({ index: level.index, seed: level.campaignSeed, launcher: level.launcher, length: level.track.length, family: level.family }),
   layout: () => layout,
-  view: () => ({ aimAngle: view.aimAngle, aimActive: view.aimActive, aimHit: view.aimHit, willPop: view.aimWillPop, trauma: view.trauma, danger: view.danger }),
+  view: () => ({ aimAngle: view.aimAngle, aimShot: view.aimShot, aimCancel: view.aimCancel, aimActive: view.aimActive, aimHit: view.aimHit, willPop: view.aimWillPop, trauma: view.trauma, danger: view.danger }),
   fps: () => fps,
   drawMs: () => drawMs,
   timings: () => ({ sim: simMs, view: viewMs, draw: drawMs, hud: hudMs }),
