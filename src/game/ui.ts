@@ -2,7 +2,7 @@
 // canvas so text is crisp, accessible and laid out by CSS on every screen size.
 
 import { type BossKind, generateLevel, isLargeCampaign, type Mutator, MUTATOR_INFO } from '../sim/levelgen';
-import { POWER_NAMES, type GameState, progress, type Power } from '../sim/game';
+import { POWER_NAMES, type GameState, progress, type Power, WILD } from '../sim/game';
 import type { Level } from '../sim/levelgen';
 import { PALETTE, powerIconUrl } from './render';
 import { CHARACTERS, characterThumb, type CharacterId } from './characters';
@@ -33,6 +33,7 @@ export interface UiActions {
 }
 
 const marbleCss = (c: number) => {
+  if (c === WILD) return 'background: radial-gradient(circle at 35% 30%, rgba(255,255,255,.9), transparent 45%), conic-gradient(#ff3b5c, #ffbe1f, #22df8c, #1cb0ff, #9a3cff, #ff3b5c);';
   const p = PALETTE[c];
   return `background: radial-gradient(circle at 35% 30%, ${p.light}, ${p.base} 48%, ${p.dark});`;
 };
@@ -84,7 +85,7 @@ export class UI {
 
   title(save: SaveData) {
     const snap = save.snapshot;
-    const marbles = PALETTE.map((_, i) => `<span style="${marbleCss(i)};animation-delay:${i * 0.12}s"></span>`).join('');
+    const marbles = PALETTE.slice(0, 6).map((_, i) => `<span style="${marbleCss(i)};animation-delay:${i * 0.12}s"></span>`).join('');
     const isIOS = /iP(hone|ad|od)/.test(navigator.userAgent);
     const standalone = matchMedia('(display-mode: standalone)').matches || (navigator as unknown as { standalone?: boolean }).standalone;
     const stars = Object.values(save.best).reduce((a, r) => a + r.stars, 0);
@@ -253,7 +254,8 @@ export class UI {
       ? `Stage ${level.index + 1} · ${level.name}<br><span style="font-size:12px">${run.daily ? 'Daily' : 'Endless'} run · ${(run.runScore).toLocaleString()} banked</span>`
       : `Level ${level.index + 1} · ${level.name}<br><span style="font-size:12px">code ${levelCode(level.campaignSeed, level.index)}</span>`;
     const info = [
-      level.boss === 'boss' ? '<b>Boss</b> level' : level.boss === 'mini' ? '<b>Mini-boss</b>' : '',
+      level.boss === 'boss' ? '<b>Boss fight</b>' : level.boss === 'mini' ? '<b>Mini-boss</b>' : '',
+      `ace time ${mm2(level.ace)}`,
       level.tracks.length > 1 ? 'two chains' : '',
       ...level.mutators.map((m) => `<b>${MUTATOR_INFO[m].name}</b>: ${MUTATOR_INFO[m].desc}`),
     ].filter(Boolean);
@@ -283,15 +285,17 @@ export class UI {
     this.show(
       'result',
       `<div class="panel">
-        <h2>${won ? 'Level clear!' : 'Swallowed!'}</h2>
+        <h2>${won ? (level.bossFight ? 'Boss defeated!' : 'Level clear!') : 'Swallowed!'}</h2>
         <p class="sub">Level ${level.index + 1} · ${level.name}</p>
         ${won ? `<div class="stars">${starHtml}</div>` : ''}
         ${!won && tip ? `<div class="tip">💡 ${tip}</div>` : ''}
         <div class="big-score" id="res-score">0</div>
+        ${won && st.bonus ? `<div class="bonus-rows"><div>Track bonus <b>+${st.bonus.sweep.toLocaleString()}</b></div><div class="${st.bonus.ace ? 'ace' : 'miss'}">${st.bonus.ace ? `Ace time! <b>+${st.bonus.ace.toLocaleString()}</b>` : `Ace time ${mm2(level.ace)} <b>missed</b>`}</div>${s.coins ? `<div>Coins <b>${s.coins} × ${TUNING.coinValue}</b></div>` : ''}</div>` : ''}
         <div class="stats">
           <div>Time <b>${mm}</b></div><div>Best <b>${best.toLocaleString()}</b></div>
           <div>Max combo <b>×${s.maxCombo + 1}</b></div><div>Best chain <b>${s.maxStreak}</b></div>
           <div>Gap shots <b>${s.gapShots}</b></div><div>Accuracy <b>${s.shots ? Math.round(((s.shots - s.misses) / s.shots) * 100) : 0}%</b></div>
+          ${level.bossFight ? `<div>Direct hits <b>${s.bossHits}</b></div><div>Boss health <b>${st.boss?.hp ?? 0}/${st.boss?.max ?? 0}</b></div>` : ''}
           <div>Power-ups <b>${s.powers}</b></div><div>Nearest the skull <b>${Math.min(100, Math.round(peak * 100))}%</b></div>
         </div>
         <div class="btns" style="margin:0 auto">
@@ -331,7 +335,7 @@ export class UI {
         <h3>Aiming</h3>
         ${
           coarse
-            ? `<div class="setting col"><label>Touch aiming<small id="aim-hint">${AIM_HINTS[s.touchAim]}</small></label><div class="seg seg3">${(['drag', 'aimtap', 'tap'] as const).map((m) => `<button data-a="aim" data-v="${m}" class="${s.touchAim === m ? 'on' : ''}">${AIM_LABELS[m]}</button>`).join('')}</div></div>`
+            ? `<div class="setting col"><label>Touch aiming<small id="aim-hint">${AIM_HINTS[s.touchAim]}</small></label><div class="seg seg3">${(['drag', 'aimtap', 'tap', 'pad'] as const).map((m) => `<button data-a="aim" data-v="${m}" class="${s.touchAim === m ? 'on' : ''}">${AIM_LABELS[m]}</button>`).join('')}</div></div>`
             : ''
         }
         <div class="setting"><label>Aim guide<small>Dotted line, target ring & ghost marble</small></label>${tog('guide', s.guide)}</div>
@@ -369,7 +373,7 @@ export class UI {
           this.a.settingsChanged(s);
         },
         aim: (el) => {
-          s.touchAim = el.dataset.v as 'drag' | 'aimtap' | 'tap';
+          s.touchAim = el.dataset.v as 'drag' | 'aimtap' | 'tap' | 'pad';
           const hint = document.getElementById('aim-hint');
           if (hint) hint.textContent = AIM_HINTS[s.touchAim];
           el.parentElement!.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b === el));
@@ -416,10 +420,15 @@ export class UI {
         ${row(2, 3, 'Slow', `The chain crawls at ¼ speed for ${TUNING.slowTime}s.`)}
         ${row(3, 1, 'Reverse', `The chain rolls backwards, away from the skull, for ${TUNING.reverseTime}s.`)}
         ${row(4, 4, 'Lightning', 'Strikes every marble of its colour on the board — on every track.')}
+        ${row(5, 2, 'Wild', 'Your next marble turns rainbow: it takes the colour of whichever neighbour makes the longer run.')}
+        ${row(6, 0, 'Scorpion', `A scorpion runs back from the skull and eats the ${TUNING.scorpionEats} marbles closest to it.`)}
         <div class="tips">
           <b>Combos:</b> when a gap's two ends match, they snap together and pop again.<br>
           <b>Gap shot:</b> shoot through a gap in the chain for bonus points.<br>
           <b>Chain bonus:</b> 5+ popping shots in a row.<br>
+          <b>Bonus coins:</b> shoot a floating coin before it vanishes for +${TUNING.coinValue}.<br>
+          <b>Level end:</b> a light runs down the empty track — points for every bit the chain never reached, plus <b>+${TUNING.aceBonus}</b> for beating the ace time.<br>
+          <b>Boss fights</b> (every 10th level): your character slides along a rail and shoots straight across. Every marble you pop hurts the boss; a shot through a gap that hits it does ${TUNING.bossDirectHit}. Dodge the rocks — the red circle shows where they land.<br>
           ${coarse ? '<b>Cancel a shot:</b> slide onto <b>✕</b> (or back onto your character), or touch with a second finger.' : '<b>Swap:</b> right-click or Space.'}
         </div>
         <div class="btns" style="margin:14px auto 0"><button class="btn primary" data-a="back">${backLabel}</button></div></div>`,
@@ -435,7 +444,8 @@ export class UI {
         <p>Marbles roll toward the <b>skull</b>. Shoot marbles into the chain — <b>3 or more</b> of a colour pop.</p>
         <p>${coarse ? '<b>Drag</b> to aim, <b>release</b> to shoot. Changed your mind? Slide onto <b>✕</b> or back to the frog, or touch with a second finger. Tap your character (the launcher) or the swap button to swap.' : '<b>Move</b> to aim, <b>click</b> to shoot. <b>Right-click</b> or <b>Space</b> swaps marbles.'}</p>
         <p>When a gap opens and both sides match, they <b>snap together</b> for a combo. Fill the gold <b>ZUMA bar</b> to stop new marbles, then clear the rest.</p>
-        <div class="pw"><span>Bomb</span><span>blasts nearby marbles</span><span>Slow</span><span>slows the chain</span><span>Reverse</span><span>rolls the chain back</span><span>Lightning</span><span>pops every marble of its colour</span></div>
+        <div class="pw"><span>Bomb</span><span>blasts nearby marbles</span><span>Slow</span><span>slows the chain</span><span>Reverse</span><span>rolls the chain back</span><span>Lightning</span><span>pops every marble of its colour</span><span>Wild</span><span>next shot matches anything</span><span>Scorpion</span><span>eats the 10 front marbles</span></div>
+        <p style="font-size:14px">Shoot <b>gold coins</b> for bonus points. Every 10th level is a <b>boss fight</b>: slide along your rail, pop marbles to hurt the boss, dodge its rocks.</p>
         <p style="color:var(--muted);font-size:13px">Pop a power-up marble as part of a match to trigger it. Keep the chain far from the skull for more stars.</p>
         <div class="btns" style="margin:12px auto 0"><button class="btn primary" data-a="back">Got it</button><button class="btn ghost" data-a="pw">Power-ups in detail →</button></div></div>`,
       { back, pw: () => this.powerups(() => this.help(back), 'Back') },
@@ -460,10 +470,12 @@ export class UI {
     $('hud-name').textContent = level.boss === 'boss' ? `BOSS · ${level.name}` : level.boss === 'mini' ? `MINI-BOSS · ${level.name}` : level.name;
     const score = st.score + (run?.runScore ?? 0);
     const pr = progress(st, level);
-    $('hud-bar').style.transform = `scaleX(${pr.bar})`;
+    // Boss fights: the bar is the boss's health, draining.
+    $('hud-bar').style.transform = `scaleX(${st.boss ? st.boss.hp / st.boss.max : pr.bar})`;
     const bar = $('hud-bar').parentElement!;
     bar.classList.toggle('full', st.barFull);
-    $('hud-bar-label').textContent = st.barFull ? 'CLEAR!' : 'ZUMA';
+    bar.classList.toggle('boss', !!st.boss);
+    $('hud-bar-label').textContent = st.boss ? (st.boss.dead ? 'DEFEATED!' : `BOSS ${st.boss.hp}`) : st.barFull ? 'CLEAR!' : 'ZUMA';
     if (score !== this.lastScore) {
       const el = $('hud-score');
       el.textContent = score.toLocaleString();
@@ -475,11 +487,13 @@ export class UI {
       this.lastScore = score;
     }
     $('hud-streak').textContent = st.streak >= 3 ? `chain ×${st.streak}` : '';
-    if (st.gun.cur !== this.lastGun[0] || st.gun.next !== this.lastGun[1]) {
-      this.lastGun = [st.gun.cur, st.gun.next];
+    const cur = st.gun.w & 1 ? WILD : st.gun.cur;
+    const nxt = st.gun.w & 2 ? WILD : st.gun.next;
+    if (cur !== this.lastGun[0] || nxt !== this.lastGun[1]) {
+      this.lastGun = [cur, nxt];
       for (const [a, b] of [['swap-cur', 'swap-next'], ['next-cur', 'next-next']]) {
-        $(a).setAttribute('style', marbleCss(st.gun.cur));
-        $(b).setAttribute('style', marbleCss(st.gun.next));
+        $(a).setAttribute('style', marbleCss(cur));
+        $(b).setAttribute('style', marbleCss(nxt));
       }
     }
     const pw: [Power, number, number][] = [];
@@ -517,12 +531,17 @@ function thumbMarble(g: CanvasRenderingContext2D, x: number, y: number, r: numbe
   g.fill();
 }
 
-const AIM_LABELS = { drag: 'Drag & release', aimtap: 'Aim + tap', tap: 'Tap' } as const;
+const AIM_LABELS = { drag: 'Drag & release', aimtap: 'Aim + tap', tap: 'Tap', pad: 'Trackpad' } as const;
 const AIM_HINTS = {
   drag: 'Drag to aim, lift to shoot · press and hold to keep shooting',
   aimtap: 'Drag to aim, tap to shoot (hold to keep shooting) — iPhone vibrates on every shot',
   tap: 'Tap where you want to shoot · hold and slide to keep shooting',
+  pad: 'Drag anywhere to nudge the crosshair (finer than your finger, never covers the target), tap to shoot · hold to keep shooting',
 } as const;
+
+function mm2(sec: number) {
+  return `${Math.floor(sec / 60)}:${String(Math.floor(sec % 60)).padStart(2, '0')}`;
+}
 
 interface LevelMeta {
   name: string;

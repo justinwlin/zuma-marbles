@@ -13,12 +13,16 @@ import {
   POWER_NAMES,
   Power,
   isRolling,
+  launcherAt,
   progress,
+  railPoint,
+  railProject,
   raycast,
   runIfInserted,
   snapshot,
   step,
   TICK_HZ,
+  TUNING,
 } from './sim/game';
 import { BOT_PRESETS, decide } from './sim/bot';
 import { assistAim, type Slot } from './sim/aim';
@@ -96,9 +100,26 @@ const view: ViewState = {
   bolts: [],
   colorblind: false,
   showGuide: true,
+  aimFrom: null,
+  aimCoin: false,
+  cursor: null,
+  homing: [],
+  sweep: null,
+  bossDown: -1,
   banner: null,
   hue: 200,
 };
+/** Rail fights: the rail spot the player is aiming from. */
+let railAimU = 0;
+/** Trackpad aiming: the crosshair the finger moves (world coords). */
+const padCursor: Pt = { x: 0, y: 0 };
+let padLast: { x: number; y: number } | null = null;
+const PAD_GAIN = 0.8;
+let lastPointer = 'mouse';
+/** End-of-level tally: track bonus counting up during the light sweep, then ace time. */
+let tally: { sweep: number; ace: number; ticks: number; done: boolean; aceShown: boolean } | null = null;
+let cascadeN = 0;
+let stuns = 0;
 let aimVel = 0;
 let aimTarget = -Math.PI / 2;
 
@@ -135,13 +156,31 @@ function loadLevel(seed: string, index: number, state?: GameState) {
   view.ripples.clear();
   view.shotTrails.clear();
   view.bolts.length = 0;
+  view.homing.length = 0;
+  view.sweep = null;
+  view.bossDown = -1;
+  tally = null;
+  cascadeN = 0;
+  stuns = 0;
   view.banner = null;
   view.danger = 0;
   view.trauma = 0;
   view.flash = 0;
-  aimTarget = aimAngleToward({ x: level.launcher.x, y: 0 });
+  aimTarget = level.rail ? Math.atan2(level.rail.n.y, level.rail.n.x) : aimAngleToward({ x: level.launcher.x, y: 0 });
   view.aimAngle = aimTarget;
   rawAim = aimTarget;
+  if (level.rail) {
+    railAimU = level.rail.len / 2;
+    const p = railPoint(level.rail, railAimU);
+    padCursor.x = p.x + level.rail.n.x * 320;
+    padCursor.y = p.y + level.rail.n.y * 320;
+  } else {
+    // Start the crosshair a little above the launcher on screen (portrait boards are rotated).
+    const up = layout?.portrait ? { x: -1, y: 0 } : { x: 0, y: -1 };
+    padCursor.x = level.launcher.x + up.x * 200;
+    padCursor.y = level.launcher.y + up.y * 200;
+    if (save.settings.touchAim === 'pad') rawAim = aimTarget = aimAngleToward(padCursor);
+  }
   aimSlot = null;
   aimLocked = false;
   hold = null;
@@ -182,13 +221,19 @@ function continueEndless() {
 /** Level-start banner: boss / mini-boss / level number, plus a note for twists and two chains. */
 function levelBanner(): string[] {
   const label = run ? `Stage ${level.index + 1}` : `Level ${level.index + 1}`;
-  if (level.boss === 'boss') view.banner = { text: 'BOSS', sub: `${label} · ${level.name}`, t: 0, color: '#ff6b81' };
-  else if (level.boss === 'mini') view.banner = { text: 'MINI-BOSS', sub: `${label} · ${level.name}`, t: 0, color: '#ffb36b' };
-  else view.banner = { text: label, sub: level.name, t: 0, color: '#ffe08a' };
+  const ace = `ace time ${mmss(level.ace)}`;
+  if (level.boss === 'boss') view.banner = { text: 'BOSS FIGHT', sub: `${label} · ${level.name} · ${ace}`, t: 0, color: '#ff6b81' };
+  else if (level.boss === 'mini') view.banner = { text: 'MINI-BOSS', sub: `${label} · ${level.name} · ${ace}`, t: 0, color: '#ffb36b' };
+  else view.banner = { text: label, sub: `${level.name} · ${ace}`, t: 0, color: '#ffe08a' };
   const notes: string[] = [];
+  if (level.rail) notes.push(matchMedia('(pointer: coarse)').matches ? 'Boss fight! Slide along your rail · pop marbles to hurt the boss · dodge its rocks' : 'Boss fight! Move along your rail · pop marbles to hurt the boss · dodge its rocks');
   if (level.tracks.length > 1) notes.push('Two chains — watch both skulls!');
   for (const m of level.mutators) notes.push(`${MUTATOR_INFO[m].name}: ${MUTATOR_INFO[m].desc}`);
   return notes;
+}
+
+function mmss(sec: number) {
+  return `${Math.floor(sec / 60)}:${String(Math.floor(sec % 60)).padStart(2, '0')}`;
 }
 
 function beginPlay() {
@@ -198,7 +243,7 @@ function beginPlay() {
   const notes = levelBanner();
   audio.unlock();
   requestWakeLock();
-  if (notes.length) ui.toast(notes.join(' · '), 2800);
+  if (notes.length) ui.toast(notes.join(' · '), level.rail ? 4200 : 2800);
   if (!save.tutorialSeen) {
     save.tutorialSeen = true;
     writeSave(save);
@@ -287,6 +332,8 @@ function lossTip(): string {
   const coarse = matchMedia('(pointer: coarse)').matches;
   const noun = characterNoun(save.settings.character);
   if ((lossStreak.get(level.index) ?? 0) >= 2 && !save.settings.relaxed) return 'Stuck? Turn on <b>Relaxed speed</b> in Settings — chains roll 25% slower.';
+  if (level.rail && stuns >= 2) return 'A <b>red circle</b> on your rail marks where a rock will land — slide away before it hits.';
+  if (level.rail && s.bossHits === 0) return 'Shoot through <b>gaps in the chain</b> to hit the boss directly — and every marble you pop hurts it.';
   if (level.tracks.length > 1) return 'Two chains: deal with whichever is <b>closer to its skull</b> first.';
   if (s.shots >= 8 && s.misses / s.shots > 0.3) return 'Missed shots fly off the board. The <b>ghost marble</b> shows exactly where a shot will land.';
   if (s.powers === 0) return 'Pop the marbles with a <b>white ring</b>: Slow and Reverse buy you time.';
@@ -476,7 +523,8 @@ function aimAngleToward(w: Pt) {
 }
 
 function onLauncher(w: Pt) {
-  return Math.hypot(w.x - level.launcher.x, w.y - level.launcher.y) < 58;
+  const L = launcherAt(st, level);
+  return Math.hypot(w.x - L.x, w.y - L.y) < 58;
 }
 
 interface TouchAim {
@@ -491,7 +539,7 @@ interface TouchAim {
 let touchStart: TouchAim | null = null;
 /** Raw (unassisted) aim angle from the pointer, and its recent history for lift-off compensation. */
 let rawAim = -Math.PI / 2;
-const aimHistory: { t: number; a: number }[] = [];
+const aimHistory: { t: number; a: number; u: number }[] = [];
 let aimSlot: Slot | null = null;
 /** Aim + tap mode: the aim stays set after lifting; the next tap fires along it. */
 let aimLocked = false;
@@ -531,11 +579,9 @@ function pumpHold() {
     if (now - hold.since < HOLD_MS) return;
     hold.active = true;
   }
-  if (view.aimCancel || st.gun.cool > 0 || now - hold.lastShot < REPEAT_MS) return;
+  if (view.aimCancel || st.gun.cool > 0 || st.rail?.q || now - hold.lastShot < REPEAT_MS) return;
   if (pending.some((c) => c.type === 'fire')) return;
-  const a = shotAngle(rawAim);
-  aimTarget = a;
-  fireAngle(a);
+  fireAim();
   hold.lastShot = now;
   hold.shots++;
 }
@@ -545,18 +591,42 @@ const cancelZone = document.getElementById('cancel-zone') as HTMLElement;
 
 function setRawAim(w: Pt) {
   rawAim = aimAngleToward(w);
-  aimHistory.push({ t: performance.now(), a: rawAim });
+  if (level.rail) railAimU = railProject(level.rail, w.x, w.y);
+  aimHistory.push({ t: performance.now(), a: rawAim, u: railAimU });
   if (aimHistory.length > 24) aimHistory.shift();
 }
 
-/** Aim angle from ~70 ms before lift-off: fingers drift as they lift. */
-function liftoffAim(): number {
+/** Aim from ~70 ms before lift-off: fingers drift as they lift. */
+function liftoffAim(): { a: number; u: number } {
   const now = performance.now();
+  const cur = { a: rawAim, u: railAimU };
   for (let i = aimHistory.length - 1; i >= 0; i--) {
     const h = aimHistory[i];
-    if (now - h.t >= LIFTOFF_MS) return now - h.t < 250 ? h.a : rawAim;
+    if (now - h.t >= LIFTOFF_MS) return now - h.t < 250 ? h : cur;
   }
-  return aimHistory.length ? aimHistory[0].a : rawAim;
+  return aimHistory.length ? aimHistory[0] : cur;
+}
+
+/** Shoot along an aim: an angle from the launcher, or (boss fights) a spot on the rail. */
+function fireAim(a = rawAim, u = railAimU) {
+  const R = level.rail;
+  if (R) {
+    const p = railPoint(R, u);
+    queueFire({ x: p.x + R.n.x * 300, y: p.y + R.n.y * 300 });
+    return;
+  }
+  const s = shotAngle(a);
+  aimTarget = s;
+  fireAngle(s);
+}
+
+/** Boss fights: the frog follows the aim along its rail while the player is aiming. */
+function pumpRail() {
+  const R = level.rail;
+  if (!R || !st.rail || attract || mode !== 'playing' || st.phase !== 'playing') return;
+  if (!view.aimActive || Math.abs(railAimU - st.rail.tu) < 1 || pending.length) return;
+  const p = railPoint(R, railAimU);
+  pending.push({ type: 'move', x: p.x + R.n.x * 300, y: p.y + R.n.y * 300 });
 }
 
 /** Final shot direction for a raw angle: aim assist keeps it in the previewed slot. */
@@ -597,6 +667,7 @@ function queueSwap() {
 stage.addEventListener('contextmenu', (e) => e.preventDefault());
 stage.addEventListener('pointerdown', (e) => {
   audio.unlock();
+  lastPointer = e.pointerType;
   if (mode !== 'playing') return;
   const w = screenToWorld(layout, e.clientX, e.clientY);
   if (e.pointerType === 'mouse') {
@@ -606,7 +677,7 @@ stage.addEventListener('pointerdown', (e) => {
     else if (e.button === 0) {
       if (onLauncher(w)) queueSwap();
       else {
-        fireAngle(shotAngle(rawAim));
+        fireAim();
         startHold(e.pointerId, true);
       }
     }
@@ -615,7 +686,7 @@ stage.addEventListener('pointerdown', (e) => {
   // A second finger while aiming cancels the shot.
   if (touchStart && touchStart.id !== e.pointerId) {
     if (hold?.id === touchStart.id) hold = null;
-    if (save.settings.touchAim === 'aimtap') return; // lifting never fires in this mode
+    if (save.settings.touchAim === 'aimtap' || save.settings.touchAim === 'pad') return; // lifting never fires in these modes
     if (!touchStart.cancelled && view.aimActive) {
       touchStart.cancelled = true;
       view.aimActive = false;
@@ -629,6 +700,12 @@ stage.addEventListener('pointerdown', (e) => {
   const frog = onLauncher(w);
   touchStart = { id: e.pointerId, sx: e.clientX, sy: e.clientY, onFrog: frog, moved: false, cancelled: false };
   aimHistory.length = 0;
+  // Trackpad: the finger moves a crosshair from wherever it lands; a tap fires.
+  if (save.settings.touchAim === 'pad') {
+    padLast = { x: e.clientX, y: e.clientY };
+    if (!frog) startHold(e.pointerId, false);
+    return;
+  }
   // Aim + tap: decide on lift — a drag sets the aim, a tap fires (a still hold rapid-fires).
   if (save.settings.touchAim === 'aimtap') {
     if (aimLocked && !frog) startHold(e.pointerId, false);
@@ -636,10 +713,8 @@ stage.addEventListener('pointerdown', (e) => {
   }
   if (save.settings.touchAim === 'tap' && !frog) {
     setRawAim(w);
-    const a = shotAngle(rawAim);
-    aimTarget = a;
-    view.aimAngle = a;
-    fireAngle(a);
+    if (!level.rail) view.aimAngle = shotAngle(rawAim);
+    fireAim();
     startHold(e.pointerId, true);
     return;
   }
@@ -651,6 +726,7 @@ stage.addEventListener('pointerdown', (e) => {
   }
 });
 stage.addEventListener('pointermove', (e) => {
+  lastPointer = e.pointerType;
   if (mode !== 'playing') return;
   const w = screenToWorld(layout, e.clientX, e.clientY);
   if (e.pointerType === 'mouse') {
@@ -662,6 +738,19 @@ stage.addEventListener('pointermove', (e) => {
   if (Math.hypot(e.clientX - touchStart.sx, e.clientY - touchStart.sy) > 10) touchStart.moved = true;
   // Dragging before the hold kicks in means aiming, not rapid fire.
   if (touchStart.moved && hold && !hold.active && save.settings.touchAim !== 'tap') hold = null;
+  if (save.settings.touchAim === 'pad') {
+    // Relative: the crosshair moves with the finger (scaled down for precision).
+    if (padLast) {
+      const a = screenToWorld(layout, padLast.x, padLast.y);
+      const b = screenToWorld(layout, e.clientX, e.clientY);
+      padCursor.x = Math.max(12, Math.min(level.worldW - 12, padCursor.x + (b.x - a.x) * PAD_GAIN));
+      padCursor.y = Math.max(12, Math.min(level.worldH - 12, padCursor.y + (b.y - a.y) * PAD_GAIN));
+      padLast = { x: e.clientX, y: e.clientY };
+      setRawAim(padCursor);
+      view.aimActive = true;
+    }
+    return;
+  }
   if (save.settings.touchAim === 'tap') {
     // Tap mode: while holding, slide to sweep the stream of shots.
     if (hold?.id === e.pointerId && !onLauncher(w)) setRawAim(w);
@@ -703,15 +792,23 @@ function endTouch(e: PointerEvent, interrupted: boolean) {
     view.aimActive = false;
     return;
   }
+  padLast = null;
   if (t.onFrog && !t.moved) queueSwap();
-  else if (save.settings.touchAim === 'aimtap') {
+  else if (save.settings.touchAim === 'pad') {
+    if (!held && !t.moved && !interrupted) {
+      haptics.tickNow();
+      fireAim();
+    }
+    view.aimActive = true;
+    return;
+  } else if (save.settings.touchAim === 'aimtap') {
     if (held) {
       /* rapid fire already shot */
     } else if (!t.moved && !interrupted) {
       if (aimLocked) {
         // A real tap: on iPhone the invisible switch under the finger gives the haptic tick.
         haptics.tickNow();
-        fireAngle(shotAngle(rawAim));
+        fireAim();
       } else {
         // First tap with no aim yet: aim there (no shot), so a tap never fires blind.
         setRawAim(w);
@@ -728,7 +825,8 @@ function endTouch(e: PointerEvent, interrupted: boolean) {
     } else {
       // Haptic tick *inside* the lift-off handler, while the gesture still counts as user activation.
       haptics.tickNow();
-      fireAngle(shotAngle(liftoffAim()));
+      const h = liftoffAim();
+      fireAim(h.a, h.u);
     }
   }
   view.aimActive = false;
@@ -795,18 +893,30 @@ window.addEventListener('keydown', (e) => {
     if (e.code === 'Space' || e.code === 'KeyS') {
       e.preventDefault();
       queueSwap();
-    } else if (e.code === 'ArrowLeft' || e.code === 'ArrowRight') {
-      rawAim += (e.code === 'ArrowLeft' ? -1 : 1) * 0.03;
+    } else if (e.code === 'ArrowLeft' || e.code === 'ArrowRight' || (level.rail && (e.code === 'ArrowUp' || e.code === 'ArrowDown'))) {
+      const d = e.code === 'ArrowLeft' || e.code === 'ArrowUp' ? -1 : 1;
+      if (level.rail) railAimU = Math.max(0, Math.min(level.rail.len, railAimU + d * 16));
+      else rawAim += d * 0.03;
       view.aimActive = true;
-    } else if (e.code === 'Enter' || e.code === 'ArrowUp') {
-      fireAngle(shotAngle(rawAim));
+    } else if (e.code === 'Enter' || (!level.rail && e.code === 'ArrowUp')) {
+      fireAim();
     }
   }
 });
 
 // ------------------------------------------------------------------ events → feel
 
-const POWER_HINTS = ['', 'Bomb marble! Pop it in a match to blast everything nearby', 'Slow marble! Pop it in a match to slow the chain', 'Reverse marble! Pop it in a match to roll the chain back', 'Lightning marble! Pop it in a match to strike every marble of its colour'];
+const POWER_HINTS = [
+  '',
+  'Bomb marble! Pop it in a match to blast everything nearby',
+  'Slow marble! Pop it in a match to slow the chain',
+  'Reverse marble! Pop it in a match to roll the chain back',
+  'Lightning marble! Pop it in a match to strike every marble of its colour',
+  'Wild marble! Pop it in a match and your next shot matches any colour',
+  'Scorpion marble! Pop it in a match and a scorpion eats the 10 front marbles',
+];
+/** seenPowers bits past the power-ups, for one-time hints. */
+const SEEN_COIN = 1 << 8;
 /** First time each power-up appears on screen, explain it once (tap ? for details). */
 function announcePowers() {
   const seen = save.seenPowers ?? 0;
@@ -842,6 +952,7 @@ function handleEvents(events: GameEvent[]) {
     }
     if (!attract) feelLog.push({ tick: st.tick, type: e.type, hitstop: fb.hitstop, trauma: fb.trauma, flash: fb.flash, particles: fb.particles, sound: fb.sound });
     if (feelLog.length > 400) feelLog.shift();
+    if (e.type === 'cascade') fb.pitch = Math.min(19, cascadeN++ * 0.3);
     hitstop = Math.max(hitstop, fb.hitstop);
     view.trauma = Math.min(FEEL.maxTrauma, view.trauma + fb.trauma);
     view.flash = Math.max(view.flash, fb.flash);
@@ -899,6 +1010,66 @@ function handleEvents(events: GameEvent[]) {
         if (e.gapBonus) fx.text(e.x, e.y, `GAP BONUS +${e.gapBonus}`, '#7cf7ff', 20, 1.2, 32);
         if (e.chainBonus) fx.text(e.x, e.y, `CHAIN ×${st.streak} +${e.chainBonus}`, '#ffd86b', 20, 1.2, e.gapBonus ? 58 : 32);
         if (fb.slowmo) fx.text(e.x, e.y, 'CLOSE CALL!', '#ff8fa3', 30, 1.3, e.combo > 0 ? -76 : -40);
+        // Boss fights: each popped marble flies into the boss as a spark.
+        if (level.bossFight && st.boss && !attract) {
+          for (const [i, b] of e.balls.slice(0, 8).entries()) {
+            const mx = (b.x + level.bossFight.x) / 2;
+            const my = (b.y + level.bossFight.y) / 2;
+            view.homing.push({ x: b.x, y: b.y, cx: mx + (fx.rand() - 0.5) * 420, cy: my + (fx.rand() - 0.5) * 420, t: -i * 0.04, color: col.light });
+          }
+        }
+        break;
+      }
+      case 'cascade': {
+        const col = PALETTE[e.c];
+        fx.burst(e.x, e.y, col.base, col.light, 6, 1);
+        if (cascadeN % 4 === 0) fx.ring(e.x, e.y, col.light, 6, 220, 0.3);
+        break;
+      }
+      case 'eat': {
+        const col = PALETTE[e.c];
+        fx.burst(e.x, e.y, col.base, '#ffb347', 10, 0.9);
+        break;
+      }
+      case 'coin': {
+        fx.ring(e.x, e.y, '#ffd23f', 8, 260, 0.45);
+        if (!attract && !((save.seenPowers ?? 0) & SEEN_COIN)) {
+          save.seenPowers = (save.seenPowers ?? 0) | SEEN_COIN;
+          writeSave(save);
+          ui.toast(`Bonus coin! Shoot it before it vanishes for +${TUNING.coinValue}`, 3600);
+        }
+        break;
+      }
+      case 'coinGet': {
+        fx.burst(e.x, e.y, '#ffcb2f', '#fff7c2', fb.particles, 1.3);
+        fx.ring(e.x, e.y, '#fff1a8', 10, 520, 0.4);
+        fx.text(e.x, e.y, `+${e.score}`, '#ffd23f', 34, 1.2, -30);
+        break;
+      }
+      case 'coinGone':
+        fx.burst(e.x, e.y, 'rgba(255,210,63,0.6)', '#fff', 6, 0.5);
+        break;
+      case 'bossHit': {
+        fx.burst(e.x, e.y, '#ffb347', '#fff', fb.particles, 1.2);
+        fx.ring(e.x, e.y, '#fff', 8, 400, 0.3);
+        fx.text(e.x, e.y, `DIRECT HIT −${e.dmg}`, '#ffb347', 28, 1.1, -30);
+        break;
+      }
+      case 'stun':
+        stuns++;
+        fx.ring(e.x, e.y, '#ff4d6a', 10, 380, 0.4);
+        fx.burst(e.x, e.y, '#7a5a50', '#ffb36b', fb.particles, 1.2);
+        fx.text(e.x, e.y, 'STUNNED!', '#ff8fa3', 30, 1.1, -50);
+        break;
+      case 'dodge':
+        fx.burst(e.x, e.y, '#7a5a50', '#c9a089', fb.particles, 0.8);
+        break;
+      case 'bossDown': {
+        view.bossDown = 0;
+        view.banner = { text: 'BOSS DEFEATED!', t: 0, color: '#7dffcf' };
+        fx.burst(e.x, e.y, '#ff6b81', '#ffd86b', fb.particles, 2);
+        fx.ring(e.x, e.y, '#fff', 10, 1100, 0.6);
+        fx.ring(e.x, e.y, '#ffd86b', 6, 800, 0.5);
         break;
       }
       case 'suck': {
@@ -927,6 +1098,13 @@ function handleEvents(events: GameEvent[]) {
           }
           fx.ring(e.x, e.y, '#fff3a0', 8, 700, 0.4);
           fx.text(e.x, e.y, `ZAP ×${(e.zaps?.length ?? 0) + 1}`, '#ffe14a', 38, 1.1, -34);
+        } else if (e.power === Power.Wild) {
+          fx.confetti(e.x, e.y, PALETTE.slice(0, 5).map((p) => p.base), 40);
+          fx.ring(e.x, e.y, '#ff9df0', 10, 520, 0.5);
+          fx.text(e.x, e.y, 'WILD SHOT!', '#ff9df0', 32, 1.2, -34);
+        } else if (e.power === Power.Scorpion) {
+          fx.ring(e.x, e.y, '#ffb347', 10, 520, 0.5);
+          fx.text(e.x, e.y, 'SCORPION!', '#ffb347', 32, 1.2, -34);
         } else if (e.power === Power.Bomb) {
           fx.ring(e.x, e.y, '#ffd86b', 10, 900, 0.45);
           fx.ring(e.x, e.y, '#fff', 4, 600, 0.3);
@@ -956,9 +1134,21 @@ function handleEvents(events: GameEvent[]) {
           break;
         }
         view.banner = { text: run ? 'Stage clear!' : 'Level clear!', sub: run ? `Run score ${(run.runScore + st.score).toLocaleString()}` : undefined, t: 0, color: '#7dffcf' };
-        const lc = level.launcher;
-        fx.confetti(lc.x, lc.y, PALETTE.map((p) => p.base), fb.particles);
+        const lc = launcherAt(st, level);
+        fx.confetti(lc.x, lc.y, PALETTE.slice(0, 6).map((p) => p.base), fb.particles);
         resultTimer = 1.8;
+        // Light sweep along the empty track, counting up the track bonus; then ace time.
+        const b = st.bonus;
+        if (b && b.sweep > 0) {
+          const dur = Math.min(2, 0.5 + (b.sweep / (100 * TUNING.sweepPerPct)) * 1.8);
+          view.sweep = { t: 0, dur, from: b.from };
+          tally = { sweep: b.sweep, ace: b.ace, ticks: 0, done: false, aceShown: false };
+          resultTimer = dur + (b.ace ? 1.9 : 1.2);
+        } else if (b?.ace) {
+          tally = { sweep: 0, ace: b.ace, ticks: 0, done: true, aceShown: false };
+          view.sweep = { t: 0, dur: 0.01, from: b.from };
+          resultTimer = 2.4;
+        }
         break;
       }
     }
@@ -1083,6 +1273,25 @@ function updateView(dt: number) {
   for (const b of view.bolts) b.t += dt;
   while (view.bolts.length && view.bolts[0].t > BOLT_LIFE) view.bolts.shift();
   if (aimLocked && save.settings.touchAim === 'aimtap' && mode === 'playing' && !attract) view.aimActive = true;
+  const pad = save.settings.touchAim === 'pad' && lastPointer !== 'mouse';
+  if (pad && mode === 'playing' && !attract) view.aimActive = true;
+  view.cursor = pad && !attract ? padCursor : null;
+  pumpRail();
+  if (view.bossDown >= 0) view.bossDown += dt;
+  // Pop sparks flying into the boss
+  for (let i = view.homing.length - 1; i >= 0; i--) {
+    const h = view.homing[i];
+    h.t += dt * 1.7;
+    if (h.t >= 1) {
+      view.homing.splice(i, 1);
+      const B = level.bossFight;
+      if (B) {
+        fx.ring(B.x + (fx.rand() - 0.5) * 30, B.y + (fx.rand() - 0.5) * 30, h.color, 6, 160, 0.25);
+        if (i % 3 === 0) audio.play('tick', 4 + fx.rand() * 4);
+      }
+    }
+  }
+  updateSweep(dt);
   // Aim spring
   [view.aimAngle, aimVel] = springAngle(view.aimAngle, aimVel, aimTarget, Math.min(dt, 1 / 30));
   view.recoil = Math.max(0, view.recoil - dt / FEEL.recoilReturn);
@@ -1113,18 +1322,36 @@ function updateView(dt: number) {
   if (st && st.phase === 'playing' && (view.aimActive || view.aimIdle) && !attract) {
     // Preview exactly what the shot will do: aim assist + hysteresis around the raw pointer angle.
     let hit;
-    if (save.settings.assist) {
+    const R = level.rail;
+    if (R) {
+      // Boss fights: straight across from the rail spot the frog is heading for.
+      view.aimFrom = railPoint(R, railAimU);
+      aimTarget = Math.atan2(R.n.y, R.n.x);
+      hit = raycast(st, level, R.n.x, R.n.y, view.aimFrom);
+    } else if (save.settings.assist) {
+      view.aimFrom = null;
       const r = assistAim(st, level, rawAim, aimSlot);
       hit = r.hit;
       aimTarget = r.angle;
     } else {
+      view.aimFrom = null;
       aimTarget = rawAim;
       hit = raycast(st, level, Math.cos(rawAim), Math.sin(rawAim));
     }
     aimSlot = hit ? { ballId: hit.ballId, front: hit.front } : null;
     view.aimShot = aimTarget;
     view.aimHit = hit;
-    view.aimWillPop = !!hit && runIfInserted(st, hit, st.gun.cur) >= 2;
+    view.aimWillPop = !!hit && runIfInserted(st, hit, st.gun.cur, (st.gun.w & 1) === 1) >= 2;
+    // Does the guide pass through the bonus coin (before reaching the chain)?
+    view.aimCoin = false;
+    if (st.coin) {
+      const o = view.aimFrom ?? level.launcher;
+      const dx = Math.cos(aimTarget);
+      const dy = Math.sin(aimTarget);
+      const t = (st.coin.x - o.x) * dx + (st.coin.y - o.y) * dy;
+      const perp = Math.abs((st.coin.x - o.x) * dy - (st.coin.y - o.y) * dx);
+      view.aimCoin = t > 0 && perp < TUNING.coinR + BALL_D * 0.3 && (!hit || t < hit.dist + TUNING.muzzle);
+    }
     const id = hit ? hit.ballId : -1;
     // Tick only while actively aiming, not when the chain rolls under an idle guide.
     if (id !== lastHitBall && id >= 0 && !view.aimCancel && view.aimActive) {
@@ -1162,6 +1389,39 @@ function updateView(dt: number) {
     if (tr.length > 7) tr.shift();
   }
   for (const id of view.shotTrails.keys()) if (!alive.has(id)) view.shotTrails.delete(id);
+}
+
+/** End-of-level light sweep: tick up the track bonus as the light runs, then show ace time. */
+function updateSweep(dt: number) {
+  const sw = view.sweep;
+  if (!sw) return;
+  sw.t += dt;
+  if (!tally) return;
+  if (!tally.done) {
+    const n = Math.floor(sw.t / 0.045);
+    if (n > tally.ticks && sw.t < sw.dur) {
+      tally.ticks = n;
+      audio.play('count', Math.min(24, n * 0.6));
+    }
+    if (sw.t >= sw.dur) {
+      tally.done = true;
+      const tr = level.tracks[0];
+      const end = pointAt(tr, tr.length);
+      fx.text(end.x, end.y, `TRACK BONUS +${tally.sweep}`, '#fff2a8', 30, 1.6, -40);
+      fx.ring(end.x, end.y, '#fff6c0', 10, 600, 0.5);
+      audio.play('barfull');
+      haptics.pulse([12, 30, 12]);
+    }
+  }
+  if (tally.done && tally.ace && !tally.aceShown && sw.t >= sw.dur + 0.45) {
+    tally.aceShown = true;
+    const lc = launcherAt(st, level);
+    fx.text(lc.x, lc.y, `ACE TIME! +${tally.ace}`, '#7dffcf', 36, 1.6, -70);
+    fx.ring(lc.x, lc.y, '#7dffcf', 10, 700, 0.5);
+    audio.play('ace');
+    haptics.pulse([20, 30, 20, 30, 50]);
+  }
+  if (sw.t > sw.dur + 0.7 && tally.done && (!tally.ace || tally.aceShown)) view.sweep = sw.t > sw.dur + 0.6 ? null : sw;
 }
 
 // ------------------------------------------------------------------ platform glue
@@ -1212,9 +1472,10 @@ window.__zuma = {
     return attract;
   },
   state: () => st,
-  level: () => ({ index: level.index, seed: level.campaignSeed, launcher: level.launcher, length: level.tracks[0].length, chains: level.tracks.length, family: level.family, boss: level.boss, mutators: level.mutators }),
+  level: () => ({ index: level.index, seed: level.campaignSeed, launcher: level.launcher, length: level.tracks[0].length, chains: level.tracks.length, family: level.family, boss: level.boss, mutators: level.mutators, rail: level.rail ?? null, bossFight: level.bossFight ?? null, ace: level.ace }),
+  launcherAt: () => launcherAt(st, level),
   layout: () => layout,
-  view: () => ({ aimAngle: view.aimAngle, aimShot: view.aimShot, aimCancel: view.aimCancel, aimActive: view.aimActive, aimHit: view.aimHit, willPop: view.aimWillPop, trauma: view.trauma, danger: view.danger }),
+  view: () => ({ aimAngle: view.aimAngle, aimShot: view.aimShot, aimCancel: view.aimCancel, aimActive: view.aimActive, aimHit: view.aimHit, willPop: view.aimWillPop, trauma: view.trauma, danger: view.danger, aimFrom: view.aimFrom, cursor: view.cursor, sweep: !!view.sweep, aimCoin: view.aimCoin }),
   fps: () => fps,
   drawMs: () => drawMs,
   timings: () => ({ sim: simMs, view: viewMs, draw: drawMs, hud: hudMs }),
@@ -1276,7 +1537,7 @@ resize();
 toTitle();
 if (levelsUpdated) {
   writeSave(save);
-  ui.toast('Levels got an update! New shapes, bosses, two-chain levels & Endless mode', 5000);
+  ui.toast('Levels got an update! Boss fights on a rail, Wild & Scorpion power-ups, bonus coins & ace time', 5000);
 }
 requestAnimationFrame(frame);
 

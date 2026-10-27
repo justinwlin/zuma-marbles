@@ -21,7 +21,13 @@ describe('feedback mapping', () => {
       { type: 'swap' },
       { type: 'barFull' },
       { type: 'lose' },
-      { type: 'won' },
+      { type: 'won', sweep: 0, ace: 0 },
+      { type: 'coinGet', x: 0, y: 0, score: 300 },
+      { type: 'bossHit', x: 0, y: 0, dmg: 6 },
+      { type: 'stun', x: 0, y: 0 },
+      { type: 'eat', x: 0, y: 0, c: 0 },
+      { type: 'power', power: Power.Wild, x: 0, y: 0, c: 0 },
+      { type: 'power', power: Power.Scorpion, x: 0, y: 0, c: 0 },
     ];
     for (const e of evs) expect(feedbackFor(e, ctx).sound, e.type).toBeTruthy();
   });

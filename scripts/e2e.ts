@@ -235,7 +235,7 @@ async function runProfile(name: string, opts: BrowserContextOptions) {
   await page.locator('#btn-help').click();
   await page.waitForTimeout(300);
   check('? opens the power-ups sheet and pauses', (await page.locator('[data-screen=powerups]').count()) === 1 && (await page.evaluate(() => (window as unknown as { __zuma: Z }).__zuma.mode)) === 'paused');
-  check('sheet shows 4 power-up icons', (await page.locator('.powers-sheet img').count()) === 4);
+  check('sheet shows 6 power-up icons', (await page.locator('.powers-sheet img').count()) === 6);
   await page.screenshot({ path: `${OUT}/${name}-8-powerups.png` });
   await page.locator('[data-screen=powerups] [data-a=back]').click();
   await page.waitForTimeout(200);
@@ -463,7 +463,7 @@ async function runProfile(name: string, opts: BrowserContextOptions) {
     s.chains.forEach((c) => (c.balls = []));
     s.shots = [];
   });
-  await page.waitForTimeout(2600);
+  await page.waitForTimeout(4800);
   const e2 = await page.evaluate(() => ({ hud: document.getElementById('hud-level')!.textContent, score: Number(document.getElementById('hud-score')!.textContent!.replace(/\D/g, '')), mode: (window as unknown as { __zuma: ZE }).__zuma.mode }));
   check('a cleared stage rolls straight into the next, score carried', e2.hud === 'Stage 2' && e2.score >= 5000 && e2.mode === 'playing', JSON.stringify(e2));
   await page.waitForTimeout(1500);
@@ -525,6 +525,74 @@ async function runProfile(name: string, opts: BrowserContextOptions) {
   await page.waitForTimeout(450);
   check('boss level announces itself', (await page.evaluate(() => (window as unknown as { __zuma: ZE }).__zuma.level().boss)) === 'boss' && (await page.locator('#hud-name').textContent())!.startsWith('BOSS'));
   await page.screenshot({ path: `${OUT}/${name}-15-boss.png` });
+  check('boss fight: HUD bar shows the boss health', ((await page.locator('#hud-bar-label').textContent()) ?? '').startsWith('BOSS'));
+  // Boss fight: the frog slides along its rail to where you aim and shoots straight across.
+  const rail = await page.evaluate(() => {
+    const z = (window as any).__zuma;
+    const l = z.level();
+    const s = z.state();
+    s.gun.cool = 0;
+    // A point across the board, a third of the way along the rail.
+    const u = l.rail.len * 0.3;
+    const wx = l.rail.a.x + l.rail.dir.x * u + l.rail.n.x * 500;
+    const wy = l.rail.a.y + l.rail.dir.y * u + l.rail.n.y * 500;
+    return { u, scr: z.worldToScreen(wx, wy), shots: s.stats.shots };
+  });
+  if (opts.hasTouch) {
+    const end = await touchDrag(page, [{ x: rail.scr.x + 20, y: rail.scr.y + 20 }, { x: rail.scr.x + 10, y: rail.scr.y + 10 }, rail.scr]);
+    await page.waitForTimeout(250);
+    await end();
+  } else {
+    await page.mouse.move(rail.scr.x, rail.scr.y);
+    await page.waitForTimeout(250);
+    await page.mouse.down();
+    await page.mouse.up();
+  }
+  await page.waitForTimeout(500);
+  const railAfter = await page.evaluate(() => {
+    const s = (window as any).__zuma.state();
+    return { u: s.rail.u, shots: s.stats.shots };
+  });
+  check('boss fight: the frog slides to the aimed spot on its rail', Math.abs(railAfter.u - rail.u) < 4, `u ${railAfter.u.toFixed(1)} vs ${rail.u.toFixed(1)}`);
+  check('boss fight: and fires from there', railAfter.shots === rail.shots + 1, `${railAfter.shots - rail.shots} shots`);
+
+  // ---- Trackpad aiming (touch): a drag anywhere moves the crosshair without firing; a tap fires.
+  if (opts.hasTouch) {
+    await page.evaluate(() => (window as any).__zuma.load('e2e-fixed', 2));
+    await page.waitForTimeout(300);
+    await page.locator('#btn-settings').click();
+    await page.waitForTimeout(200);
+    await page.locator('[data-a=aim][data-v=pad]').click();
+    await page.locator('[data-screen=settings] [data-a=back]').click();
+    await page.waitForTimeout(200);
+    await page.evaluate(() => (window as any).__zuma.setup([0, 1, 2, 3, 0, 1, 2, 3], {}));
+    const p0 = await page.evaluate(() => {
+      const z = (window as any).__zuma;
+      return { cur: z.view().cursor, shots: z.state().stats.shots };
+    });
+    const L = await page.evaluate(() => (window as any).__zuma.layout());
+    const sx = L.board.x + L.board.w * 0.5;
+    const sy = L.board.y + L.board.h * 0.8;
+    const endPad = await touchDrag(page, [{ x: sx, y: sy }, { x: sx + 10, y: sy - 10 }, { x: sx + 20, y: sy - 20 }, { x: sx + 30, y: sy - 30 }]);
+    await endPad();
+    await page.waitForTimeout(300);
+    const p1 = await page.evaluate(() => {
+      const z = (window as any).__zuma;
+      return { cur: z.view().cursor, shots: z.state().stats.shots, gun: z.state().gun.cool };
+    });
+    const moved = p0.cur && p1.cur ? Math.hypot(p1.cur.x - p0.cur.x, p1.cur.y - p0.cur.y) : 0;
+    check('trackpad: a drag moves the crosshair by the finger motion (scaled)', moved > 20 && moved < (42 / L.scale) * 1.1, `${moved.toFixed(1)} world px`);
+    check('trackpad: dragging does not shoot', p1.shots === p0.shots);
+    const endTap = await touchDrag(page, [{ x: sx, y: sy }]);
+    await endTap();
+    await page.waitForTimeout(300);
+    check('trackpad: a tap shoots', (await page.evaluate(() => (window as any).__zuma.state().stats.shots)) === p0.shots + 1);
+    await page.screenshot({ path: `${OUT}/${name}-16-trackpad.png` });
+    await page.locator('#btn-settings').click();
+    await page.waitForTimeout(200);
+    await page.locator('[data-a=aim][data-v=drag]').click();
+    await page.locator('[data-screen=settings] [data-a=back]').click();
+  }
 
   check('no console errors', errors.length === 0, errors.slice(0, 3).join(' | '));
   await browser.close();

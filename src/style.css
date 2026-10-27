@@ -53,6 +53,7 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
   transition: transform .25s ease-out;
 }
 .bar.full .bar-fill { animation: barglow 0.8s ease-in-out infinite alternate; }
+.bar.boss .bar-fill { background: linear-gradient(90deg, #ff3b5c, #ff8a5c 60%, #ffc2a0); box-shadow: 0 0 18px rgba(255, 60, 90, 0.7); animation: none; }
 @keyframes barglow { to { filter: brightness(1.35); } }
 .bar-label { position: absolute; inset: 0; display: grid; place-items: center; font-size: 10px; font-weight: 900; letter-spacing: 3px; color: rgba(255,255,255,0.85); text-shadow: 0 1px 3px rgba(0,0,0,.9); }
 .score { display: flex; flex-direction: column; align-items: flex-end; line-height: 1; min-width: 72px; }
@@ -175,6 +176,11 @@ input[type=text] {
 .stars span.on { color: #ffbe1f; text-shadow: 0 0 20px rgba(255,190,31,.7); }
 @keyframes star { to { transform: scale(1); opacity: 1; } }
 .big-score { text-align: center; font-size: 44px; font-weight: 900; font-variant-numeric: tabular-nums; margin-bottom: 12px; }
+.bonus-rows { display: flex; flex-direction: column; gap: 4px; margin: -6px auto 14px; font-size: 14px; color: var(--muted); max-width: 280px; }
+.bonus-rows div { display: flex; justify-content: space-between; }
+.bonus-rows b { color: #fff2a8; }
+.bonus-rows .ace b { color: #7dffcf; }
+.bonus-rows .miss b { color: var(--muted); font-weight: 600; }
 .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 14px; margin: 0 0 18px; font-size: 14px; }
 .stats div { display: flex; justify-content: space-between; color: var(--muted); }
 .stats b { color: var(--ink); }
@@ -262,7 +268,7 @@ input[type=range] { width: 140px; accent-color: var(--accent); touch-action: man
 .size-row { width: min(720px, 100%); display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: -4px 0 14px; }
 .size-row > span { font-weight: 800; }
 .size-row small { color: var(--muted); font-size: 12px; flex-basis: 100%; }
-.seg.seg3 { margin-top: 8px; }
+.seg.seg3 { margin-top: 8px; display: grid; grid-template-columns: 1fr 1fr; gap: 3px; }
 .seg.seg3 button { flex: 1; padding: 8px 6px; }
 
 /* ---------------- UX pass: scale, title, levels, settings */

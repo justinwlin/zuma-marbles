@@ -88,7 +88,7 @@ export function feedbackFor(e: GameEvent, ctx: FeelContext): Feedback {
       f.particles = e.matched ? 10 : 3;
       break;
     case 'power':
-      f.sound = ['', 'boom', 'slow', 'rewind', 'zap'][e.power];
+      f.sound = ['', 'boom', 'slow', 'rewind', 'zap', 'wild', 'scorpion'][e.power];
       if (e.power === Power.Lightning) {
         f.hitstop = 80;
         f.trauma = 0.75;
@@ -130,6 +130,63 @@ export function feedbackFor(e: GameEvent, ctx: FeelContext): Feedback {
       f.haptic = [20, 40, 20, 40, 60];
       f.particles = 150;
       break;
+    case 'coin':
+      f.sound = 'coinAppear';
+      f.particles = 10;
+      break;
+    case 'coinGet':
+      f.sound = 'coin';
+      f.hitstop = 30;
+      f.trauma = 0.15;
+      f.flash = 0.08;
+      f.haptic = [10, 30, 10];
+      f.particles = 30;
+      break;
+    case 'eat':
+      f.sound = 'crunch';
+      f.haptic = [8];
+      f.particles = 10;
+      break;
+    case 'cascade':
+      f.sound = 'pop';
+      f.particles = 6;
+      f.trauma = 0.03;
+      break;
+    case 'bossHit':
+      f.sound = 'bossHit';
+      f.hitstop = 50;
+      f.trauma = 0.35;
+      f.flash = 0.1;
+      f.haptic = [25, 20, 25];
+      f.particles = 40;
+      break;
+    case 'bossAttack':
+      f.sound = 'bossThrow';
+      f.trauma = 0.05;
+      break;
+    case 'stun':
+      f.sound = 'stun';
+      f.hitstop = 60;
+      f.trauma = 0.6;
+      f.flash = 0.2;
+      f.haptic = [60, 40, 60];
+      f.particles = 24;
+      break;
+    case 'dodge':
+      f.sound = 'thud';
+      f.trauma = 0.12;
+      f.particles = 14;
+      break;
+    case 'bossDown':
+      f.sound = 'bossDown';
+      f.hitstop = 120;
+      f.trauma = 1;
+      f.flash = 0.7;
+      f.haptic = [50, 30, 80, 30, 120];
+      f.particles = 160;
+      f.slowmo = [0.35, 700];
+      break;
+    case 'coinGone':
     case 'rollInDone':
     case 'settle':
     case 'lost':

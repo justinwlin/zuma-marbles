@@ -331,3 +331,19 @@ Built in this folder. See `README.md`.
   - Per-family chain speeds even out difficulty.
   - Clearer blue and purple.
   - On short phones, a slim bottom bar so the swap button never covers the board.
+- **Generator version 4** (ideas borrowed from Zuma's Revenge, Luxor and Zuma Deluxe):
+  - **Boss fights on a rail** (every 10th level, Zuma's Revenge style).
+    - The launcher slides along a straight rail at the board's right edge, which is the bottom on a portrait phone, and fires along the rail's normal, like the Luxor shooter.
+    - The chain snakes in lane by lane from beside the boss toward the rail, so the head is always the most exposed part.
+    - The boss has health equal to 0.8× the level's target. Each popped marble does 1 damage (+1 per combo step), and a shot through a gap that hits it directly does 6.
+    - Its rocks land where the frog stood when they were thrown, with a red telegraph circle; staying there means a 1.4 s stun. Below half health it attacks faster and sometimes throws two.
+    - At 0 health the chain cascades away from the head.
+    - The rail lives in the sim (`move`/`fire` commands project onto the rail; the frog slides at 1500 px/s and fires on arrival), so replays and snapshots stay exact.
+  - **Wild** and **Scorpion** power-ups (Luxor).
+    - Wild makes the next shot a rainbow marble that becomes the colour of the neighbour giving the longer run.
+    - The Scorpion runs back from the skull and eats the 10 front marbles.
+  - **Bonus coins** (Zuma Deluxe). They appear only in open spots with a clear line of fire, pass-through to collect, and count toward the score but not the bar.
+  - **End-of-level light sweep and ace time** (Zuma Deluxe).
+    - The sweep runs from the furthest point the head reached to the skull, worth 10 points per unreached 1%.
+    - Ace time adds +1000 for a clear inside the level's ace time, fit to the good bot's clear times.
+  - **Trackpad aiming** (touch setting): a relative crosshair at 0.8× finger motion, tap to fire.

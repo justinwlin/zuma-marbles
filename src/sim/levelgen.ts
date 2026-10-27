@@ -10,7 +10,7 @@ import { hash32, Rng } from './rng';
 import { buildTrack, chaikin, type Pt, type Track, TRACK_STEP } from './track';
 
 /** Bump when generated levels change; saves made with an older generator drop their mid-level snapshot. */
-export const GEN_VERSION = 3;
+export const GEN_VERSION = 4;
 
 export const WORLD_W = 1280;
 export const WORLD_H = 720;
@@ -54,7 +54,8 @@ export type TrackFamily =
   | 'tunnelSpiral'
   | 'twinSpiral'
   | 'twinSerpentine'
-  | 'twinColumns';
+  | 'twinColumns'
+  | 'bossRail';
 
 /** Typical visible length per chain (px, normal board), measured with scripts/gen-report.ts. */
 export const FAMILY_LEN: Record<TrackFamily, number> = {
@@ -72,6 +73,7 @@ export const FAMILY_LEN: Record<TrackFamily, number> = {
   twinSpiral: 2000,
   twinSerpentine: 2300,
   twinColumns: 1700,
+  bossRail: 3800,
 };
 
 /**
@@ -99,6 +101,22 @@ export const MUTATOR_INFO: Record<Mutator, { name: string; desc: string; color: 
 };
 export type BossKind = 'mini' | 'boss' | null;
 
+/** Boss fights: the launcher slides along a straight rail and shoots along n. */
+export interface Rail {
+  a: Pt;
+  /** Unit vector along the rail. */
+  dir: Pt;
+  /** Unit normal: the direction shots travel. */
+  n: Pt;
+  len: number;
+}
+export interface BossDef {
+  x: number;
+  y: number;
+  r: number;
+  hp: number;
+}
+
 export interface LevelDef {
   campaignSeed: string;
   index: number;
@@ -122,6 +140,11 @@ export interface LevelDef {
   repeatChance: number;
   mutators: Mutator[];
   boss: BossKind;
+  /** Boss fight: frog on a rail, a boss with health at the far side. */
+  rail?: Rail;
+  bossFight?: BossDef;
+  /** Clear the level within this many seconds for the ace-time bonus. */
+  ace: number;
   endless: boolean;
   /** Attempts the generator needed (debug/telemetry). */
   attempts: number;
@@ -151,6 +174,7 @@ const NAMES_B: Record<TrackFamily, string[]> = {
   twinSpiral: ['Twin Vortex', 'Galaxy', 'Yin-Yang', 'Double Helix'],
   twinSerpentine: ['Twin Rivers', 'Mirror', 'Crossroads', 'Gemini'],
   twinColumns: ['Twin Pillars', 'Gateway', 'Twin Falls', 'Canyon'],
+  bossRail: ['Throne', 'Lair', 'Sanctum', 'Idol'],
 };
 
 export function levelSeed(campaignSeed: string, index: number): number {
@@ -201,6 +225,18 @@ export function difficulty(index: number, endless = false) {
   return t;
 }
 
+/** Boss health per marble of the level's target. Tuned with scripts/balance.ts. */
+export const BOSS_HP = 0.8;
+
+/**
+ * Ace time in seconds, rounded to 5 s. Fit to the good bot's clear times so that a bit
+ * under half of its wins beat it: quick, accurate play earns it, average play doesn't.
+ */
+export function aceTime(target: number, o: { bossHp?: number; twin?: boolean } = {}): number {
+  const t = o.bossHp ? 12 + o.bossHp * 0.38 : (25 + target * 0.22) * (o.twin ? 1.2 : 1);
+  return Math.round(t / 5) * 5;
+}
+
 export function generateLevel(campaignSeed: string, index: number): Level {
   const world = worldFor(campaignSeed);
   GW = world.w;
@@ -219,7 +255,9 @@ export function generateLevel(campaignSeed: string, index: number): Level {
 
   // Two chains: from level 8 on (stage 4 in endless), more often on bosses.
   const twinChance = index < (endless ? 3 : 7) ? 0 : boss === 'boss' ? 0.4 : boss === 'mini' ? 0.25 : endless ? 0.3 : 0.22;
-  const twin = rng.chance(twinChance);
+  // Bosses are fights on a rail (always one chain).
+  const fight = boss === 'boss';
+  const twin = rng.chance(twinChance) && !fight;
 
   // Twists.
   const mutators: Mutator[] = [];
@@ -238,7 +276,9 @@ export function generateLevel(campaignSeed: string, index: number): Level {
     diff.target *= 0.75;
   }
 
-  const families: TrackFamily[] = twin
+  const families: TrackFamily[] = fight
+    ? ['bossRail']
+    : twin
     ? TWIN_FAMILIES
     : index === 0
       ? ['spiral']
@@ -260,7 +300,7 @@ export function generateLevel(campaignSeed: string, index: number): Level {
     for (let k = 0; k < 12 && found < 3 && attempts < 90; k++) {
       attempts++;
       const cand = GENERATORS[family](rng, { index, off });
-      const lens = validateLevel(cand.paths, cand.launcher, twin, undefined, cand.crossings);
+      const lens = validateLevel(cand.paths, cand.launcher, twin, undefined, cand.crossings, cand.rail);
       if (!lens) continue;
       found++;
       const avg = lens.reduce((a, b) => a + b, 0) / lens.length;
@@ -279,7 +319,10 @@ export function generateLevel(campaignSeed: string, index: number): Level {
   const name = `${rng.pick(NAMES_A)} ${rng.pick(NAMES_B[family])}`;
   const tracks = cand.paths.map((p) => buildTrack(p, { w: GW, h: GH }));
   if (cand.crossings) addCrossings(tracks[0], cand.crossings, rng, cand.under ?? 'random');
-  const off = Math.hypot(cand.launcher.x - GW / 2, cand.launcher.y - GH / 2) > 90 * ks;
+  const off = !cand.rail && Math.hypot(cand.launcher.x - GW / 2, cand.launcher.y - GH / 2) > 90 * ks;
+  const target = Math.round(diff.target);
+  // Boss health ≈ marbles to pop, a bit under a normal bar (direct hits and combos add up).
+  const bossFight = cand.boss ? { ...cand.boss, hp: Math.round(target * BOSS_HP) } : undefined;
   return {
     campaignSeed,
     index,
@@ -292,11 +335,14 @@ export function generateLevel(campaignSeed: string, index: number): Level {
     crossings: cand.crossings,
     colors: diff.colors,
     speed: diff.speed,
-    target: Math.round(diff.target),
+    target,
     powerChance: diff.powerChance,
     repeatChance,
     mutators,
     boss,
+    rail: cand.rail,
+    bossFight,
+    ace: aceTime(target, { bossHp: bossFight?.hp, twin }),
     endless,
     attempts,
     worldW: GW,
@@ -314,6 +360,8 @@ interface Cand {
   crossings?: Pt[];
   /** Which pass runs under: the earlier one ('first') or chosen at random. */
   under?: 'first' | 'random';
+  rail?: Rail;
+  boss?: { x: number; y: number; r: number };
 }
 interface GenOpts {
   index: number;
@@ -679,6 +727,38 @@ const GENERATORS: Record<TrackFamily, Gen> = {
     const launcher = { x: GW / 2 + rng.range(-100, 100), y: GH / 2 };
     return { paths: [mk(topYs, r), mk(botYs, !r)], launcher };
   },
+  bossRail(rng) {
+    // The frog slides along a rail on the right edge (the bottom on a portrait phone) and
+    // shoots straight across. The chain snakes in from beside the boss, lane by lane
+    // toward the rail, so the head — the dangerous end — is the most exposed.
+    const ks = GH / WORLD_H;
+    const kx = GW / WORLD_W;
+    const xr = GW - 64 * kx;
+    const rail: Rail = { a: { x: q(xr), y: q(70 * ks) }, dir: { x: 0, y: 1 }, n: { x: -1, y: 0 }, len: q(GH - 140 * ks) };
+    const boss = { x: q(96 * kx), y: q(GH / 2), r: 54 };
+    const n = rng.int(4, 7);
+    const gap = rng.range(100, 118) * kx;
+    const x1 = xr - rng.range(300, 340) * kx;
+    const xs: number[] = [];
+    for (let i = n - 1; i >= 0; i--) xs.push(x1 - i * gap);
+    if (xs[0] < boss.x + boss.r + 60) return { paths: [[]], launcher: { x: xr, y: GH / 2 } };
+    const top = 50 * ks;
+    const bottom = GH - 50 * ks;
+    let down = rng.chance(0.5);
+    const way: Pt[] = [];
+    for (const cx of xs) {
+      const amp = rng.range(0, 14);
+      const ph = rng.range(0, 6);
+      const a = down ? top : bottom;
+      const b = down ? bottom : top;
+      for (let k = 0; k <= 10; k++) {
+        const edge = k === 0 || k === 10 ? 0 : 1;
+        way.push({ x: cx + Math.sin(k * 0.8 + ph) * amp * edge, y: a + ((b - a) * k) / 10 });
+      }
+      down = !down;
+    }
+    return { paths: [chaikin(withEntry(way), 5)], launcher: { x: rail.a.x, y: q(GH / 2) }, rail, boss };
+  },
   twinColumns(rng) {
     // Left block feeds one chain, right block the other; launcher in the lane between.
     const gap = rng.range(100, 118);
@@ -751,7 +831,8 @@ function apart(a: Track, b: Track): boolean {
 }
 
 /** Validate every path of a level; returns visible lengths, or null if invalid. */
-export function validateLevel(paths: Pt[][], launcher: Pt, twin: boolean, world?: { w: number; h: number }, crossings?: Pt[]): number[] | null {
+export function validateLevel(paths: Pt[][], launcher: Pt, twin: boolean, world?: { w: number; h: number }, crossings?: Pt[], rail?: Rail): number[] | null {
+  if (paths.some((p) => p.length < 2)) return null;
   if (world) {
     GW = world.w;
     GH = world.h;
@@ -762,6 +843,8 @@ export function validateLevel(paths: Pt[][], launcher: Pt, twin: boolean, world?
   for (const t of tracks) {
     const l = checkPath(t, launcher, (twin ? 1100 : 2000) * ks, twin ? 4200 : 6200, t === tracks[0] ? crossings : undefined);
     if (l === null) return null;
+    // Rail levels: keep an open strip in front of the rail for shots and the boss's rocks.
+    if (rail) for (let i = 0; i < t.xs.length; i += 4) if ((t.xs[i] - rail.a.x) * rail.n.x + (t.ys[i] - rail.a.y) * rail.n.y < 240 * (GW / WORLD_W)) return null;
     lens.push(l);
   }
   for (let i = 0; i < tracks.length; i++) for (let j = i + 1; j < tracks.length; j++) if (!apart(tracks[i], tracks[j])) return null;

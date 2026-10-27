@@ -7,7 +7,7 @@
 // Constants are ported from Zuma Deluxe (100 Hz, ~1 px per waypoint, r=16) to
 // per-second units at our ball radius (r=18, ×1.125).
 
-import { BALL_D, BALL_R, type Level } from './levelgen';
+import { BALL_D, BALL_R, type Level, type Rail } from './levelgen';
 import { next as rngNext } from './rng';
 import { inTunnel, pointAt, type Pt, tangentAt, type Track } from './track';
 
@@ -58,12 +58,38 @@ export const TUNING = {
   barSlowTime: 11,
   /** Seconds before a stuck level-start is forced to cruise. */
   rollInMax: 5,
+  /** Scorpion: runs back from the skull eating the front marbles. */
+  scorpionSpeed: 520,
+  scorpionEats: 10,
+  /** Bonus coins: float for coinLife s; one every coinEvery..+coinJitter s. */
+  coinLife: 6.5,
+  coinFirst: 12,
+  coinEvery: 17,
+  coinJitter: 12,
+  coinR: 22,
+  coinValue: 300,
+  /** End-of-level bonuses. */
+  aceBonus: 1000,
+  /** Points per 1% of track the chain never reached. */
+  sweepPerPct: 10,
+  /** Rail (boss fights): frog slide speed, boss attacks. */
+  railSpeed: 1500,
+  bossShotSpeed: 300,
+  bossShotHitR: 44,
+  bossAttackEvery: 4.6,
+  bossAttackEvery2: 3.3,
+  bossFirstAttack: 6,
+  stunTime: 1.4,
+  bossDirectHit: 6,
 };
 
 /** Power-ups. 4 was Laser (aim beam + rapid fire) before Lightning replaced it. */
-export const Power = { None: 0, Bomb: 1, Slow: 2, Reverse: 3, Lightning: 4 } as const;
+export const Power = { None: 0, Bomb: 1, Slow: 2, Reverse: 3, Lightning: 4, Wild: 5, Scorpion: 6 } as const;
 export type Power = (typeof Power)[keyof typeof Power];
-export const POWER_NAMES = ['', 'Bomb', 'Slow', 'Reverse', 'Lightning'];
+export const POWER_NAMES = ['', 'Bomb', 'Slow', 'Reverse', 'Lightning', 'Wild', 'Scorpion'];
+export const POWER_COUNT = 6;
+/** Colour index used to draw a wild (rainbow) marble. */
+export const WILD = 6;
 
 export interface Ball {
   id: number;
@@ -88,6 +114,8 @@ export interface Ball {
   rv: number;
   /** Pending gap bonus for a shot ball, paid when it settles into a match. */
   gb: number;
+  /** Wild: takes the colour of the best neighbour when it settles. */
+  w?: 1;
 }
 
 export interface Shot {
@@ -99,6 +127,27 @@ export interface Shot {
   vy: number;
   gaps: number[]; // ids of balls whose gaps we flew through
   minGap: number;
+  w?: 1;
+}
+
+/** A scorpion running back along chain ci from the skull, eating the front marbles. */
+export interface Scorpion {
+  ci: number;
+  s: number;
+  left: number;
+}
+
+/** Boss fight state (levels with a rail + boss). */
+export interface BossState {
+  hp: number;
+  max: number;
+  /** Seconds to the next attack. */
+  t: number;
+  /** Hit flash timer. */
+  hitT: number;
+  dead: boolean;
+  /** Projectiles flying at the rail; u = where on the rail they land. */
+  shots: { id: number; x: number; y: number; vx: number; vy: number; u: number }[];
 }
 
 export type Phase = 'playing' | 'losing' | 'lost' | 'won';
@@ -111,6 +160,8 @@ export interface Chain {
   rolling: boolean; // level-start roll-in phase
   stopT: number;
   lastColor: number;
+  /** Furthest the head has reached (arc length). */
+  peak: number;
 }
 
 export interface GameState {
@@ -130,8 +181,22 @@ export interface GameState {
   spawning: boolean;
   barFull: boolean;
   score: number;
+  /** Part of the score that doesn't fill the bar (coins, end-of-level bonuses). */
+  extra: number;
   streak: number; // consecutive matching shots
-  gun: { cur: number; next: number; cool: number };
+  /** w: wild bits (1 = current marble is wild, 2 = next). */
+  gun: { cur: number; next: number; cool: number; w: number };
+  /** Rail levels: frog position u along the rail, target tu, queued shot, stun time. */
+  rail: { u: number; tu: number; q: boolean; stun: number } | null;
+  boss: BossState | null;
+  scorps: Scorpion[];
+  coin: { x: number; y: number; t: number } | null;
+  coinT: number;
+  rngBonus: number;
+  /** Boss beaten: the chain pops from the head back, one marble per tick per chain. */
+  cascade: boolean;
+  /** Set when the level is won. */
+  bonus: { sweep: number; ace: number; seconds: number; from: number[] } | null;
   loseV: number;
   stats: {
     shots: number;
@@ -142,10 +207,13 @@ export interface GameState {
     gapShots: number;
     powers: number;
     misses: number;
+    coins: number;
+    bossHits: number;
   };
 }
 
-export type Command = { type: 'fire'; x: number; y: number } | { type: 'swap' };
+/** move: rail levels only — slide the frog toward the point's spot on the rail. */
+export type Command = { type: 'fire'; x: number; y: number } | { type: 'swap' } | { type: 'move'; x: number; y: number };
 
 export type GameEvent =
   | { type: 'fire'; x: number; y: number; dx: number; dy: number; c: number }
@@ -160,8 +228,18 @@ export type GameEvent =
   | { type: 'barFull' }
   | { type: 'lose' }
   | { type: 'lost' }
-  | { type: 'won' }
-  | { type: 'rollInDone' };
+  | { type: 'won'; sweep: number; ace: number }
+  | { type: 'rollInDone' }
+  | { type: 'coin'; x: number; y: number }
+  | { type: 'coinGet'; x: number; y: number; score: number }
+  | { type: 'coinGone'; x: number; y: number }
+  | { type: 'eat'; x: number; y: number; c: number }
+  | { type: 'bossHit'; x: number; y: number; dmg: number }
+  | { type: 'bossAttack'; x: number; y: number; tx: number; ty: number }
+  | { type: 'stun'; x: number; y: number }
+  | { type: 'dodge'; x: number; y: number }
+  | { type: 'bossDown'; x: number; y: number }
+  | { type: 'cascade'; x: number; y: number; c: number };
 
 // ------------------------------------------------------------------ setup
 
@@ -182,23 +260,37 @@ export function createGame(level: Level): GameState {
     spawning: true,
     barFull: false,
     score: 0,
+    extra: 0,
     streak: 0,
-    gun: { cur: 0, next: 0, cool: 0.6 },
+    gun: { cur: 0, next: 0, cool: 0.6, w: 0 },
+    rail: level.rail ? { u: level.rail.len / 2, tu: level.rail.len / 2, q: false, stun: 0 } : null,
+    boss: level.bossFight ? { hp: level.bossFight.hp, max: level.bossFight.hp, t: TUNING.bossFirstAttack, hitT: 0, dead: false, shots: [] } : null,
+    scorps: [],
+    coin: null,
+    coinT: TUNING.coinFirst,
+    rngBonus: level.seed ^ 0x3c3c3c3c,
+    cascade: false,
+    bonus: null,
     loseV: 0,
-    stats: { shots: 0, matches: 0, popped: 0, maxCombo: 0, maxStreak: 0, gapShots: 0, powers: 0, misses: 0 },
+    stats: { shots: 0, matches: 0, popped: 0, maxCombo: 0, maxStreak: 0, gapShots: 0, powers: 0, misses: 0, coins: 0, bossHits: 0 },
   };
   // Roll-in: choose an initial speed that decelerates to cruise after covering rollIn × length.
   const v = level.speed;
   for (const tr of level.tracks) {
     const dist = tr.visibleFrom + (tr.length - tr.visibleFrom) * TUNING.rollIn;
-    st.chains.push({ balls: [], pending: [], speed: Math.sqrt(v * v + 2 * TUNING.decel * dist), rolling: true, stopT: 0, lastColor: -1 });
+    st.chains.push({ balls: [], pending: [], speed: Math.sqrt(v * v + 2 * TUNING.decel * dist), rolling: true, stopT: 0, lastColor: -1, peak: 0 });
   }
   st.gun.cur = randColor(st, level, 'gun');
   st.gun.next = randColor(st, level, 'gun');
   return st;
 }
 
-function rand(st: GameState, stream: 'chain' | 'gun'): number {
+function rand(st: GameState, stream: 'chain' | 'gun' | 'bonus'): number {
+  if (stream === 'bonus') {
+    const [v, s] = rngNext(st.rngBonus);
+    st.rngBonus = s;
+    return v;
+  }
   if (stream === 'chain') {
     const [v, s] = rngNext(st.rngChain);
     st.rngChain = s;
@@ -283,14 +375,21 @@ export function step(st: GameState, level: Level, cmds: readonly Command[] = [])
     }
   });
 
+  stepRail(st, level, ev);
   stepShots(st, level, ev);
+  stepBoss(st, level, ev);
   for (let ci = 0; ci < st.chains.length; ci++) stepChain(st, level, ci, ev);
+  stepScorpions(st, level, ev);
   for (let ci = 0; ci < st.chains.length; ci++) stepClearing(st, level, ci, ev);
+  if (st.boss && st.boss.hp <= 0 && !st.boss.dead) bossDefeated(st, level, ev);
+  stepCascade(st, level, ev);
+  stepCoin(st, level, ev);
   maybeSpawnPower(st, level);
   rerollGun(st, level);
+  for (const ch of st.chains) if (ch.balls.length) ch.peak = Math.max(ch.peak, ch.balls[ch.balls.length - 1].s);
 
-  // Bar
-  if (!st.barFull && st.score >= barTarget(level)) {
+  // Bar (boss fights have the boss's health instead)
+  if (!st.boss && !st.barFull && st.score - st.extra >= barTarget(level)) {
     st.barFull = true;
     st.spawning = false;
     let past = false;
@@ -318,12 +417,41 @@ export function step(st: GameState, level: Level, cmds: readonly Command[] = [])
     st.phase = 'losing';
     st.loseV = Math.max(lostChain.speed, 200);
     st.shots.length = 0;
+    st.scorps.length = 0;
+    st.coin = null;
+    if (st.boss) st.boss.shots.length = 0;
     ev.push({ type: 'lose' });
   } else if (st.barFull && ballCount(st) === 0 && st.shots.length === 0) {
     st.phase = 'won';
-    ev.push({ type: 'won' });
+    st.coin = null;
+    st.scorps.length = 0;
+    const b = awardBonus(st, level);
+    ev.push({ type: 'won', sweep: b.sweep, ace: b.ace });
   }
   return ev;
+}
+
+/**
+ * End-of-level bonuses (Zuma style): points for every 1% of track the chain never
+ * reached, and an ace-time bonus for clearing under the level's ace time.
+ */
+function awardBonus(st: GameState, level: Level) {
+  let sum = 0;
+  const from: number[] = [];
+  st.chains.forEach((ch, ci) => {
+    const tr = level.tracks[ci];
+    const p = Math.min(tr.length, Math.max(ch.peak, tr.visibleFrom));
+    sum += (tr.length - p) / (tr.length - tr.visibleFrom);
+    from.push(p);
+  });
+  const pct = Math.round((sum / st.chains.length) * 100);
+  const seconds = st.tick / TICK_HZ;
+  const sweep = pct * TUNING.sweepPerPct;
+  const ace = seconds <= level.ace ? TUNING.aceBonus : 0;
+  st.bonus = { sweep, ace, seconds, from };
+  st.score += sweep + ace;
+  st.extra += sweep + ace;
+  return st.bonus;
 }
 
 export function barTarget(level: Level): number {
@@ -332,15 +460,24 @@ export function barTarget(level: Level): number {
 
 function applyCommand(st: GameState, level: Level, cmd: Command, ev: GameEvent[]) {
   if (cmd.type === 'swap') {
-    if (st.gun.cur !== st.gun.next) {
+    const wc = st.gun.w & 1;
+    const wn = (st.gun.w >> 1) & 1;
+    if (st.gun.cur !== st.gun.next || wc !== wn) {
       const t = st.gun.cur;
       st.gun.cur = st.gun.next;
       st.gun.next = t;
+      st.gun.w = (wc << 1) | wn;
       ev.push({ type: 'swap' });
     }
     return;
   }
-  if (st.gun.cool > 0) return;
+  if (st.rail && level.rail) {
+    // Rail: slide to the point's spot on the rail; a fire command shoots on arrival.
+    st.rail.tu = railProject(level.rail, cmd.x, cmd.y);
+    if (cmd.type === 'fire') st.rail.q = true;
+    return;
+  }
+  if (cmd.type === 'move' || st.gun.cool > 0) return;
   const L = level.launcher;
   let dx = cmd.x - L.x;
   let dy = cmd.y - L.y;
@@ -348,22 +485,237 @@ function applyCommand(st: GameState, level: Level, cmd: Command, ev: GameEvent[]
   if (len < 1e-6) return;
   dx /= len;
   dy /= len;
+  fireShot(st, level, L.x, L.y, dx, dy, ev);
+}
+
+function fireShot(st: GameState, level: Level, lx: number, ly: number, dx: number, dy: number, ev: GameEvent[]) {
   const speed = TUNING.shotSpeed;
-  st.shots.push({
+  const wild = (st.gun.w & 1) === 1;
+  const sh: Shot = {
     id: st.nextId++,
     c: st.gun.cur,
-    x: L.x + dx * TUNING.muzzle,
-    y: L.y + dy * TUNING.muzzle,
+    x: lx + dx * TUNING.muzzle,
+    y: ly + dy * TUNING.muzzle,
     vx: dx * speed,
     vy: dy * speed,
     gaps: [],
     minGap: 1e9,
-  });
+  };
+  if (wild) sh.w = 1;
+  st.shots.push(sh);
   st.stats.shots++;
-  ev.push({ type: 'fire', x: L.x, y: L.y, dx, dy, c: st.gun.cur });
+  ev.push({ type: 'fire', x: lx, y: ly, dx, dy, c: wild ? WILD : st.gun.cur });
   st.gun.cur = st.gun.next;
+  st.gun.w >>= 1;
   st.gun.next = randColor(st, level, 'gun');
   st.gun.cool = TUNING.cooldown;
+}
+
+// ------------------------------------------------------------------ rail + boss
+
+export function railPoint(rail: Rail, u: number, out: Pt = { x: 0, y: 0 }): Pt {
+  out.x = rail.a.x + rail.dir.x * u;
+  out.y = rail.a.y + rail.dir.y * u;
+  return out;
+}
+
+/** Spot on the rail nearest to a point (0..rail.len). */
+export function railProject(rail: Rail, x: number, y: number): number {
+  const u = (x - rail.a.x) * rail.dir.x + (y - rail.a.y) * rail.dir.y;
+  return Math.max(0, Math.min(rail.len, u));
+}
+
+/** Where shots come from right now: the fixed launcher, or the frog's spot on the rail. */
+export function launcherAt(st: GameState, level: Level, out: Pt = { x: 0, y: 0 }): Pt {
+  if (st.rail && level.rail) return railPoint(level.rail, st.rail.u, out);
+  out.x = level.launcher.x;
+  out.y = level.launcher.y;
+  return out;
+}
+
+function stepRail(st: GameState, level: Level, ev: GameEvent[]) {
+  const r = st.rail;
+  const R = level.rail;
+  if (!r || !R) return;
+  if (r.stun > 0) {
+    r.stun = Math.max(0, r.stun - DT);
+    r.q = false;
+  }
+  const d = r.tu - r.u;
+  const mx = TUNING.railSpeed * DT;
+  r.u = Math.abs(d) <= mx ? r.tu : r.u + (d > 0 ? mx : -mx);
+  if (r.q && r.u === r.tu && st.gun.cool <= 0) {
+    r.q = false;
+    railPoint(R, r.u, tmpL);
+    fireShot(st, level, tmpL.x, tmpL.y, R.n.x, R.n.y, ev);
+  }
+}
+
+function stepBoss(st: GameState, level: Level, ev: GameEvent[]) {
+  const b = st.boss;
+  const r = st.rail;
+  const R = level.rail;
+  const B = level.bossFight;
+  if (!b || !r || !R || !B) return;
+  b.hitT = Math.max(0, b.hitT - DT);
+  for (let i = b.shots.length - 1; i >= 0; i--) {
+    const p = b.shots[i];
+    p.x += p.vx * DT;
+    p.y += p.vy * DT;
+    if ((p.x - R.a.x) * R.n.x + (p.y - R.a.y) * R.n.y > 0) continue;
+    // Landed on the rail: stuns the frog if it's still there.
+    b.shots.splice(i, 1);
+    if (Math.abs(r.u - p.u) < TUNING.bossShotHitR) {
+      r.stun = TUNING.stunTime;
+      r.q = false;
+      railPoint(R, r.u, tmpL);
+      ev.push({ type: 'stun', x: tmpL.x, y: tmpL.y });
+    } else {
+      railPoint(R, p.u, tmpL);
+      ev.push({ type: 'dodge', x: tmpL.x, y: tmpL.y });
+    }
+  }
+  if (b.dead || isRolling(st)) return;
+  b.t -= DT;
+  if (b.t > 0) return;
+  const angry = b.hp * 2 <= b.max;
+  b.t = (angry ? TUNING.bossAttackEvery2 : TUNING.bossAttackEvery) * (0.8 + 0.4 * rand(st, 'bonus'));
+  const targets = [r.u];
+  // Below half health it sometimes throws a second rock beside the first.
+  if (angry && rand(st, 'bonus') < 0.5) {
+    const side = r.u < R.len / 2 ? 1 : -1;
+    targets.push(Math.max(20, Math.min(R.len - 20, r.u + side * 100)));
+  }
+  for (const u of targets) {
+    railPoint(R, u, tmpL);
+    const dx = tmpL.x - B.x;
+    const dy = tmpL.y - B.y;
+    const l = Math.sqrt(dx * dx + dy * dy) || 1;
+    const sx = B.x + (dx / l) * B.r;
+    const sy = B.y + (dy / l) * B.r;
+    b.shots.push({ id: st.nextId++, x: sx, y: sy, vx: (dx / l) * TUNING.bossShotSpeed, vy: (dy / l) * TUNING.bossShotSpeed, u });
+    ev.push({ type: 'bossAttack', x: sx, y: sy, tx: tmpL.x, ty: tmpL.y });
+  }
+}
+
+function damageBoss(st: GameState, dmg: number) {
+  const b = st.boss;
+  if (!b || b.dead) return;
+  b.hp = Math.max(0, b.hp - dmg);
+  b.hitT = 0.2;
+}
+
+/** Boss beaten: no more marbles; the chain freezes and pops from the head back. */
+function bossDefeated(st: GameState, level: Level, ev: GameEvent[]) {
+  const b = st.boss!;
+  b.dead = true;
+  b.shots.length = 0;
+  st.cascade = true;
+  st.spawning = false;
+  st.barFull = true;
+  st.revT = 0;
+  st.chains.forEach((ch, ci) => {
+    const tr = level.tracks[ci];
+    ch.pending.length = 0;
+    ch.balls = ch.balls.filter((x) => x.s >= tr.visibleFrom - BALL_D || x.clr >= 0);
+    ch.stopT = 1e6;
+  });
+  ev.push({ type: 'bossDown', x: level.bossFight!.x, y: level.bossFight!.y });
+}
+
+function stepCascade(st: GameState, level: Level, ev: GameEvent[]) {
+  if (!st.cascade) return;
+  st.chains.forEach((ch, ci) => {
+    for (let i = ch.balls.length - 1; i >= 0; i--) {
+      const b = ch.balls[i];
+      if (b.clr >= 0) continue;
+      b.p = Power.None;
+      startClear(st, level, ci, b, 0, ev);
+      st.score += 10;
+      pointAt(level.tracks[ci], b.s, tmp);
+      ev.push({ type: 'cascade', x: tmp.x, y: tmp.y, c: b.c });
+      break;
+    }
+  });
+}
+
+// ------------------------------------------------------------------ scorpions + coins
+
+function stepScorpions(st: GameState, level: Level, ev: GameEvent[]) {
+  for (let k = st.scorps.length - 1; k >= 0; k--) {
+    const sc = st.scorps[k];
+    const tr = level.tracks[sc.ci];
+    const balls = st.chains[sc.ci].balls;
+    sc.s -= TUNING.scorpionSpeed * DT;
+    for (let i = balls.length - 1; i >= 0 && sc.left > 0; i--) {
+      const b = balls[i];
+      if (b.clr >= 0) continue;
+      if (b.s < sc.s - BALL_R) break;
+      startClear(st, level, sc.ci, b, 0, ev);
+      st.score += 10;
+      sc.left--;
+      pointAt(tr, b.s, tmp);
+      ev.push({ type: 'eat', x: tmp.x, y: tmp.y, c: b.c });
+    }
+    if (sc.left <= 0 || sc.s < tr.visibleFrom) st.scorps.splice(k, 1);
+  }
+}
+
+function stepCoin(st: GameState, level: Level, ev: GameEvent[]) {
+  if (st.coin) {
+    st.coin.t -= DT;
+    if (st.coin.t <= 0) {
+      ev.push({ type: 'coinGone', x: st.coin.x, y: st.coin.y });
+      st.coin = null;
+    }
+    return;
+  }
+  if (isRolling(st) || st.barFull || st.cascade) return;
+  st.coinT -= DT;
+  if (st.coinT > 0) return;
+  st.coinT = TUNING.coinEvery + rand(st, 'bonus') * TUNING.coinJitter;
+  const p = coinSpot(st, level);
+  if (!p) return;
+  st.coin = { x: p.x, y: p.y, t: TUNING.coinLife };
+  ev.push({ type: 'coin', x: p.x, y: p.y });
+}
+
+/** A random open spot for a coin: off the tracks, away from the launcher, in line of sight. */
+function coinSpot(st: GameState, level: Level): Pt | null {
+  const m = 70;
+  const clear2 = BALL_D * 1.4 * (BALL_D * 1.4);
+  for (let k = 0; k < 16; k++) {
+    const x = Math.round(m + rand(st, 'bonus') * (level.worldW - 2 * m));
+    const y = Math.round(m + rand(st, 'bonus') * (level.worldH - 2 * m));
+    const R = level.rail;
+    let from: Pt;
+    if (R) {
+      if ((x - R.a.x) * R.n.x + (y - R.a.y) * R.n.y < 150) continue;
+      from = railPoint(R, railProject(R, x, y));
+    } else {
+      from = level.launcher;
+      if ((x - from.x) * (x - from.x) + (y - from.y) * (y - from.y) < 140 * 140) continue;
+    }
+    const B = level.bossFight;
+    if (B && (x - B.x) * (x - B.x) + (y - B.y) * (y - B.y) < (B.r + 80) * (B.r + 80)) continue;
+    let ok = true;
+    for (const tr of level.tracks) {
+      for (let i = 0; i < tr.xs.length && ok; i += 6) {
+        const dx = tr.xs[i] - x;
+        const dy = tr.ys[i] - y;
+        if (dx * dx + dy * dy < clear2) ok = false;
+      }
+    }
+    if (!ok) continue;
+    // Reachable: nothing in the way of a straight shot.
+    const dx = x - from.x;
+    const dy = y - from.y;
+    const d = Math.sqrt(dx * dx + dy * dy);
+    const hit = raycast(st, level, dx, dy, from);
+    if (hit && hit.dist < d - TUNING.muzzle) continue;
+    return { x, y };
+  }
+  return null;
 }
 
 function rerollGun(st: GameState, level: Level) {
@@ -377,6 +729,7 @@ function rerollGun(st: GameState, level: Level) {
 
 const tmp: Pt = { x: 0, y: 0 };
 const tmp2: Pt = { x: 0, y: 0 };
+const tmpL: Pt = { x: 0, y: 0 };
 
 function hittable(b: Ball, track: Track) {
   return b.clr < 0 && b.ins >= 1 && b.s > track.visibleFrom + BALL_R * 0.5 && !inTunnel(track, b.s);
@@ -458,8 +811,36 @@ function stepShots(st: GameState, level: Level, ev: GameEvent[]) {
         sh.x = ox + ux * bestT;
         sh.y = oy + uy * bestT;
       }
+      // Coins float above the board: a shot passing through collects it and flies on.
+      const coin = st.coin;
+      if (coin) {
+        const cx = sh.x - coin.x;
+        const cy = sh.y - coin.y;
+        const cr = TUNING.coinR + BALL_R * 0.6;
+        if (cx * cx + cy * cy < cr * cr) {
+          st.coin = null;
+          st.score += TUNING.coinValue;
+          st.extra += TUNING.coinValue;
+          st.stats.coins++;
+          ev.push({ type: 'coinGet', x: coin.x, y: coin.y, score: TUNING.coinValue });
+        }
+      }
+      const B = level.bossFight;
+      let bossHit = false;
+      if (best < 0 && B && st.boss && !st.boss.dead) {
+        const bx = sh.x - B.x;
+        const by = sh.y - B.y;
+        const br = B.r + BALL_R * 0.7;
+        bossHit = bx * bx + by * by < br * br;
+      }
       if (best >= 0) {
         insertShot(st, level, sh, bestC, best, ev);
+        st.shots.splice(si, 1);
+        done = true;
+      } else if (bossHit) {
+        damageBoss(st, TUNING.bossDirectHit);
+        st.stats.bossHits++;
+        ev.push({ type: 'bossHit', x: sh.x, y: sh.y, dmg: TUNING.bossDirectHit });
         st.shots.splice(si, 1);
         done = true;
       } else if (sh.x < -60 || sh.x > level.worldW + 60 || sh.y < -60 || sh.y > level.worldH + 60) {
@@ -490,6 +871,7 @@ function insertShot(st: GameState, level: Level, sh: Shot, ci: number, hitIdx: n
   nb.iy = sh.y;
   // Gap bonus info rides on the ball until it settles.
   nb.gb = sh.gaps.length ? gapBonus(sh) : 0;
+  if (sh.w) nb.w = 1;
   if (front) {
     nb.g = 0; // gap to the hit ball grows from 0 → D
     balls.splice(hitIdx + 1, 0, nb);
@@ -498,7 +880,7 @@ function insertShot(st: GameState, level: Level, sh: Shot, ci: number, hitIdx: n
     hit.g = 0; // the hit ball's gap to the new ball grows
     balls.splice(hitIdx, 0, nb);
   }
-  ev.push({ type: 'hit', x: sh.x, y: sh.y, c: sh.c, front });
+  ev.push({ type: 'hit', x: sh.x, y: sh.y, c: sh.w ? WILD : sh.c, front });
 }
 
 function gapBonus(sh: Shot): number {
@@ -634,6 +1016,10 @@ function stepChain(st: GameState, level: Level, ci: number, ev: GameEvent[]) {
     if (b.ins < 1) {
       b.ins = Math.min(1, b.ins + DT / TUNING.insertTime);
       if (b.ins >= 1) {
+        if (b.w) {
+          b.c = wildColor(balls, i);
+          delete b.w;
+        }
         pointAt(track, b.s, tmp);
         ev.push({ type: 'settle', x: tmp.x, y: tmp.y, c: b.c });
         const gb = b.gb;
@@ -660,6 +1046,33 @@ function moveGroupBack(balls: Ball[], i: number, d: number) {
 
 function touching(a: Ball, b: Ball) {
   return b.s - a.s <= gapOf(b) + 0.5;
+}
+
+const live = (b: Ball) => b.clr < 0 && b.ins >= 1;
+
+/** Run length through index i if balls[i] had colour c. */
+function runAround(balls: Ball[], i: number, c: number): number {
+  let n = 1;
+  for (let k = i - 1; k >= 0 && balls[k].c === c && live(balls[k]) && touching(balls[k], balls[k + 1]); k--) n++;
+  for (let k = i + 1; k < balls.length && balls[k].c === c && live(balls[k]) && touching(balls[k - 1], balls[k]); k++) n++;
+  return n;
+}
+
+/** A wild marble takes whichever neighbour's colour makes the longer run (front wins ties). */
+function wildColor(balls: Ball[], i: number): number {
+  const b = balls[i];
+  let best = b.c;
+  let bestRun = 0;
+  for (const j of [i + 1, i - 1]) {
+    const o = balls[j];
+    if (!o || !live(o) || !(j > i ? touching(b, o) : touching(o, b))) continue;
+    const run = runAround(balls, i, o.c);
+    if (run > bestRun) {
+      bestRun = run;
+      best = o.c;
+    }
+  }
+  return best;
 }
 
 /** Find the colour run through index i; if ≥3 start clearing. */
@@ -700,6 +1113,8 @@ function startClear(st: GameState, level: Level, ci: number, b: Ball, combo: num
   b.combo = combo;
   b.suck = 0;
   st.stats.popped++;
+  // Boss fights: every popped marble hurts the boss (combos more).
+  if (!st.cascade) damageBoss(st, 1 + combo);
   if (b.p !== Power.None) activatePower(st, level, ci, b, ev);
 }
 
@@ -714,6 +1129,8 @@ function activatePower(st: GameState, level: Level, ci: number, b: Ball, ev: Gam
   ev.push(pev);
   if (p === Power.Slow) st.slowT = TUNING.slowTime;
   else if (p === Power.Reverse) st.revT = TUNING.reverseTime;
+  else if (p === Power.Wild) st.gun.w |= st.gun.w & 1 ? 2 : 1;
+  else if (p === Power.Scorpion) st.scorps.push({ ci, s: level.tracks[ci].length + BALL_D, left: TUNING.scorpionEats });
   else if (p === Power.Lightning) {
     // Every visible marble of the power marble's colour, on every track, is struck.
     const zaps: { x: number; y: number }[] = [];
@@ -789,7 +1206,7 @@ function maybeSpawnPower(st: GameState, level: Level) {
   });
   if (!cands.length) return;
   const b = cands[Math.floor(rand(st, 'chain') * cands.length)];
-  b.p = (1 + Math.floor(rand(st, 'chain') * 4)) as Power;
+  b.p = (1 + Math.floor(rand(st, 'chain') * POWER_COUNT)) as Power;
   b.pt = TUNING.powerLife;
 }
 
@@ -818,13 +1235,14 @@ export interface RayHit {
   dist: number;
 }
 
-/** Ray-cast from the launcher. Matches shot collision geometry (static chain). */
-export function raycast(st: GameState, level: Level, dx: number, dy: number): RayHit | null {
+/** Ray-cast from the launcher (or `from`). Matches shot collision geometry (static chain). */
+export function raycast(st: GameState, level: Level, dx: number, dy: number, from?: Pt): RayHit | null {
   const len = Math.sqrt(dx * dx + dy * dy) || 1;
   dx /= len;
   dy /= len;
-  const ox = level.launcher.x + dx * TUNING.muzzle;
-  const oy = level.launcher.y + dy * TUNING.muzzle;
+  const o = from ?? launcherAt(st, level, tmpR);
+  const ox = o.x + dx * TUNING.muzzle;
+  const oy = o.y + dy * TUNING.muzzle;
   const r = TUNING.hitDist;
   let best: RayHit | null = null;
   for (let ci = 0; ci < st.chains.length; ci++) {
@@ -852,6 +1270,8 @@ export function raycast(st: GameState, level: Level, dx: number, dy: number): Ra
   return best;
 }
 
+const tmpR: Pt = { x: 0, y: 0 };
+
 /** Ball centre on screen (track position, blended from the impact point while inserting). */
 export function ballPos(track: Track, b: Ball, out: Pt = { x: 0, y: 0 }): Pt {
   pointAt(track, b.s, out);
@@ -865,7 +1285,7 @@ export function ballPos(track: Track, b: Ball, out: Pt = { x: 0, y: 0 }): Pt {
 
 export function progress(st: GameState, level: Level) {
   return {
-    bar: Math.min(1, st.score / barTarget(level)),
+    bar: st.boss ? 1 - st.boss.hp / st.boss.max : Math.min(1, (st.score - st.extra) / barTarget(level)),
     head: headProgress(st, level),
   };
 }
@@ -890,10 +1310,16 @@ export function stateHash(st: GameState): string {
 }
 
 /** Length of the same-colour run the new ball would join if inserted at this hit (excluding itself). */
-export function runIfInserted(st: GameState, hit: RayHit, c: number): number {
+export function runIfInserted(st: GameState, hit: RayHit, c: number, wild = false): number {
   const balls = st.chains[hit.chain].balls;
   const behind = hit.front ? hit.index : hit.index - 1;
   const ahead = behind + 1;
+  if (wild) {
+    // A wild marble joins whichever neighbour makes the longer run.
+    let best = 0;
+    for (const j of [ahead, behind]) if (balls[j] && balls[j].clr < 0) best = Math.max(best, runIfInserted(st, hit, balls[j].c));
+    return best;
+  }
   let run = 0;
   for (let i = behind; i >= 0 && balls[i].c === c && balls[i].clr < 0; i--) {
     if (i < behind && balls[i + 1].s - balls[i].s > BALL_D + 1) break;

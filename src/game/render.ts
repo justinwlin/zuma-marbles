@@ -2,7 +2,7 @@
 // per layout; marbles use pre-rendered rolling sprite frames per colour.
 
 import { BALL_D, BALL_R, type Level } from '../sim/levelgen';
-import { type Ball, ballPos, type GameState, Power, type RayHit, TUNING } from '../sim/game';
+import { type Ball, ballPos, type GameState, launcherAt, Power, railPoint, type RayHit, TUNING, WILD } from '../sim/game';
 import { pointAt, type Pt, tangentAt, type Track } from '../sim/track';
 import { applyWorld, type Layout, worldToScreen } from './layout';
 import { type Particles, PK } from './fx';
@@ -18,7 +18,10 @@ export const PALETTE = [
   { base: '#1cb0ff', light: '#a9e4ff', dark: '#063f7a', glyph: 'diamond' },
   { base: '#9a3cff', light: '#d6b3ff', dark: '#33087a', glyph: 'star' },
   { base: '#eef2ff', light: '#ffffff', dark: '#6f7899', glyph: 'cross' },
+  // WILD (6): a rainbow marble from the Wild power-up.
+  { base: '#ff9df0', light: '#ffffff', dark: '#5a2a8a', glyph: 'wild' },
 ];
+const RAINBOW = ['#ff3b5c', '#ffbe1f', '#22df8c', '#1cb0ff', '#9a3cff', '#ff3b5c'];
 
 const FRAMES = 12;
 export const BOLT_LIFE = 0.45;
@@ -48,6 +51,18 @@ export interface ViewState {
   bolts: { pts: Pt[]; t: number; color: string }[];
   colorblind: boolean;
   showGuide: boolean;
+  /** Rail fights: the guide starts here (the spot the frog is heading for). */
+  aimFrom: Pt | null;
+  /** The guide passes through the bonus coin. */
+  aimCoin: boolean;
+  /** Trackpad aiming: the crosshair (world coords). */
+  cursor: Pt | null;
+  /** Sparks flying from pops to the boss (t: 0..1). */
+  homing: { x: number; y: number; cx: number; cy: number; t: number; color: string }[];
+  /** End-of-level light sweep along each track from `from` to the skull. */
+  sweep: { t: number; dur: number; from: number[] } | null;
+  /** Seconds since the boss was beaten (-1 while it's alive). */
+  bossDown: number;
   banner: { text: string; sub?: string; t: number; color: string } | null;
   hue: number;
 }
@@ -106,14 +121,30 @@ export class Renderer {
         const g = cv.getContext('2d')!;
         g.translate(px / 2, px / 2);
         // Body
-        const grad = g.createRadialGradient(-R * 0.3, -R * 0.3, R * 0.1, 0, 0, R);
-        grad.addColorStop(0, col.light);
-        grad.addColorStop(0.45, col.base);
-        grad.addColorStop(1, col.dark);
-        g.fillStyle = grad;
-        g.beginPath();
-        g.arc(0, 0, R, 0, Math.PI * 2);
-        g.fill();
+        if (col.glyph === 'wild') {
+          // Rainbow swirl that turns as it rolls.
+          const cg = g.createConicGradient((f / FRAMES) * Math.PI * 2, 0, 0);
+          RAINBOW.forEach((c, i) => cg.addColorStop(i / (RAINBOW.length - 1), c));
+          g.fillStyle = cg;
+          g.beginPath();
+          g.arc(0, 0, R, 0, Math.PI * 2);
+          g.fill();
+          const soft = g.createRadialGradient(-R * 0.3, -R * 0.3, R * 0.05, 0, 0, R);
+          soft.addColorStop(0, 'rgba(255,255,255,0.85)');
+          soft.addColorStop(0.5, 'rgba(255,255,255,0.1)');
+          soft.addColorStop(1, 'rgba(40,0,60,0.35)');
+          g.fillStyle = soft;
+          g.fill();
+        } else {
+          const grad = g.createRadialGradient(-R * 0.3, -R * 0.3, R * 0.1, 0, 0, R);
+          grad.addColorStop(0, col.light);
+          grad.addColorStop(0.45, col.base);
+          grad.addColorStop(1, col.dark);
+          g.fillStyle = grad;
+          g.beginPath();
+          g.arc(0, 0, R, 0, Math.PI * 2);
+          g.fill();
+        }
         // Rolling bands: meridians at longitude θ appear at x = R·sinθ·cosφ.
         g.save();
         g.beginPath();
@@ -237,8 +268,8 @@ export class Renderer {
     g.lineWidth = 2;
     g.stroke();
     g.clip();
-    // Concentric temple rings around the launcher
-    const lc = lvl.launcher;
+    // Concentric temple rings around the launcher (around the boss in a boss fight)
+    const lc = lvl.bossFight ?? lvl.launcher;
     for (let r = 70; r < 900; r += 46) {
       g.strokeStyle = `hsla(${hue}, 60%, 70%, ${0.05 * Math.max(0, 1 - r / 900)})`;
       g.lineWidth = r % 92 === 70 % 92 ? 2 : 1;
@@ -291,6 +322,12 @@ export class Renderer {
       g.arc(end.x, end.y, BALL_R * 1.6, 0, Math.PI * 2);
       g.stroke();
     });
+    if (lvl.rail) {
+      this.drawRail(g, hue);
+      g.restore();
+      this.bg = cv;
+      return;
+    }
     // Launcher pad
     const pad = g.createRadialGradient(lc.x, lc.y, 10, lc.x, lc.y, 64);
     pad.addColorStop(0, `hsla(${hue}, 30%, 30%, 0.9)`);
@@ -315,6 +352,45 @@ export class Renderer {
     this.bg = cv;
   }
 
+  /** The frog's rail: a groove with sleepers and end stops. */
+  private drawRail(g: CanvasRenderingContext2D, hue: number) {
+    const R = this.level.rail!;
+    const a = R.a;
+    const b = railPoint(R, R.len);
+    g.lineCap = 'round';
+    g.strokeStyle = `hsla(${hue}, 70%, 60%, 0.18)`;
+    g.lineWidth = 60;
+    g.beginPath();
+    g.moveTo(a.x, a.y);
+    g.lineTo(b.x, b.y);
+    g.stroke();
+    // Sleepers
+    g.strokeStyle = `hsla(${hue}, 30%, 40%, 0.55)`;
+    g.lineWidth = 5;
+    for (let u = 0; u <= R.len; u += 26) {
+      const p = railPoint(R, u);
+      g.beginPath();
+      g.moveTo(p.x - R.n.x * 22, p.y - R.n.y * 22);
+      g.lineTo(p.x + R.n.x * 22, p.y + R.n.y * 22);
+      g.stroke();
+    }
+    // Two rails
+    for (const off of [-13, 13]) {
+      g.strokeStyle = `hsla(${hue}, 60%, 80%, 0.55)`;
+      g.lineWidth = 4;
+      g.beginPath();
+      g.moveTo(a.x + R.n.x * off, a.y + R.n.y * off);
+      g.lineTo(b.x + R.n.x * off, b.y + R.n.y * off);
+      g.stroke();
+    }
+    g.fillStyle = `hsla(${hue}, 70%, 75%, 0.6)`;
+    for (const p of [a, b]) {
+      g.beginPath();
+      g.arc(p.x, p.y, 9, 0, Math.PI * 2);
+      g.fill();
+    }
+  }
+
   // ------------------------------------------------------------ frame
 
   draw(st: GameState, v: ViewState, fx: Particles) {
@@ -335,6 +411,8 @@ export class Renderer {
       g.fillRect(0, 0, lvl.worldW, lvl.worldH);
     }
 
+    if (v.sweep) this.drawSweep(v);
+    if (st.coin) this.drawCoin(st.coin, v);
     // Aim guide (under the balls)
     if (v.showGuide && (v.aimActive || v.aimIdle) && st.phase === 'playing') this.drawAim(st, v);
 
@@ -363,7 +441,7 @@ export class Renderer {
       if (b.suck <= 0) continue;
       const a = pointAt(tr, ch.balls[i - 1].s);
       const p = pointAt(tr, b.s);
-      const col = PALETTE[b.c];
+      const col = PALETTE[b.c] ?? PALETTE[0];
       const flick = 0.5 + 0.5 * Math.sin(v.time * 40);
       g.beginPath();
       g.moveTo(a.x, a.y);
@@ -404,10 +482,13 @@ export class Renderer {
       }
     });
 
+    for (const sc of st.scorps) this.drawScorpion(lvl.tracks[sc.ci], sc.s, v);
+    if (lvl.bossFight && st.boss) this.drawBoss(st, v);
+
     // Projectiles with trails
     for (const sh of st.shots) {
       const trail = v.shotTrails.get(sh.id);
-      const col = PALETTE[sh.c];
+      const col = PALETTE[sh.w ? WILD : sh.c];
       if (trail && trail.length > 1) {
         for (let i = 1; i < trail.length; i++) {
           const t = i / trail.length;
@@ -423,11 +504,14 @@ export class Renderer {
         g.globalAlpha = 1;
       }
       const ang = Math.atan2(sh.vy, sh.vx);
-      this.drawMarble(sh.c, sh.x, sh.y, ang, v.time * 30, 1, rot, 1.18, 0.88);
+      this.drawMarble(sh.w ? WILD : sh.c, sh.x, sh.y, ang, v.time * 30, 1, rot, 1.18, 0.88);
     }
 
     this.drawLauncher(st, v, rot);
+    if (st.boss) this.drawRocks(st, v);
     this.drawBolts(v);
+    this.drawHoming(v);
+    if (v.cursor && st.phase === 'playing') this.drawCursor(v.cursor, v);
 
     // Particles (world)
     this.drawParticles(fx, false);
@@ -473,7 +557,7 @@ export class Renderer {
     let alpha = 1;
     if (b.clr >= 0) alpha = Math.max(0, 1 - Math.max(0, b.clr / TUNING.clearTime - 0.5) * 2);
     g.globalAlpha = alpha;
-    this.drawMarble(b.c, pos.x, pos.y, ang, b.s / BALL_R, sc, rot);
+    this.drawMarble(b.w ? WILD : b.c, pos.x, pos.y, ang, b.s / BALL_R, sc, rot);
     if (b.clr >= 0) {
       // White-hot flash as it pops.
       const t = b.clr / TUNING.clearTime;
@@ -546,6 +630,10 @@ export class Renderer {
     g.lineWidth = 1.5;
     g.beginPath();
     const kind = PALETTE[c].glyph;
+    if (kind === 'wild') {
+      g.restore();
+      return;
+    }
     if (kind === 'circle') g.arc(0, 0, r * 0.8, 0, Math.PI * 2);
     else if (kind === 'triangle') {
       g.moveTo(0, -r);
@@ -690,20 +778,331 @@ export class Renderer {
       g.lineTo(r * 0.04, -r * 0.18);
       g.closePath();
       g.fill();
+    } else if (p === Power.Wild) {
+      // Rainbow ring around a white star
+      const cg = g.createConicGradient(0, 0, 0);
+      RAINBOW.forEach((c, i) => cg.addColorStop(i / (RAINBOW.length - 1), c));
+      g.strokeStyle = cg;
+      g.lineWidth = r * 0.3;
+      g.arc(0, 0, r * 0.72, 0, Math.PI * 2);
+      g.stroke();
+      g.beginPath();
+      for (let i = 0; i < 10; i++) {
+        const a = -Math.PI / 2 + (i * Math.PI) / 5;
+        const rr = i % 2 ? r * 0.18 : r * 0.42;
+        g.lineTo(Math.cos(a) * rr, Math.sin(a) * rr);
+      }
+      g.closePath();
+      g.fill();
+    } else if (p === Power.Scorpion) {
+      drawScorpionShape(g, r * 0.95, 0, '#ffb347');
     }
     g.restore();
   }
 
+  /** A scorpion scuttling backwards along the track (head toward the chain). */
+  private drawScorpion(tr: Track, s: number, v: ViewState) {
+    if (s > tr.length + BALL_D * 2) return;
+    const g = this.ctx;
+    const p = pointAt(tr, Math.min(s, tr.length));
+    const t = tangentAt(tr, Math.min(s, tr.length));
+    g.save();
+    g.translate(p.x, p.y);
+    g.rotate(Math.atan2(-t.y, -t.x) + Math.PI / 2);
+    g.drawImage(this.glowSprite('#ffb347'), -50, -50, 100, 100);
+    drawScorpionShape(g, BALL_R * 1.7, v.time, '#ffb347', true);
+    g.restore();
+  }
+
+  /** Bonus coin: spins, glows, blinks before it vanishes; a ring counts down its life. */
+  private drawCoin(c: { x: number; y: number; t: number }, v: ViewState) {
+    const g = this.ctx;
+    const R = TUNING.coinR;
+    if (c.t < 1.6 && Math.sin(v.time * 22) < -0.2) return;
+    const appear = Math.min(1, (TUNING.coinLife - c.t) / 0.25);
+    const bob = Math.sin(v.time * 3) * 3;
+    g.save();
+    g.translate(c.x, c.y + bob);
+    g.drawImage(this.glowSprite(v.aimCoin ? '#fff6a0' : '#ffd23f'), -R * 2.6, -R * 2.6, R * 5.2, R * 5.2);
+    // Life ring
+    g.strokeStyle = 'rgba(255,230,140,0.55)';
+    g.lineWidth = 3;
+    g.beginPath();
+    g.arc(0, 0, R + 9, -Math.PI / 2, -Math.PI / 2 + (Math.PI * 2 * c.t) / TUNING.coinLife);
+    g.stroke();
+    // A slow wobble rather than a full spin, so it always reads as a coin.
+    const sx = (0.55 + 0.45 * Math.abs(Math.cos(v.time * 2.2))) * easeOutBack(appear);
+    g.scale(sx, easeOutBack(appear));
+    const gr = g.createRadialGradient(-R * 0.3, -R * 0.35, 2, 0, 0, R);
+    gr.addColorStop(0, '#fff7c2');
+    gr.addColorStop(0.5, '#ffcb2f');
+    gr.addColorStop(1, '#a86200');
+    g.fillStyle = gr;
+    g.beginPath();
+    g.arc(0, 0, R, 0, Math.PI * 2);
+    g.fill();
+    g.strokeStyle = '#7a4300';
+    g.lineWidth = 2.5;
+    g.beginPath();
+    g.arc(0, 0, R * 0.72, 0, Math.PI * 2);
+    g.stroke();
+    // Embossed star
+    g.fillStyle = '#fff1a8';
+    g.beginPath();
+    for (let i = 0; i < 10; i++) {
+      const a = -Math.PI / 2 + (i * Math.PI) / 5;
+      const rr = i % 2 ? R * 0.22 : R * 0.5;
+      g.lineTo(Math.cos(a) * rr, Math.sin(a) * rr);
+    }
+    g.closePath();
+    g.fill();
+    g.restore();
+  }
+
+  /** Light running along the empty track to the skull, leaving a glowing trail. */
+  private drawSweep(v: ViewState) {
+    const g = this.ctx;
+    const sw = v.sweep!;
+    const k = Math.min(1, sw.t / sw.dur);
+    const e = 1 - Math.pow(1 - k, 2);
+    const fade = sw.t > sw.dur ? Math.max(0, 1 - (sw.t - sw.dur) / 0.6) : 1;
+    this.level.tracks.forEach((tr, ti) => {
+      const from = sw.from[ti] ?? tr.length;
+      const to = from + (tr.length - from) * e;
+      if (to - from < 2) return;
+      g.save();
+      g.lineCap = 'round';
+      g.lineJoin = 'round';
+      const path = new Path2D();
+      const p0 = pointAt(tr, from);
+      path.moveTo(p0.x, p0.y);
+      for (let s = from + 6; s < to; s += 6) {
+        const p = pointAt(tr, s);
+        path.lineTo(p.x, p.y);
+      }
+      const pe = pointAt(tr, to);
+      path.lineTo(pe.x, pe.y);
+      g.globalAlpha = 0.35 * fade;
+      g.strokeStyle = '#fff2a8';
+      g.lineWidth = BALL_D + 6;
+      g.stroke(path);
+      g.globalAlpha = 0.8 * fade;
+      g.strokeStyle = '#ffffff';
+      g.lineWidth = 5;
+      g.stroke(path);
+      if (k < 1) {
+        g.globalAlpha = 1;
+        g.drawImage(this.glowSprite('#fff6c0'), pe.x - 60, pe.y - 60, 120, 120);
+        g.fillStyle = '#fff';
+        g.beginPath();
+        g.arc(pe.x, pe.y, 9, 0, Math.PI * 2);
+        g.fill();
+      }
+      g.restore();
+    });
+  }
+
+  /** Pop sparks curving into the boss. */
+  private drawHoming(v: ViewState) {
+    const g = this.ctx;
+    const B = this.level.bossFight;
+    if (!B) return;
+    for (const h of v.homing) {
+      const t = Math.min(1, h.t);
+      const u = 1 - t;
+      const x = u * u * h.x + 2 * u * t * h.cx + t * t * B.x;
+      const y = u * u * h.y + 2 * u * t * h.cy + t * t * B.y;
+      g.globalAlpha = 0.9;
+      g.drawImage(this.glowSprite(h.color), x - 16, y - 16, 32, 32);
+      g.fillStyle = '#fff';
+      g.beginPath();
+      g.arc(x, y, 3.5, 0, Math.PI * 2);
+      g.fill();
+    }
+    g.globalAlpha = 1;
+  }
+
+  /** The boss: a stone idol that glares, flashes when hit and turns red when angry. Drawn upright on screen. */
+  private drawBoss(st: GameState, v: ViewState) {
+    const g = this.ctx;
+    const L = this.L;
+    const B = this.level.bossFight!;
+    const b = st.boss!;
+    const dead = b.dead;
+    const angry = b.hp * 2 <= b.max;
+    const sp = worldToScreen(L, B);
+    const shake = b.hitT > 0 ? Math.sin(v.time * 90) * 4 * (b.hitT / 0.2) : 0;
+    const k = L.scale * (B.r / 54);
+    g.save();
+    g.setTransform(L.dpr, 0, 0, L.dpr, (v.shake.x + shake) * L.dpr, v.shake.y * L.dpr);
+    g.translate(sp.x, sp.y);
+    g.scale(k, k);
+    if (dead) {
+      // Crumbles away after it's beaten.
+      const t = Math.max(0, v.bossDown);
+      if (t > 1.4) {
+        g.restore();
+        return;
+      }
+      g.globalAlpha = Math.max(0, 1 - t / 1.4);
+      g.translate(Math.sin(v.time * 70) * 6 * (1 - t / 1.4), t * 30);
+      g.scale(1 + t * 0.3, 1 - t * 0.2);
+    }
+    const breathe = 1 + Math.sin(v.time * 2.2) * 0.02;
+    g.scale(breathe, breathe);
+    g.drawImage(this.glowSprite(angry ? '#ff3048' : '#8a6cff'), -110, -110, 220, 220);
+    // Head
+    const body = g.createLinearGradient(0, -60, 0, 60);
+    body.addColorStop(0, angry ? '#a04848' : '#7d7aa0');
+    body.addColorStop(1, angry ? '#4a1018' : '#2c2a48');
+    g.fillStyle = body;
+    g.beginPath();
+    g.roundRect(-48, -56, 96, 112, 30);
+    g.fill();
+    g.strokeStyle = 'rgba(0,0,0,0.5)';
+    g.lineWidth = 4;
+    g.stroke();
+    // Crown spikes
+    g.fillStyle = angry ? '#ffb347' : '#ffd86b';
+    g.beginPath();
+    for (let i = 0; i < 5; i++) {
+      const x = -36 + i * 18;
+      g.moveTo(x - 7, -52);
+      g.lineTo(x, -72 - (i === 2 ? 8 : 0));
+      g.lineTo(x + 7, -52);
+    }
+    g.fill();
+    // Brow + eyes
+    const glare = dead ? '#333' : angry ? '#ff2a2a' : '#7cf7ff';
+    g.fillStyle = 'rgba(0,0,0,0.55)';
+    g.fillRect(-38, -26, 76, 26);
+    g.drawImage(this.glowSprite(glare), -44, -36, 40, 40);
+    g.drawImage(this.glowSprite(glare), 4, -36, 40, 40);
+    g.fillStyle = glare;
+    g.beginPath();
+    g.ellipse(-20, -14, 10, dead ? 2 : 6, angry ? 0.25 : 0, 0, Math.PI * 2);
+    g.ellipse(20, -14, 10, dead ? 2 : 6, angry ? -0.25 : 0, 0, Math.PI * 2);
+    g.fill();
+    // Mouth opens just before (and while) it throws
+    const open = dead ? 2 : Math.max(0, 1 - b.t / 0.6) * 14 + (b.shots.length ? 6 : 0) + 4;
+    g.fillStyle = '#12060a';
+    g.beginPath();
+    g.roundRect(-26, 18, 52, 6 + open, 6);
+    g.fill();
+    g.fillStyle = '#efe3c6';
+    for (let i = -20; i <= 14; i += 11) g.fillRect(i, 18, 6, 5);
+    if (b.hitT > 0) {
+      g.globalAlpha = b.hitT / 0.2;
+      g.fillStyle = '#fff';
+      g.beginPath();
+      g.roundRect(-48, -56, 96, 112, 30);
+      g.fill();
+      g.globalAlpha = 1;
+    }
+    g.restore();
+    // Health bar under the boss (screen space, always horizontal)
+    if (dead) return;
+    const w = 120 * Math.max(0.7, L.scale * 1.4);
+    const h = 9;
+    const bx = sp.x - w / 2;
+    const by = sp.y + 66 * k + 8;
+    g.save();
+    g.setTransform(L.dpr, 0, 0, L.dpr, 0, 0);
+    g.fillStyle = 'rgba(0,0,0,0.6)';
+    g.beginPath();
+    g.roundRect(bx - 2, by - 2, w + 4, h + 4, 6);
+    g.fill();
+    g.fillStyle = angry ? '#ff4d6a' : '#ffb347';
+    g.beginPath();
+    g.roundRect(bx, by, Math.max(0.01, (w * b.hp) / b.max), h, 4);
+    g.fill();
+    g.restore();
+  }
+
+  /** Boss rocks, with a warning marker where each will land on the rail. */
+  private drawRocks(st: GameState, v: ViewState) {
+    const g = this.ctx;
+    const R = this.level.rail;
+    if (!R) return;
+    for (const r of st.boss!.shots) {
+      const t = railPoint(R, r.u);
+      const d = (r.x - R.a.x) * R.n.x + (r.y - R.a.y) * R.n.y;
+      const near = Math.max(0, Math.min(1, 1 - d / 900));
+      const pulse = 0.5 + 0.5 * Math.sin(v.time * (8 + near * 14));
+      g.strokeStyle = `rgba(255,60,80,${0.35 + 0.5 * pulse})`;
+      g.lineWidth = 3 + near * 3;
+      g.beginPath();
+      g.arc(t.x, t.y, TUNING.bossShotHitR * (0.6 + 0.4 * near), 0, Math.PI * 2);
+      g.stroke();
+      g.fillStyle = `rgba(255,60,80,${0.1 + 0.2 * near})`;
+      g.fill();
+      // Fiery tail, then the molten rock
+      const sp = Math.hypot(r.vx, r.vy) || 1;
+      for (let i = 1; i <= 5; i++) {
+        g.globalAlpha = 0.5 - i * 0.08;
+        g.drawImage(this.glowSprite('#ff5a2a'), r.x - (r.vx / sp) * i * 11 - 22, r.y - (r.vy / sp) * i * 11 - 22, 44, 44);
+      }
+      g.globalAlpha = 1;
+      g.drawImage(this.glowSprite('#ff9a3d'), r.x - 40, r.y - 40, 80, 80);
+      g.save();
+      g.translate(r.x, r.y);
+      g.rotate(v.time * 6);
+      const rg = g.createRadialGradient(-4, -4, 2, 0, 0, 18);
+      rg.addColorStop(0, '#fff3b0');
+      rg.addColorStop(0.35, '#ff9a2e');
+      rg.addColorStop(1, '#8a2208');
+      g.fillStyle = rg;
+      g.beginPath();
+      for (let i = 0; i < 7; i++) {
+        const a = (i / 7) * Math.PI * 2;
+        const rr = 16 + (i % 2 ? 3 : -2);
+        g.lineTo(Math.cos(a) * rr, Math.sin(a) * rr);
+      }
+      g.closePath();
+      g.fill();
+      g.strokeStyle = '#3a1004';
+      g.lineWidth = 2.5;
+      g.stroke();
+      g.restore();
+    }
+  }
+
+  /** Trackpad crosshair. */
+  private drawCursor(p: Pt, v: ViewState) {
+    const g = this.ctx;
+    const r = 15 + Math.sin(v.time * 5) * 1.5;
+    g.save();
+    g.translate(p.x, p.y);
+    g.strokeStyle = 'rgba(0,0,0,0.5)';
+    g.lineWidth = 6;
+    this.crossPath(g, r);
+    g.stroke();
+    g.strokeStyle = '#fff';
+    g.lineWidth = 2.5;
+    this.crossPath(g, r);
+    g.stroke();
+    g.restore();
+  }
+  private crossPath(g: CanvasRenderingContext2D, r: number) {
+    g.beginPath();
+    g.arc(0, 0, r, 0, Math.PI * 2);
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      g.moveTo(dx * r * 0.45, dy * r * 0.45);
+      g.lineTo(dx * r * 1.5, dy * r * 1.5);
+    }
+  }
+
   private drawAim(st: GameState, v: ViewState) {
     const g = this.ctx;
-    const lc = this.level.launcher;
+    const lc = v.aimFrom ?? this.level.launcher;
     const dx = Math.cos(v.aimShot);
     const dy = Math.sin(v.aimShot);
     const ox = lc.x + dx * TUNING.muzzle;
     const oy = lc.y + dy * TUNING.muzzle;
     const hit = v.aimHit;
     const dist = hit ? hit.dist : 1600;
-    const col = PALETTE[st.gun.cur];
+    const wild = (st.gun.w & 1) === 1;
+    const col = PALETTE[wild ? WILD : st.gun.cur];
     if (v.aimCancel) {
       // Greyed, dashed guide with an ✕: releasing now will not shoot.
       const end = Math.min(dist, 260);
@@ -765,7 +1164,7 @@ export class Renderer {
     const gy = gp.y + n.x * side * BALL_R * 0.55;
     g.globalAlpha = v.aimWillPop ? 0.75 : 0.42;
     const gsz = v.aimWillPop ? 0.85 + pulse * 0.12 : 0.78;
-    this.drawMarble(st.gun.cur, gx, gy, 0, 0, gsz, this.L.portrait ? -Math.PI / 2 : 0);
+    this.drawMarble(wild ? WILD : st.gun.cur, gx, gy, 0, 0, gsz, this.L.portrait ? -Math.PI / 2 : 0);
     g.globalAlpha = 1;
     if (v.aimWillPop) {
       g.strokeStyle = '#fff';
@@ -780,24 +1179,56 @@ export class Renderer {
 
   private drawLauncher(st: GameState, v: ViewState, rot: number) {
     const g = this.ctx;
-    const lc = this.level.launcher;
+    const lc = launcherAt(st, this.level);
     const a = v.aimAngle;
     const rec = v.recoil * FEEL.recoilPx;
     const cx = lc.x - Math.cos(a) * rec;
     const cy = lc.y - Math.sin(a) * rec;
-    const cur = PALETTE[st.gun.cur];
+    const curC = st.gun.w & 1 ? WILD : st.gun.cur;
+    const nextC = st.gun.w & 2 ? WILD : st.gun.next;
+    const cur = PALETTE[curC];
+    const stun = st.rail?.stun ?? 0;
+    const R = this.level.rail;
+    if (R && st.rail && Math.abs(st.rail.tu - st.rail.u) > 4) {
+      // Where the frog is sliding to
+      const t = railPoint(R, st.rail.tu);
+      g.strokeStyle = 'rgba(255,255,255,0.45)';
+      g.lineWidth = 3;
+      g.beginPath();
+      g.arc(t.x, t.y, 20, 0, Math.PI * 2);
+      g.stroke();
+    }
     g.save();
     g.translate(cx, cy);
     g.rotate(a);
     // Glow in current colour (cached sprite; shadowBlur is slow on phones)
     g.drawImage(this.glowSprite(cur.base), -76, -76, 152, 152);
-    drawCharacter(g, this.character, { t: v.time, blink: blinkAt(v.time), recoil: v.recoil });
+    if (stun > 0) g.globalAlpha = 0.55 + 0.25 * Math.sin(v.time * 30);
+    drawCharacter(g, this.character, { t: v.time, blink: stun > 0 ? 1 : blinkAt(v.time), recoil: v.recoil });
+    g.globalAlpha = 1;
     g.restore();
+    if (stun > 0) {
+      // Dizzy stars
+      for (let i = 0; i < 3; i++) {
+        const ang = v.time * 6 + (i * Math.PI * 2) / 3;
+        const sx = cx + Math.cos(ang) * 30;
+        const sy = cy + Math.sin(ang) * 30;
+        g.fillStyle = '#ffe14a';
+        g.beginPath();
+        for (let j = 0; j < 10; j++) {
+          const aa = -Math.PI / 2 + (j * Math.PI) / 5;
+          const rr = j % 2 ? 3 : 7;
+          g.lineTo(sx + Math.cos(aa) * rr, sy + Math.sin(aa) * rr);
+        }
+        g.closePath();
+        g.fill();
+      }
+    }
     // Current ball in the mouth (slides forward as cooldown recovers)
     const load = 1 - Math.min(1, st.gun.cool / TUNING.cooldown);
     const md = MOUTH_X - rec + load * 2;
     const scale = 0.55 + 0.45 * easeOutBack(load);
-    this.drawMarble(st.gun.cur, cx + Math.cos(a) * md, cy + Math.sin(a) * md, a, v.time * 2, scale, rot);
+    this.drawMarble(curC, cx + Math.cos(a) * md, cy + Math.sin(a) * md, a, v.time * 2, scale, rot);
     // Next ball on the back: big enough to read at a glance, with a ring so it reads as "next".
     const nd = -36;
     const nx = cx + Math.cos(a) * nd;
@@ -810,7 +1241,7 @@ export class Renderer {
     g2.strokeStyle = 'rgba(255,255,255,0.7)';
     g2.lineWidth = 2;
     g2.stroke();
-    this.drawMarble(st.gun.next, nx, ny, a, 0, 0.72, rot);
+    this.drawMarble(nextC, nx, ny, a, 0, 0.72, rot);
   }
 
   private drawSkull(v: ViewState) {
@@ -1000,6 +1431,76 @@ export function powerIconUrl(p: Power, color = 3): string {
   url = cv.toDataURL();
   iconCache.set(p * 10 + color, url);
   return url;
+}
+
+/** Scorpion, facing up (−y), size ~r. t animates the legs and tail. */
+function drawScorpionShape(g: CanvasRenderingContext2D, r: number, t: number, color: string, outline = false) {
+  if (outline) {
+    // Dark outline pass so it stands out against marbles and the track.
+    g.save();
+    g.shadowColor = 'rgba(0,0,0,0.9)';
+    g.shadowBlur = 0;
+    for (const [dx, dy] of [[2, 0], [-2, 0], [0, 2], [0, -2]]) {
+      g.save();
+      g.translate(dx, dy);
+      drawScorpionShape(g, r, t, '#3a1a00');
+      g.restore();
+    }
+    g.restore();
+  }
+  g.save();
+  g.lineCap = 'round';
+  g.strokeStyle = color;
+  g.fillStyle = color;
+  // Legs
+  g.lineWidth = r * 0.09;
+  for (let i = 0; i < 3; i++) {
+    const y = -r * 0.1 + i * r * 0.22;
+    const w = Math.sin(t * 24 + i * 2) * r * 0.08;
+    for (const sx of [-1, 1]) {
+      g.beginPath();
+      g.moveTo(sx * r * 0.2, y);
+      g.lineTo(sx * r * 0.55, y - r * 0.1 + w * sx);
+      g.lineTo(sx * r * 0.68, y + r * 0.08 + w * sx);
+      g.stroke();
+    }
+  }
+  // Claws
+  g.lineWidth = r * 0.12;
+  for (const sx of [-1, 1]) {
+    g.beginPath();
+    g.moveTo(sx * r * 0.18, -r * 0.35);
+    g.quadraticCurveTo(sx * r * 0.5, -r * 0.55, sx * r * 0.36, -r * 0.82);
+    g.stroke();
+    g.beginPath();
+    g.arc(sx * r * 0.36, -r * 0.88, r * 0.12, 0, Math.PI * 2);
+    g.fill();
+  }
+  // Body
+  g.beginPath();
+  g.ellipse(0, -r * 0.15, r * 0.26, r * 0.32, 0, 0, Math.PI * 2);
+  g.fill();
+  g.beginPath();
+  g.ellipse(0, r * 0.28, r * 0.2, r * 0.22, 0, 0, Math.PI * 2);
+  g.fill();
+  // Tail curling over the back
+  g.lineWidth = r * 0.14;
+  const wag = Math.sin(t * 8) * 0.15;
+  g.beginPath();
+  g.moveTo(0, r * 0.45);
+  g.bezierCurveTo(r * (0.05 + wag), r * 0.95, r * (0.55 + wag), r * 0.75, r * (0.35 + wag), r * 0.25);
+  g.stroke();
+  g.fillStyle = '#fff3c4';
+  g.beginPath();
+  g.arc(r * (0.33 + wag), r * 0.2, r * 0.09, 0, Math.PI * 2);
+  g.fill();
+  // Eyes
+  g.fillStyle = '#1a0a00';
+  g.beginPath();
+  g.arc(-r * 0.09, -r * 0.36, r * 0.05, 0, Math.PI * 2);
+  g.arc(r * 0.09, -r * 0.36, r * 0.05, 0, Math.PI * 2);
+  g.fill();
+  g.restore();
 }
 
 function wrap(a: number) {

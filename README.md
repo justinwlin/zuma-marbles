@@ -12,7 +12,7 @@ A Zuma-style marble shooter for phone (portrait) and desktop. It installs as a P
 - **Colours** are picked to stay distinct: blue is a light sky blue and purple a deep violet (their ΔE went from 49 to 89, and from 3 to 31 under deuteranopia), and colour-blind symbols are available in Settings.
 - **Characters**: pick the launcher (Frog, Calico Cat, Fox, Penguin) in Settings. They're drawn in code in `src/game/characters.ts`, with blinking, tail sway and ear flicks on recoil.
 - **Large-marble campaigns**: switch Marbles to Large on the Levels screen. The levels are generated on a 25% smaller board with the same marble size, so when the board is scaled to fit the screen everything is 25% bigger. The campaign seed gets an `xl-` prefix, so codes like `xl-jade-1234/3` stay deterministic and shareable. Each campaign keeps its own progress. A golden test pins normal-campaign levels so they never change.
-- **Aim modes** (touch): Drag & release, **Aim + tap** (drag to set the aim, tap to shoot; the tap is a real one, so iPhones vibrate on every shot), and Tap.
+- **Aim modes** (touch): Drag & release, **Aim + tap** (drag to set the aim, tap to shoot; the tap is a real one, so iPhones vibrate on every shot), Tap, and **Trackpad**: drag anywhere to move a crosshair by your finger's motion (scaled to 0.8× for finer control, and your finger never covers the target), tap to shoot, hold to keep shooting.
 - **Settings mid-game**: the gear button in the HUD pauses the game and opens Settings.
 - **Accessibility & comfort** (Settings → Accessibility / Aiming): **Relaxed speed** (chains at 75%), colour-blind symbols, **larger text & buttons**, reduce motion, and **left-handed** controls (swap button on the left). Menus scale up on big screens, every settings row is a tap target, Escape goes back, and losing a level shows a specific tip (offering Relaxed speed after two losses in a row).
 - **Haptics**:
@@ -23,10 +23,19 @@ A Zuma-style marble shooter for phone (portrait) and desktop. It installs as a P
   - Slow: slows the chain.
   - Reverse: rolls the chain back.
   - Lightning: strikes every marble of its colour on the board, on every track (it replaced Laser).
+  - Wild: your next marble turns rainbow. When it lands it takes the colour of whichever neighbour makes the longer run (the guide's "will pop" preview accounts for this).
+  - Scorpion: a scorpion runs back from the skull and eats the 10 marbles closest to it.
+- **Bonus coins**: every 17–29 s a gold coin appears in an open spot that has a clear line of fire. Shoot through it within 6.5 s for +300. Coins and end-of-level bonuses count toward your score but not the ZUMA bar.
+- **End of level**: a light runs down the empty track from the furthest point the chain reached to the skull, counting up a **track bonus** (10 points per 1% of track the chain never reached). Then comes the **ace time** bonus (+1000) if you cleared the level within its ace time. The ace time shows on the level banner, the pause screen and the result screen, and is fit so that a bit under half of the good bot's wins beat it.
+- **Boss fights** (every 10th level, campaign and endless):
+  - Your character slides along a **rail** on the right edge (the bottom on a portrait phone) and shoots straight across. Aim anywhere and it slides there: it follows the mouse, a drag, or the crosshair, and a tap or click slides there and fires. Arrow keys move it on desktop.
+  - The boss, a stone idol with a health bar, sits on the far side behind the chain. **Every marble you pop** sends a spark into it (1 damage, plus 1 per combo step), and a shot through a gap that hits it does 6. The HUD bar shows its health.
+  - It throws flaming rocks at your rail spot; a **red circle** marks where each will land. Still standing there means you're stunned for 1.4 s. Below half health it turns red and sometimes throws two.
+  - At 0 health the boss crumbles, no more marbles come, and the chain pops from the head back.
 - **Levels** come from `(campaignSeed, levelIndex)`, so the same seed gives the same levels on any device. Level codes look like `jade-1234/12` and can be shared from the Levels screen.
   - **Shapes**: 11 single-chain families (spiral, lobes, wave, square, heart, serpentine, columns, comb, horseshoe, figure-8, tunnel spiral) and 3 two-chain families (twin spiral, twin serpentine, twin columns). Some levels move the launcher off-centre. Per-family chain speeds even out how hard each shape plays.
   - **Bridges and tunnels**: figure-8s cross themselves once, and tunnel spirals bring the chain in under the outer rings to surface beside the launcher. Marbles under a bridge are hidden and can't be hit (shots, bombs and lightning skip them).
-  - **Difficulty** runs in a sawtooth: each block of 5 levels climbs to a **mini-boss** (every 5th) or **boss** (every 10th), and the next block starts lower than that peak but higher than the last. Later levels also pick shorter tracks for their shape.
+  - **Difficulty** runs in a sawtooth: each block of 5 levels climbs to a **mini-boss** (every 5th) or **boss fight** (every 10th), and the next block starts lower than that peak but higher than the last. Later levels also pick shorter tracks for their shape. Boss health is 0.8× the level's marble target (tuned with `scripts/balance.ts`).
   - **Two chains** show up from level 8 on (more often on bosses): two entrances, two skulls, and losing either chain loses the level.
   - **Twists** on about a third of levels from level 6: **Power surge** (3× power-ups) and **Streaky** (long same-colour runs).
   - Difficulty was tuned with `scripts/balance.ts` (bot win rates per level); `scripts/gen-report.ts` and `scripts/gen-sheet.ts` show the family mix and a contact sheet of generated tracks.
@@ -102,6 +111,17 @@ Mechanics are ported from the Zuma Deluxe decompilation ([alula/CircleShootApp](
 
 **`npm test`** covers:
 - **Mechanics**: generator validity over 120 levels, arc-length uniformity, matching, insertion side, spacing, magnet pull and its acceleration, combos, scoring, power-ups, gun colours, cooldown, win and lose.
+- **New features** (`tests/features.test.ts`):
+  - The Wild marble picks the longer run and pops it, and its rainbow survives swaps.
+  - The Scorpion eats exactly the 10 front marbles.
+  - Coins spawn clear of tracks, pay out without filling the bar, and expire.
+  - Track and ace bonuses are calculated correctly.
+  - Boss levels are rail fights clear of the rail.
+  - The frog slides and fires straight across, and pops and direct hits hurt the boss.
+  - Defeat cascades into a win.
+  - Rocks stun only if you stay put, and a stunned frog can't fire.
+  - The bot beats boss fights, and boss-fight replays and snapshots are exact.
+  - All six power-ups spawn.
 - **Determinism**: same inputs give the same state hash, and save → load → continue matches an uninterrupted run.
 - **Aim-preview honesty**: the highlighted ball is the ball the shot actually hits, at least 97% of the time. With assist, at least 99% of shots land in the previewed slot.
 - **Aim assist**: correction stays within ±3.5° and keeps the slot you pointed at, it tolerates finger wobble better than raw aim, and the sticky target holds across slot boundaries.
@@ -117,7 +137,9 @@ Mechanics are ported from the Zuma Deluxe decompilation ([alula/CircleShootApp](
 - The HUD doesn't cover the board.
 - Real touch drag and mouse aim show the guide and predict a pop.
 - Releasing on ✕ cancels the shot, a second finger cancels it, and a normal drag still fires afterwards.
-- The "?" sheet pauses the game and resumes it.
+- The "?" sheet pauses the game and resumes it, and lists all 6 power-ups.
+- Boss fight: the HUD shows the boss's health, and the frog slides to the aimed spot on its rail and fires from there.
+- Trackpad: a drag moves the crosshair by the scaled finger motion without shooting, and a tap shoots.
 - One shot leads to a match, and the pop gets hit-stop, shake, particles and sound. A bomb in the match triggers.
 - Frame rate is acceptable, pause → quit → continue restores the snapshot, and there are no console errors.
 

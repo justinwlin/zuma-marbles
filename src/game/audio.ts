@@ -175,6 +175,54 @@ export class Audio {
         this.noise(t, 0.08, 0.08, 'lowpass', 900, 300, 1);
       },
       count: (t, p) => this.tone(t, 'square', 1200 * st(p), 1200 * st(p), 0.02, 0.05),
+      coinAppear: (t) => {
+        this.tone(t, 'sine', 1568, 1568, 0.08, 0.12);
+        this.tone(t + 0.07, 'sine', 2093, 2093, 0.14, 0.1);
+      },
+      coin: (t) => {
+        // Classic two-note coin + sparkle
+        this.tone(t, 'square', 988, 988, 0.07, 0.12);
+        this.tone(t + 0.07, 'square', 1319, 1319, 0.28, 0.12);
+        for (let i = 0; i < 4; i++) this.tone(t + 0.1 + i * 0.05, 'sine', 2637 * st(i * 2), 2637 * st(i * 2), 0.08, 0.05);
+      },
+      crunch: (t, p) => {
+        this.noise(t, 0.07, 0.4, 'bandpass', 1800 * st(p), 700, 1.5);
+        this.tone(t, 'square', 180, 90, 0.05, 0.1);
+      },
+      wild: (t) => {
+        [0, 4, 7, 11, 14, 19].forEach((n, i) => this.tone(t + i * 0.045, 'triangle', 660 * st(n), 660 * st(n), 0.16, 0.14));
+      },
+      scorpion: (t) => {
+        for (let i = 0; i < 8; i++) this.noise(t + i * 0.03, 0.025, 0.25, 'highpass', 4000, 3000, 1);
+        this.tone(t, 'sawtooth', 300, 900, 0.25, 0.08);
+      },
+      bossHit: (t) => {
+        this.tone(t, 'sine', 160, 50, 0.3, 0.7);
+        this.noise(t, 0.2, 0.45, 'lowpass', 2500, 200, 1);
+        this.tone(t + 0.02, 'sawtooth', 110, 70, 0.35, 0.12);
+      },
+      bossThrow: (t) => {
+        this.noise(t, 0.35, 0.2, 'bandpass', 400, 1400, 2);
+        this.tone(t, 'sawtooth', 90, 140, 0.3, 0.1);
+      },
+      stun: (t) => {
+        this.tone(t, 'sine', 120, 40, 0.4, 0.7);
+        this.noise(t, 0.3, 0.5, 'lowpass', 1500, 100, 1);
+        for (let i = 0; i < 4; i++) this.tone(t + 0.15 + i * 0.08, 'sine', 1800 - i * 200, 1500 - i * 200, 0.07, 0.07);
+      },
+      thud: (t) => {
+        this.tone(t, 'sine', 90, 40, 0.18, 0.4);
+        this.noise(t, 0.12, 0.2, 'lowpass', 900, 150, 1);
+      },
+      bossDown: (t) => {
+        this.tone(t, 'sine', 90, 25, 1.2, 0.9);
+        this.noise(t, 1.1, 0.7, 'lowpass', 2500, 60, 0.8);
+        [0, 4, 7, 12, 16, 19, 24].forEach((n, i) => this.tone(t + 0.35 + i * 0.07, 'triangle', 392 * st(n), 392 * st(n), 0.3, 0.2));
+      },
+      ace: (t) => {
+        [0, 7, 12, 16, 19, 24].forEach((n, i) => this.tone(t + i * 0.06, 'square', 523 * st(n), 523 * st(n), 0.22, 0.09));
+        this.tone(t + 0.36, 'triangle', 523 * st(24), 523 * st(24), 0.6, 0.16);
+      },
     };
   }
 

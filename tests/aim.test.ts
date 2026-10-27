@@ -30,7 +30,7 @@ describe('aim assist', () => {
   const cases = [
     ['aimA', 2],
     ['aimB', 5],
-    ['aimC', 9],
+    ['aimC', 6],
   ] as const;
 
   it('never moves the aim more than the cap, and keeps the slot the player pointed at', () => {

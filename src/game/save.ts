@@ -14,9 +14,10 @@ export interface Settings {
   guide: boolean;
   /**
    * Touch aiming: 'drag' = drag to aim, release to fire; 'aimtap' = drag to aim, tap to fire
-   * (a real tap, so iPhones give a haptic tick per shot); 'tap' = tap fires at the point.
+   * (a real tap, so iPhones give a haptic tick per shot); 'tap' = tap fires at the point;
+   * 'pad' = trackpad: drag anywhere to move a crosshair (relative, finer), tap to fire.
    */
-  touchAim: 'drag' | 'aimtap' | 'tap';
+  touchAim: 'drag' | 'aimtap' | 'tap' | 'pad';
   /** Nudge shots into the previewed slot (±3.5°). */
   assist: boolean;
   /** Press and hold (without dragging) to keep shooting. */
