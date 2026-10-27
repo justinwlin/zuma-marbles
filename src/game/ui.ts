@@ -254,7 +254,7 @@ export class UI {
       ? `Stage ${level.index + 1} · ${level.name}<br><span style="font-size:12px">${run.daily ? 'Daily' : 'Endless'} run · ${(run.runScore).toLocaleString()} banked</span>`
       : `Level ${level.index + 1} · ${level.name}<br><span style="font-size:12px">code ${levelCode(level.campaignSeed, level.index)}</span>`;
     const info = [
-      level.boss === 'boss' ? '<b>Boss fight</b>' : level.boss === 'mini' ? '<b>Mini-boss</b>' : '',
+      level.boss === 'boss' ? '<b>Boss fight</b>' : level.boss === 'mini' ? '<b>Mini-boss</b>: the skull serpent' : '',
       `ace time ${mm2(level.ace)}`,
       level.tracks.length > 1 ? 'two chains' : '',
       ...level.mutators.map((m) => `<b>${MUTATOR_INFO[m].name}</b>: ${MUTATOR_INFO[m].desc}`),
@@ -285,7 +285,7 @@ export class UI {
     this.show(
       'result',
       `<div class="panel">
-        <h2>${won ? (level.bossFight ? 'Boss defeated!' : 'Level clear!') : 'Swallowed!'}</h2>
+        <h2>${won ? (level.bossFight?.kind === 'serpent' ? 'Serpent slain!' : level.bossFight ? 'Boss defeated!' : 'Level clear!') : 'Swallowed!'}</h2>
         <p class="sub">Level ${level.index + 1} · ${level.name}</p>
         ${won ? `<div class="stars">${starHtml}</div>` : ''}
         ${!won && tip ? `<div class="tip">💡 ${tip}</div>` : ''}
@@ -428,7 +428,8 @@ export class UI {
           <b>Chain bonus:</b> 5+ popping shots in a row.<br>
           <b>Bonus coins:</b> shoot a floating coin before it vanishes for +${TUNING.coinValue}.<br>
           <b>Level end:</b> a light runs down the empty track — points for every bit the chain never reached, plus <b>+${TUNING.aceBonus}</b> for beating the ace time.<br>
-          <b>Boss fights</b> (every 10th level): your character slides along a rail and shoots straight across. Every marble you pop hurts the boss; a shot through a gap that hits it does ${TUNING.bossDirectHit}. Dodge the rocks — the red circle shows where they land.<br>
+          <b>Boss fights</b> (every 10th level): your character slides along a rail and shoots straight across. Every marble you pop hurts the boss; a shot through a gap that hits it does ${TUNING.bossDirectHit}. Watch the hands: the target follows you while one winds up, then locks — step out before the rock lands.<br>
+          <b>Mini-bosses</b> (levels 5, 15, 25…): a serpent lives in the skull pit and spits marbles onto the front of the chain. Popped marbles hurt it; slay it to clear the level.<br>
           ${coarse ? '<b>Cancel a shot:</b> slide onto <b>✕</b> (or back onto your character), or touch with a second finger.' : '<b>Swap:</b> right-click or Space.'}
         </div>
         <div class="btns" style="margin:14px auto 0"><button class="btn primary" data-a="back">${backLabel}</button></div></div>`,
@@ -475,7 +476,7 @@ export class UI {
     const bar = $('hud-bar').parentElement!;
     bar.classList.toggle('full', st.barFull);
     bar.classList.toggle('boss', !!st.boss);
-    $('hud-bar-label').textContent = st.boss ? (st.boss.dead ? 'DEFEATED!' : `BOSS ${st.boss.hp}`) : st.barFull ? 'CLEAR!' : 'ZUMA';
+    $('hud-bar-label').textContent = st.boss ? (st.boss.dead ? 'DEFEATED!' : `${level.bossFight?.kind === 'serpent' ? 'SERPENT' : 'BOSS'} ${st.boss.hp}`) : st.barFull ? 'CLEAR!' : 'ZUMA';
     if (score !== this.lastScore) {
       const el = $('hud-score');
       el.textContent = score.toLocaleString();

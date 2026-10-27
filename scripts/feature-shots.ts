@@ -31,8 +31,19 @@ for (const [name, opts] of Object.entries(profiles)) {
   await page.evaluate(() => (window as any).__zuma.load('feat', 9));
   await page.waitForTimeout(1200);
   await shot('boss-banner');
-  await page.waitForTimeout(6500);
+  await page.waitForTimeout(5000);
   await shot('boss-fight');
+  // Wind-up (target follows the frog), then the lobbed rock mid-air
+  await page.evaluate(() => {
+    const s = (window as any).__zuma.state();
+    s.boss.t = 0.001;
+    s.boss.wind = 0;
+  });
+  await page.waitForTimeout(500);
+  await shot('boss-windup');
+  await page.waitForTimeout(900);
+  await shot('boss-rock');
+  await page.waitForTimeout(1200);
   await page.evaluate(() => {
     const z = (window as any).__zuma;
     const s = z.state();
@@ -50,6 +61,19 @@ for (const [name, opts] of Object.entries(profiles)) {
   await shot('boss-down');
   await page.waitForTimeout(4500);
   await shot('boss-result');
+
+  // Mini-boss serpent: idle, rearing back with a marble in its mouth, just after the spit
+  await page.evaluate(() => (window as any).__zuma.load('feat', 4));
+  await page.waitForTimeout(8000);
+  await shot('serpent');
+  await page.evaluate(() => {
+    const s = (window as any).__zuma.state();
+    s.boss.t = 0.001;
+  });
+  await page.waitForTimeout(420);
+  await shot('serpent-windup');
+  await page.waitForTimeout(330);
+  await shot('serpent-spit');
 
   // Normal level: coin, wild marble, scorpion
   await page.evaluate(() => (window as any).__zuma.load('feat', 6));

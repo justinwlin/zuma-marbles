@@ -74,13 +74,22 @@ export const TUNING = {
   sweepPerPct: 10,
   /** Rail (boss fights): frog slide speed, boss attacks. */
   railSpeed: 1500,
-  bossShotSpeed: 300,
-  bossShotHitR: 44,
+  /** Rocks: the idol winds up (the target follows you), then lobs; it lands after rockFlight s. */
+  bossWindup: 0.75,
+  rockFlight: 1.45,
+  bossShotHitR: 46,
   bossAttackEvery: 4.6,
-  bossAttackEvery2: 3.3,
+  bossAttackEvery2: 3.4,
   bossFirstAttack: 6,
-  stunTime: 1.4,
+  stunTime: 1.2,
   bossDirectHit: 6,
+  /** Mini-boss serpent: rears up, then spits a marble onto the front of the chain. */
+  serpentWindup: 0.6,
+  serpentEvery: 7,
+  serpentEvery2: 5,
+  serpentFirst: 8,
+  /** No spitting once the head is past this fraction of the track. */
+  serpentMercy: 0.86,
 };
 
 /** Power-ups. 4 was Laser (aim beam + rapid fire) before Lightning replaced it. */
@@ -116,6 +125,8 @@ export interface Ball {
   gb: number;
   /** Wild: takes the colour of the best neighbour when it settles. */
   w?: 1;
+  /** Spat by the serpent (its settling match doesn't count toward your streak). */
+  sp?: 1;
 }
 
 export interface Shot {
@@ -137,17 +148,33 @@ export interface Scorpion {
   left: number;
 }
 
-/** Boss fight state (levels with a rail + boss). */
+/** A lobbed rock: flies from (x0, y0) to rail spot u, landing when t reaches 0 (of T). */
+export interface Rock {
+  id: number;
+  u: number;
+  t: number;
+  T: number;
+  x0: number;
+  y0: number;
+}
+
+/** Boss state: the rail idol (every 10th level) or the skull serpent (mini-bosses). */
 export interface BossState {
   hp: number;
   max: number;
-  /** Seconds to the next attack. */
+  /** Seconds to the next wind-up. */
   t: number;
+  /** Wind-up time left (0 = not winding up). The attack fires when it runs out. */
+  wind: number;
   /** Hit flash timer. */
   hitT: number;
   dead: boolean;
-  /** Projectiles flying at the rail; u = where on the rail they land. */
-  shots: { id: number; x: number; y: number; vx: number; vy: number; u: number }[];
+  /** Attacks so far (the idol alternates hands). */
+  n: number;
+  /** Serpent: colour of the marble it's about to spit. */
+  spitC: number;
+  /** Idol: rocks in the air. */
+  shots: Rock[];
 }
 
 export type Phase = 'playing' | 'losing' | 'lost' | 'won';
@@ -235,7 +262,9 @@ export type GameEvent =
   | { type: 'coinGone'; x: number; y: number }
   | { type: 'eat'; x: number; y: number; c: number }
   | { type: 'bossHit'; x: number; y: number; dmg: number }
+  | { type: 'bossWindup' }
   | { type: 'bossAttack'; x: number; y: number; tx: number; ty: number }
+  | { type: 'spit'; x: number; y: number; tx: number; ty: number; c: number }
   | { type: 'stun'; x: number; y: number }
   | { type: 'dodge'; x: number; y: number }
   | { type: 'bossDown'; x: number; y: number }
@@ -264,7 +293,9 @@ export function createGame(level: Level): GameState {
     streak: 0,
     gun: { cur: 0, next: 0, cool: 0.6, w: 0 },
     rail: level.rail ? { u: level.rail.len / 2, tu: level.rail.len / 2, q: false, stun: 0 } : null,
-    boss: level.bossFight ? { hp: level.bossFight.hp, max: level.bossFight.hp, t: TUNING.bossFirstAttack, hitT: 0, dead: false, shots: [] } : null,
+    boss: level.bossFight
+      ? { hp: level.bossFight.hp, max: level.bossFight.hp, t: level.bossFight.kind === 'serpent' ? TUNING.serpentFirst : TUNING.bossFirstAttack, wind: 0, hitT: 0, dead: false, n: 0, spitC: 0, shots: [] }
+      : null,
     scorps: [],
     coin: null,
     coinT: TUNING.coinFirst,
@@ -553,17 +584,18 @@ function stepRail(st: GameState, level: Level, ev: GameEvent[]) {
 
 function stepBoss(st: GameState, level: Level, ev: GameEvent[]) {
   const b = st.boss;
+  const B = level.bossFight;
+  if (!b || !B) return;
+  b.hitT = Math.max(0, b.hitT - DT);
+  if (B.kind === 'serpent') return stepSerpent(st, level, b, ev);
   const r = st.rail;
   const R = level.rail;
-  const B = level.bossFight;
-  if (!b || !r || !R || !B) return;
-  b.hitT = Math.max(0, b.hitT - DT);
+  if (!r || !R) return;
   for (let i = b.shots.length - 1; i >= 0; i--) {
     const p = b.shots[i];
-    p.x += p.vx * DT;
-    p.y += p.vy * DT;
-    if ((p.x - R.a.x) * R.n.x + (p.y - R.a.y) * R.n.y > 0) continue;
-    // Landed on the rail: stuns the frog if it's still there.
+    p.t -= DT;
+    if (p.t > 0) continue;
+    // Landed on the rail: stuns the frog if it's still under it.
     b.shots.splice(i, 1);
     if (Math.abs(r.u - p.u) < TUNING.bossShotHitR) {
       r.stun = TUNING.stunTime;
@@ -576,26 +608,83 @@ function stepBoss(st: GameState, level: Level, ev: GameEvent[]) {
     }
   }
   if (b.dead || isRolling(st)) return;
+  const angry = b.hp * 2 <= b.max;
+  if (b.wind > 0) {
+    // Winding up: the target follows the frog; it locks when the rock leaves the hand.
+    b.wind = Math.max(0, b.wind - DT);
+    if (b.wind > 0) return;
+    const targets = [r.u];
+    // Below half health it sometimes throws a second rock from the other hand.
+    if (angry && rand(st, 'bonus') < 0.5) {
+      const side = r.u < R.len / 2 ? 1 : -1;
+      targets.push(Math.max(20, Math.min(R.len - 20, r.u + side * 110)));
+    }
+    targets.forEach((u, k) => {
+      const hand = idolHand(level, (b.n + k) % 2, tmp2);
+      railPoint(R, u, tmpL);
+      b.shots.push({ id: st.nextId++, u, t: TUNING.rockFlight, T: TUNING.rockFlight, x0: hand.x, y0: hand.y });
+      ev.push({ type: 'bossAttack', x: hand.x, y: hand.y, tx: tmpL.x, ty: tmpL.y });
+    });
+    b.n++;
+    return;
+  }
   b.t -= DT;
   if (b.t > 0) return;
-  const angry = b.hp * 2 <= b.max;
   b.t = (angry ? TUNING.bossAttackEvery2 : TUNING.bossAttackEvery) * (0.8 + 0.4 * rand(st, 'bonus'));
-  const targets = [r.u];
-  // Below half health it sometimes throws a second rock beside the first.
-  if (angry && rand(st, 'bonus') < 0.5) {
-    const side = r.u < R.len / 2 ? 1 : -1;
-    targets.push(Math.max(20, Math.min(R.len - 20, r.u + side * 100)));
+  b.wind = TUNING.bossWindup;
+  ev.push({ type: 'bossWindup' });
+}
+
+/** Where the idol's throwing hand is (0 = toward the rail's start, 1 = its end). */
+export function idolHand(level: Level, hand: number, out: Pt = { x: 0, y: 0 }): Pt {
+  const B = level.bossFight!;
+  const d = level.rail ? level.rail.dir : { x: 0, y: 1 };
+  const sgn = hand === 0 ? -1 : 1;
+  out.x = B.x + d.x * sgn * B.r * 1.55;
+  out.y = B.y + d.y * sgn * B.r * 1.55;
+  return out;
+}
+
+/** Mini-boss serpent: every few seconds it rears back, then spits a marble onto the front of chain 0. */
+function stepSerpent(st: GameState, level: Level, b: BossState, ev: GameEvent[]) {
+  if (b.dead || isRolling(st)) return;
+  const angry = b.hp * 2 <= b.max;
+  if (b.wind > 0) {
+    b.wind = Math.max(0, b.wind - DT);
+    if (b.wind === 0) serpentSpit(st, level, b, ev);
+    return;
   }
-  for (const u of targets) {
-    railPoint(R, u, tmpL);
-    const dx = tmpL.x - B.x;
-    const dy = tmpL.y - B.y;
-    const l = Math.sqrt(dx * dx + dy * dy) || 1;
-    const sx = B.x + (dx / l) * B.r;
-    const sy = B.y + (dy / l) * B.r;
-    b.shots.push({ id: st.nextId++, x: sx, y: sy, vx: (dx / l) * TUNING.bossShotSpeed, vy: (dy / l) * TUNING.bossShotSpeed, u });
-    ev.push({ type: 'bossAttack', x: sx, y: sy, tx: tmpL.x, ty: tmpL.y });
+  b.t -= DT;
+  if (b.t > 0) return;
+  b.t = (angry ? TUNING.serpentEvery2 : TUNING.serpentEvery) * (0.8 + 0.4 * rand(st, 'bonus'));
+  b.wind = TUNING.serpentWindup;
+  b.spitC = Math.floor(rand(st, 'bonus') * level.colors);
+  ev.push({ type: 'bossWindup' });
+}
+
+function serpentSpit(st: GameState, level: Level, b: BossState, ev: GameEvent[]) {
+  const ch = st.chains[0];
+  const tr = level.tracks[0];
+  const B = level.bossFight!;
+  const n = ch.balls.length;
+  if (!n) return;
+  const head = ch.balls[n - 1];
+  // It holds back when the chain is already close (no cheap losses) or mid-pop.
+  if (head.clr >= 0 || head.ins < 1 || head.s < tr.visibleFrom || head.s > tr.length * TUNING.serpentMercy) return;
+  // A burst: 2 marbles, 3 once it's below half health (the first is the one shown in its mouth).
+  const count = b.hp * 2 <= b.max ? 3 : 2;
+  for (let k = 0; k < count; k++) {
+    const nb = newBall(st, k === 0 ? b.spitC : Math.floor(rand(st, 'bonus') * level.colors), head.s);
+    nb.g = 0;
+    nb.ins = 0;
+    nb.ix = B.x;
+    nb.iy = B.y;
+    nb.sp = 1;
+    ch.balls.push(nb);
   }
+  b.n++;
+  pointAt(tr, head.s + BALL_D, tmpL);
+  ev.push({ type: 'spit', x: B.x, y: B.y, tx: tmpL.x, ty: tmpL.y, c: b.spitC });
 }
 
 function damageBoss(st: GameState, dmg: number) {
@@ -609,6 +698,7 @@ function damageBoss(st: GameState, dmg: number) {
 function bossDefeated(st: GameState, level: Level, ev: GameEvent[]) {
   const b = st.boss!;
   b.dead = true;
+  b.wind = 0;
   b.shots.length = 0;
   st.cascade = true;
   st.spawning = false;
@@ -1024,6 +1114,11 @@ function stepChain(st: GameState, level: Level, ci: number, ev: GameEvent[]) {
         ev.push({ type: 'settle', x: tmp.x, y: tmp.y, c: b.c });
         const gb = b.gb;
         b.gb = 0;
+        if (b.sp) {
+          delete b.sp;
+          checkMatch(st, level, ci, i, 0, ev, 0);
+          continue;
+        }
         const matched = checkMatch(st, level, ci, i, 0, ev, gb);
         if (matched) {
           st.streak++;

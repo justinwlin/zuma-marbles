@@ -162,7 +162,17 @@ export function feedbackFor(e: GameEvent, ctx: FeelContext): Feedback {
       break;
     case 'bossAttack':
       f.sound = 'bossThrow';
-      f.trauma = 0.05;
+      f.trauma = 0.08;
+      f.haptic = [10];
+      break;
+    case 'bossWindup':
+      f.sound = 'windup';
+      break;
+    case 'spit':
+      f.sound = 'spit';
+      f.trauma = 0.12;
+      f.haptic = [12];
+      f.particles = 14;
       break;
     case 'stun':
       f.sound = 'stun';
@@ -174,8 +184,10 @@ export function feedbackFor(e: GameEvent, ctx: FeelContext): Feedback {
       break;
     case 'dodge':
       f.sound = 'thud';
-      f.trauma = 0.12;
-      f.particles = 14;
+      f.trauma = 0.25;
+      f.hitstop = 25;
+      f.haptic = [18];
+      f.particles = 26;
       break;
     case 'bossDown':
       f.sound = 'bossDown';

@@ -210,9 +210,22 @@ export class Audio {
         this.noise(t, 0.3, 0.5, 'lowpass', 1500, 100, 1);
         for (let i = 0; i < 4; i++) this.tone(t + 0.15 + i * 0.08, 'sine', 1800 - i * 200, 1500 - i * 200, 0.07, 0.07);
       },
+      windup: (t) => {
+        // Low rising rumble + charge whine
+        this.tone(t, 'sawtooth', 60, 140, 0.6, 0.12);
+        this.noise(t, 0.6, 0.18, 'bandpass', 200, 900, 3);
+        this.tone(t + 0.1, 'sine', 300, 900, 0.5, 0.05);
+      },
+      spit: (t) => {
+        this.noise(t, 0.18, 0.4, 'bandpass', 2500, 700, 2);
+        this.tone(t, 'sine', 500, 180, 0.12, 0.3);
+        this.noise(t + 0.05, 0.25, 0.15, 'highpass', 5000, 3000, 1);
+      },
       thud: (t) => {
-        this.tone(t, 'sine', 90, 40, 0.18, 0.4);
-        this.noise(t, 0.12, 0.2, 'lowpass', 900, 150, 1);
+        // Rock impact: heavy thump + debris crackle
+        this.tone(t, 'sine', 110, 35, 0.35, 0.7);
+        this.noise(t, 0.3, 0.45, 'lowpass', 1600, 120, 1);
+        for (let i = 0; i < 4; i++) this.noise(t + 0.05 + i * 0.04, 0.04, 0.15, 'highpass', 3500, 2500, 1);
       },
       bossDown: (t) => {
         this.tone(t, 'sine', 90, 25, 1.2, 0.9);

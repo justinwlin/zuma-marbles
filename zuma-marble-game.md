@@ -347,3 +347,11 @@ Built in this folder. See `README.md`.
     - The sweep runs from the furthest point the head reached to the skull, worth 10 points per unreached 1%.
     - Ace time adds +1000 for a clear inside the level's ace time, fit to the good bot's clear times.
   - **Trackpad aiming** (touch setting): a relative crosshair at 0.8× finger motion, tap to fire.
+- **Generator version 5**:
+  - **Mini-boss skull serpent.**
+    - Mini-boss levels get a creature living in chain 0's skull pit, using the same health, sparks-from-pops and defeat-cascade systems as the idol.
+    - Its attack is a wind-up and then a spit: 2 marbles (3 when angry) inserted at the front of the chain, which the player sees as a short lunge. It holds back past 86% of the track.
+    - Health is 2.2× the target, because free aiming pops much faster than the rail. Tuned to good-bot wins of 80–100% with casual at 60–100%; the first mini-boss is the gentlest.
+  - **Idol redesign and a new attack.**
+    - The idol is now a carved sun-mask with damage cracks and floating hands.
+    - Straight-line rocks became wind-up → lob → impact. The target tracks the frog during the 0.75 s wind-up, then locks; the rock always takes 1.45 s to land, which makes the timing predictable and readable. Impacts got a heavier sound, hit-stop and shake.

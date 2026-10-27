@@ -10,7 +10,7 @@ import { hash32, Rng } from './rng';
 import { buildTrack, chaikin, type Pt, type Track, TRACK_STEP } from './track';
 
 /** Bump when generated levels change; saves made with an older generator drop their mid-level snapshot. */
-export const GEN_VERSION = 4;
+export const GEN_VERSION = 5;
 
 export const WORLD_W = 1280;
 export const WORLD_H = 720;
@@ -111,6 +111,8 @@ export interface Rail {
   len: number;
 }
 export interface BossDef {
+  /** idol: the rail boss fight (every 10th level); serpent: the mini-boss living in chain 0's skull pit. */
+  kind: 'idol' | 'serpent';
   x: number;
   y: number;
   r: number;
@@ -227,13 +229,18 @@ export function difficulty(index: number, endless = false) {
 
 /** Boss health per marble of the level's target. Tuned with scripts/balance.ts. */
 export const BOSS_HP = 0.8;
+/**
+ * Mini-boss serpent health per marble of the level's target. Free aiming pops marbles much
+ * faster than the rail fight, so it needs far more; tuned with scripts/balance.ts.
+ */
+export const SERPENT_HP = 2.2;
 
 /**
  * Ace time in seconds, rounded to 5 s. Fit to the good bot's clear times so that a bit
  * under half of its wins beat it: quick, accurate play earns it, average play doesn't.
  */
-export function aceTime(target: number, o: { bossHp?: number; twin?: boolean } = {}): number {
-  const t = o.bossHp ? 12 + o.bossHp * 0.38 : (25 + target * 0.22) * (o.twin ? 1.2 : 1);
+export function aceTime(target: number, o: { bossHp?: number; serpentHp?: number; twin?: boolean } = {}): number {
+  const t = o.bossHp ? 12 + o.bossHp * 0.38 : o.serpentHp ? (5 + o.serpentHp * 0.16) * (o.twin ? 1.2 : 1) : (25 + target * 0.22) * (o.twin ? 1.2 : 1);
   return Math.round(t / 5) * 5;
 }
 
@@ -322,7 +329,14 @@ export function generateLevel(campaignSeed: string, index: number): Level {
   const off = !cand.rail && Math.hypot(cand.launcher.x - GW / 2, cand.launcher.y - GH / 2) > 90 * ks;
   const target = Math.round(diff.target);
   // Boss health ≈ marbles to pop, a bit under a normal bar (direct hits and combos add up).
-  const bossFight = cand.boss ? { ...cand.boss, hp: Math.round(target * BOSS_HP) } : undefined;
+  let bossFight: BossDef | undefined;
+  if (cand.boss) bossFight = { kind: 'idol', ...cand.boss, hp: Math.round(target * BOSS_HP) };
+  else if (boss === 'mini') {
+    // The serpent replaces chain 0's skull.
+    const t0 = tracks[0];
+    const n = t0.xs.length - 1;
+    bossFight = { kind: 'serpent', x: t0.xs[n], y: t0.ys[n], r: 30, hp: Math.round(target * SERPENT_HP) };
+  }
   return {
     campaignSeed,
     index,
@@ -342,7 +356,7 @@ export function generateLevel(campaignSeed: string, index: number): Level {
     boss,
     rail: cand.rail,
     bossFight,
-    ace: aceTime(target, { bossHp: bossFight?.hp, twin }),
+    ace: aceTime(target, { bossHp: bossFight?.kind === 'idol' ? bossFight.hp : undefined, serpentHp: bossFight?.kind === 'serpent' ? bossFight.hp : undefined, twin }),
     endless,
     attempts,
     worldW: GW,

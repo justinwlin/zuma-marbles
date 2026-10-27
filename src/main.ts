@@ -106,6 +106,7 @@ const view: ViewState = {
   homing: [],
   sweep: null,
   bossDown: -1,
+  spitAge: 9,
   banner: null,
   hue: 200,
 };
@@ -226,6 +227,7 @@ function levelBanner(): string[] {
   else if (level.boss === 'mini') view.banner = { text: 'MINI-BOSS', sub: `${label} · ${level.name} · ${ace}`, t: 0, color: '#ffb36b' };
   else view.banner = { text: label, sub: `${level.name} · ${ace}`, t: 0, color: '#ffe08a' };
   const notes: string[] = [];
+  if (level.bossFight?.kind === 'serpent') notes.push('Mini-boss! A serpent guards the skull — pop marbles to hurt it before it spits more onto the chain');
   if (level.rail) notes.push(matchMedia('(pointer: coarse)').matches ? 'Boss fight! Slide along your rail · pop marbles to hurt the boss · dodge its rocks' : 'Boss fight! Move along your rail · pop marbles to hurt the boss · dodge its rocks');
   if (level.tracks.length > 1) notes.push('Two chains — watch both skulls!');
   for (const m of level.mutators) notes.push(`${MUTATOR_INFO[m].name}: ${MUTATOR_INFO[m].desc}`);
@@ -332,7 +334,8 @@ function lossTip(): string {
   const coarse = matchMedia('(pointer: coarse)').matches;
   const noun = characterNoun(save.settings.character);
   if ((lossStreak.get(level.index) ?? 0) >= 2 && !save.settings.relaxed) return 'Stuck? Turn on <b>Relaxed speed</b> in Settings — chains roll 25% slower.';
-  if (level.rail && stuns >= 2) return 'A <b>red circle</b> on your rail marks where a rock will land — slide away before it hits.';
+  if (level.rail && stuns >= 2) return 'The yellow target follows you while the idol winds up, then turns <b>red and locks</b> — slide away before the rock lands.';
+  if (level.bossFight?.kind === 'serpent') return 'Every marble you pop hurts the serpent — <b>combos</b> hurt it more. Kill it fast and it spits less.';
   if (level.rail && s.bossHits === 0) return 'Shoot through <b>gaps in the chain</b> to hit the boss directly — and every marble you pop hurts it.';
   if (level.tracks.length > 1) return 'Two chains: deal with whichever is <b>closer to its skull</b> first.';
   if (s.shots >= 8 && s.misses / s.shots > 0.3) return 'Missed shots fly off the board. The <b>ghost marble</b> shows exactly where a shot will land.';
@@ -1064,9 +1067,16 @@ function handleEvents(events: GameEvent[]) {
       case 'dodge':
         fx.burst(e.x, e.y, '#7a5a50', '#c9a089', fb.particles, 0.8);
         break;
+      case 'spit': {
+        view.spitAge = 0;
+        const col = PALETTE[e.c];
+        fx.burst(e.x, e.y, col.base, '#7dffb0', fb.particles, 0.8);
+        fx.ring(e.tx, e.ty, col.light, 6, 260, 0.3);
+        break;
+      }
       case 'bossDown': {
         view.bossDown = 0;
-        view.banner = { text: 'BOSS DEFEATED!', t: 0, color: '#7dffcf' };
+        view.banner = { text: level.bossFight?.kind === 'serpent' ? 'SERPENT SLAIN!' : 'BOSS DEFEATED!', t: 0, color: '#7dffcf' };
         fx.burst(e.x, e.y, '#ff6b81', '#ffd86b', fb.particles, 2);
         fx.ring(e.x, e.y, '#fff', 10, 1100, 0.6);
         fx.ring(e.x, e.y, '#ffd86b', 6, 800, 0.5);
@@ -1278,6 +1288,7 @@ function updateView(dt: number) {
   view.cursor = pad && !attract ? padCursor : null;
   pumpRail();
   if (view.bossDown >= 0) view.bossDown += dt;
+  view.spitAge += dt;
   // Pop sparks flying into the boss
   for (let i = view.homing.length - 1; i >= 0; i--) {
     const h = view.homing[i];
@@ -1537,7 +1548,7 @@ resize();
 toTitle();
 if (levelsUpdated) {
   writeSave(save);
-  ui.toast('Levels got an update! Boss fights on a rail, Wild & Scorpion power-ups, bonus coins & ace time', 5000);
+  ui.toast('Levels got an update! Mini-boss serpents, a fiercer stone-idol boss, Wild & Scorpion power-ups, coins & ace time', 5000);
 }
 requestAnimationFrame(frame);
 

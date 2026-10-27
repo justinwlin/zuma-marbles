@@ -205,7 +205,7 @@ describe('boss fights (frog on a rail)', () => {
     const level = bossLevel();
     for (const dodge of [false, true]) {
       const st = createGame(level);
-      for (let t = 0; t < 8 * TICK_HZ && !st.boss!.shots.length; t++) step(st, level);
+      for (let t = 0; t < 14 * TICK_HZ && !st.boss!.shots.length; t++) step(st, level);
       expect(st.boss!.shots.length).toBeGreaterThan(0);
       if (dodge) {
         const away = st.rail!.u > level.rail!.len / 2 ? 20 : level.rail!.len - 20;
@@ -259,5 +259,80 @@ describe('power-up spawn mix', () => {
       }
     }
     expect([...seen].sort()).toEqual([1, 2, 3, 4, 5, 6]);
+  });
+});
+
+describe('mini-boss serpent', () => {
+  const mini = (seed = 'snake') => generateLevel(seed, 4);
+
+  it('every mini-boss level has a serpent in chain 0\'s skull pit', () => {
+    for (const seed of ['s1', 's2', 'xl-s3', 'endless-s4']) {
+      for (const i of [4, 14, 24]) {
+        const l = generateLevel(seed, i);
+        expect(l.boss).toBe('mini');
+        expect(l.bossFight?.kind).toBe('serpent');
+        const t0 = l.tracks[0];
+        expect(l.bossFight!.x).toBeCloseTo(t0.xs[t0.xs.length - 1], 6);
+        expect(l.bossFight!.y).toBeCloseTo(t0.ys[t0.ys.length - 1], 6);
+        expect(l.rail).toBeUndefined();
+      }
+    }
+    expect(generateLevel('s1', 9).bossFight?.kind).toBe('idol');
+    expect(generateLevel('s1', 3).bossFight).toBeUndefined();
+  });
+
+  it('winds up, then spits a marble onto the front of the chain', () => {
+    const level = mini();
+    const st = createGame(level);
+    for (let t = 0; t < 8 * TICK_HZ; t++) step(st, level);
+    st.boss!.t = 0.001;
+    const head0 = st.chains[0].balls[st.chains[0].balls.length - 1];
+    const n0 = st.chains[0].balls.length;
+    const evs: string[] = [];
+    for (let t = 0; t < TICK_HZ; t++) for (const e of step(st, level)) evs.push(e.type);
+    expect(evs).toContain('bossWindup');
+    expect(evs).toContain('spit');
+    const balls = st.chains[0].balls;
+    expect(balls.length).toBeGreaterThanOrEqual(n0); // spat marble added (spawns may add more at the back)
+    // The new marble sits in front of the old head.
+    const idx = balls.findIndex((b) => b.id === head0.id);
+    expect(idx).toBeLessThan(balls.length - 1);
+    expect(balls[balls.length - 1].s).toBeGreaterThan(head0.s);
+  });
+
+  it('holds back when the chain is already near the skull', () => {
+    const { level, st } = frozenGame([0, 1, 2, 3], { campaign: 'snake', index: 4, headGap: 60 });
+    expect(st.boss?.max).toBeGreaterThan(0);
+    st.boss!.t = 0.001;
+    const ev = run(st, level, 1);
+    expect(ev.some((e) => e.type === 'spit')).toBe(false);
+    expect(st.chains[0].balls.length).toBe(4);
+  });
+
+  it('popping marbles hurts it; slaying it clears the level', () => {
+    const { level, st } = frozenGame([0, 1, 1, 2, 3, 0, 2], { campaign: 'snake', index: 4 });
+    const hp0 = st.boss!.hp;
+    st.gun.cur = 1;
+    run(st, level, 1, [aimAt(level, st, 2)]);
+    expect(st.boss!.hp).toBe(hp0 - 3);
+    st.boss!.hp = 0;
+    const evs: string[] = [];
+    for (let t = 0; t < 5 * TICK_HZ && st.phase === 'playing'; t++) for (const e of step(st, level)) evs.push(e.type);
+    expect(evs).toContain('bossDown');
+    expect(st.phase).toBe('won');
+  });
+
+  it('the bot can beat mini-bosses, and replays are exact', () => {
+    let wins = 0;
+    for (const seed of ['m1', 'm2', 'm3', 'm4']) {
+      const level = generateLevel(seed, 4);
+      if (playLevel(createGame(level), level, BOT_PRESETS.good).outcome === 'won') wins++;
+    }
+    expect(wins).toBeGreaterThanOrEqual(2);
+    const level = mini('m-replay');
+    const a = playLevel(createGame(level), level, BOT_PRESETS.good, 40);
+    const s1 = replay(createGame(level), level, a.inputs, Math.round(a.seconds * TICK_HZ));
+    expect(s1.score).toBe(a.score);
+    expect(stateHash(s1)).toBe(stateHash(replay(createGame(level), level, a.inputs, Math.round(a.seconds * TICK_HZ))));
   });
 });
