@@ -14,6 +14,10 @@ export class Audio {
   musicVol = 0.35;
   private musicTimer = 0;
   private musicStep = 0;
+  /** Music grid for beat-synced pops: when the last step was scheduled, its length, and its chord root. */
+  private stepT = -1;
+  private stepLen = 0.42;
+  private chordRoot = 196;
   private voices: Record<string, Voice> = {};
   private last: Record<string, number> = {};
 
@@ -67,7 +71,31 @@ export class Audio {
     // Avoid machine-gun stacking of identical sounds in the same frame.
     if ((this.last[id] ?? -1) > now - 0.025) return;
     this.last[id] = now;
+    if (id === 'pop' && this.musicLive(now)) return this.popOnBeat(now, pitch);
     v(now, pitch + (Math.random() - 0.5) * 0.3);
+  }
+
+  /** Is the music playing right now (so there's a beat to lock to)? */
+  private musicLive(now: number) {
+    return this.musicVol > 0 && this.stepT > 0 && now - this.stepT < this.stepLen * 2;
+  }
+
+  /**
+   * A pop that plays with the music: the click lands instantly (so the hit still feels
+   * immediate), the chime waits for the next 16th note (<= a quarter step, ~0.1 s) and is
+   * pitched in the current chord. Combo steps climb the scale, so combos play an arpeggio.
+   */
+  private popOnBeat(now: number, pitch: number) {
+    const st = (p: number) => Math.pow(2, p / 12);
+    this.noise(now, 0.12, 0.25, 'bandpass', 5000, 1200, 1.5);
+    const grid = this.stepLen / 4;
+    const t = this.stepT + Math.max(0, Math.ceil((now - this.stepT) / grid)) * grid;
+    const scale = [0, 3, 5, 7, 10];
+    const deg = Math.round(pitch / 2);
+    const f = this.chordRoot * 2 * st(scale[deg % 5] + 12 * Math.floor(deg / 5));
+    this.tone(t, 'sine', f * 2, f, 0.12, 0.45);
+    this.tone(t + 0.01, 'triangle', f * 3, f * 1.5, 0.18, 0.18);
+    this.tone(t + 0.05, 'sine', f * 4, f * 4.2, 0.22, 0.06);
   }
 
   // ---- primitives
@@ -251,6 +279,9 @@ export class Audio {
     const prog = [0, -4, -2, -5];
     const root = 196 * Math.pow(2, prog[Math.floor(this.musicStep / 16) % 4] / 12);
     const k = this.musicStep % 16;
+    this.stepT = t;
+    this.stepLen = beat;
+    this.chordRoot = root;
     if (k % 4 === 0) {
       // Pad / bass
       this.tone(t, 'sine', root / 2, root / 2, beat * 3.6, 0.25, this.music, 0.08);
