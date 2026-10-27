@@ -220,9 +220,9 @@ function calico(g: G, pose: CharacterPose) {
   ellipse(g, 24, 12, 9, 7, WHITE);
   mouth(g, '#3b1d1d');
   whiskers(g, 24, 'rgba(255,255,255,0.85)');
-  // Eyes (green, slit pupils) and pink nose.
-  eye(g, 8, -12, 7.5, '#8bd450', true, pose.blink);
-  eye(g, 8, 12, 7.5, '#8bd450', true, pose.blink);
+  // Eyes (green, round pupils) and pink nose.
+  eye(g, 8, -12, 7.5, '#8bd450', false, pose.blink);
+  eye(g, 8, 12, 7.5, '#8bd450', false, pose.blink);
   g.fillStyle = '#f08a9a';
   g.beginPath();
   g.moveTo(17, -3.5);
