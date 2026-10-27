@@ -84,7 +84,7 @@ export const TUNING = {
   stunTime: 1.2,
   bossDirectHit: 6,
   /** Mini-boss serpent: rears up, then spits a marble onto the front of the chain. */
-  serpentWindup: 5,
+  serpentWindup: 3,
   /** While it rears up its hitbox grows (radius x this), and a hit chokes it: big damage + a power-up. */
   serpentTargetK: 1.8,
   serpentChoke: 15,
