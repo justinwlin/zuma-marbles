@@ -322,10 +322,10 @@ describe('mini-boss serpent', () => {
     expect(st.phase).toBe('won');
   });
 
-  /** Frozen mini-boss level with a short chain halfway along, and a shot fired straight at the serpent. */
+  /** Frozen mini-boss level with a short chain near the track start (out of the way), and a shot fired straight at the serpent. */
   const atSerpent = (wind: number) => {
     const level = generateLevel('snake', 4);
-    const { st } = frozenGame([0, 1, 2], { campaign: 'snake', index: 4, headGap: level.tracks[0].length / 2 });
+    const { st } = frozenGame([0, 1, 2], { campaign: 'snake', index: 4, headGap: level.tracks[0].length * 0.8 });
     st.boss!.t = 100;
     st.boss!.wind = wind;
     st.gun.cur = 3;
@@ -344,7 +344,7 @@ describe('mini-boss serpent', () => {
   });
 
   it('takes a direct hit while rearing up, which chokes off the spit', () => {
-    const { st, ev } = atSerpent(TUNING.serpentWindup);
+    const { st, ev } = atSerpent(5); // long wind-up so it's still rearing when the shot lands
     expect(ev.some((e) => e.type === 'bossHit')).toBe(true);
     expect(ev.some((e) => e.type === 'spit' || e.type === 'swallow')).toBe(false);
     expect(st.boss!.hp).toBe(st.boss!.max - TUNING.bossDirectHit);

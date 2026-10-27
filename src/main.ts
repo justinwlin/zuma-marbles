@@ -1602,7 +1602,7 @@ resize();
 toTitle();
 if (levelsUpdated) {
   writeSave(save);
-  ui.toast('Levels got an update! Mini-boss serpents, a fiercer stone-idol boss, Wild & Scorpion power-ups, coins & ace time', 5000);
+  ui.toast('Levels got an update! Mini-boss serpents now live at the far end of the board, and swallow shots unless you hit them mid-spit', 5000);
 }
 requestAnimationFrame(frame);
 

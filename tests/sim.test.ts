@@ -503,7 +503,7 @@ describe('generator stability (golden)', () => {
     }
     // If this changes, every saved campaign and shared level code changes too:
     // bump GEN_VERSION (saves then drop stale mid-level snapshots) and update the hash.
-    expect(h.digest('hex').slice(0, 12)).toBe('e5541ecf80fb');
+    expect(h.digest('hex').slice(0, 12)).toBe('5582659c5f0d');
   });
 
   it('large-marble campaigns use a smaller board with valid, varied tracks', () => {

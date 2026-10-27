@@ -10,7 +10,7 @@ import { hash32, Rng } from './rng';
 import { buildTrack, chaikin, type Pt, type Track, TRACK_STEP } from './track';
 
 /** Bump when generated levels change; saves made with an older generator drop their mid-level snapshot. */
-export const GEN_VERSION = 5;
+export const GEN_VERSION = 6;
 
 export const WORLD_W = 1280;
 export const WORLD_H = 720;
@@ -234,6 +234,9 @@ export const BOSS_HP = 0.8;
  * faster than the rail fight, so it needs far more; tuned with scripts/balance.ts.
  */
 export const SERPENT_HP = 2.2;
+/** Mini-bosses only use tracks that end out at the edge, so the serpent never sits next to the frog. */
+const SERPENT_FAMILIES: TrackFamily[] = ['serpentine', 'columns', 'comb', 'figure8', 'tunnelSpiral', 'twinSerpentine', 'twinColumns'];
+const SERPENT_MIN_DIST = 350;
 
 /**
  * Ace time in seconds, rounded to 5 s. Fit to the good bot's clear times so that a bit
@@ -283,7 +286,7 @@ export function generateLevel(campaignSeed: string, index: number): Level {
     diff.target *= 0.75;
   }
 
-  const families: TrackFamily[] = fight
+  let families: TrackFamily[] = fight
     ? ['bossRail']
     : twin
     ? TWIN_FAMILIES
@@ -294,6 +297,7 @@ export function generateLevel(campaignSeed: string, index: number): Level {
         : index < 6
           ? ['spiral', 'lobes', 'wave', 'square', 'serpentine', 'columns', 'horseshoe']
           : SINGLE_FAMILIES;
+  if (boss === 'mini') families = families.filter((f) => SERPENT_FAMILIES.includes(f));
   const offChance = index < 3 ? 0 : 0.35;
 
   // Pick a family, then generate a few valid candidates of it and keep the one whose
@@ -309,6 +313,10 @@ export function generateLevel(campaignSeed: string, index: number): Level {
       const cand = GENERATORS[family](rng, { index, off });
       const lens = validateLevel(cand.paths, cand.launcher, twin, undefined, cand.crossings, cand.rail);
       if (!lens) continue;
+      if (boss === 'mini') {
+        const p0 = cand.paths[0][cand.paths[0].length - 1];
+        if (Math.hypot(p0.x - cand.launcher.x, p0.y - cand.launcher.y) < SERPENT_MIN_DIST * ks) continue;
+      }
       found++;
       const avg = lens.reduce((a, b) => a + b, 0) / lens.length;
       const err = Math.abs(avg / (FAMILY_LEN[family] * ks) - diff.lenRatio);
