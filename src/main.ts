@@ -66,6 +66,7 @@ const view: ViewState = {
   aimAngle: -Math.PI / 2,
   aimShot: -Math.PI / 2,
   aimActive: false,
+  aimIdle: false,
   aimCancel: false,
   aimHit: null,
   aimWillPop: false,
@@ -915,8 +916,10 @@ function updateView(dt: number) {
   }
   audio.updateMusic(dt, attract || mode !== 'playing' ? 0 : view.danger);
 
-  // Aim raycast + lock-on tick
-  if (st && st.phase === 'playing' && view.aimActive && !attract) {
+  // Aim raycast + lock-on tick. The guide is always shown during play (along the last
+  // aim) so players can see where the next marble will go before touching.
+  view.aimIdle = mode === 'playing' && !attract;
+  if (st && st.phase === 'playing' && (view.aimActive || view.aimIdle) && !attract) {
     // Preview exactly what the shot will do: aim assist + hysteresis around the raw pointer angle.
     let hit;
     if (save.settings.assist) {
@@ -932,7 +935,8 @@ function updateView(dt: number) {
     view.aimHit = hit;
     view.aimWillPop = !!hit && runIfInserted(st, hit, st.gun.cur) >= 2;
     const id = hit ? hit.ballId : -1;
-    if (id !== lastHitBall && id >= 0 && !view.aimCancel) {
+    // Tick only while actively aiming, not when the chain rolls under an idle guide.
+    if (id !== lastHitBall && id >= 0 && !view.aimCancel && view.aimActive) {
       audio.play('tick', view.aimWillPop ? 7 : 0);
       if (touchStart) haptics.pulse([4]);
     }

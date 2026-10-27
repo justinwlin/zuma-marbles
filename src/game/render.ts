@@ -26,6 +26,8 @@ export interface ViewState {
   /** Direction the shot will actually travel (after aim assist). */
   aimShot: number;
   aimActive: boolean;
+  /** Show the guide along the last aim even when the player isn't aiming right now. */
+  aimIdle: boolean;
   /** Finger is over a cancel target: show the guide as 'will not fire'. */
   aimCancel: boolean;
   aimHit: RayHit | null;
@@ -327,7 +329,7 @@ export class Renderer {
     }
 
     // Aim guide (under the balls)
-    if (v.showGuide && v.aimActive && st.phase === 'playing') this.drawAim(st, v);
+    if (v.showGuide && (v.aimActive || v.aimIdle) && st.phase === 'playing') this.drawAim(st, v);
 
     // Balls
     const pos: Pt = { x: 0, y: 0 };
