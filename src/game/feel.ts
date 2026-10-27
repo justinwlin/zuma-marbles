@@ -88,8 +88,14 @@ export function feedbackFor(e: GameEvent, ctx: FeelContext): Feedback {
       f.particles = e.matched ? 10 : 3;
       break;
     case 'power':
-      f.sound = ['', 'boom', 'slow', 'rewind', 'laser'][e.power];
-      if (e.power === Power.Bomb) {
+      f.sound = ['', 'boom', 'slow', 'rewind', 'zap'][e.power];
+      if (e.power === Power.Lightning) {
+        f.hitstop = 80;
+        f.trauma = 0.75;
+        f.flash = 0.6;
+        f.haptic = [20, 20, 35, 20, 60];
+        f.particles = 90;
+      } else if (e.power === Power.Bomb) {
         f.hitstop = 95;
         f.trauma = 0.9;
         f.flash = 0.55;

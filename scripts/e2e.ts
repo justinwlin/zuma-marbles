@@ -111,10 +111,12 @@ async function runProfile(name: string, opts: BrowserContextOptions) {
     return { top: r.bottom, barBottom: bar.bottom };
   });
   check('top HUD does not cover the board', hudBottom.barBottom <= b.y + 4, `bar bottom ${hudBottom.barBottom.toFixed(0)} vs board top ${b.y.toFixed(0)}`);
-  if (opts.hasTouch && L.portrait && vp.height / vp.width >= 1.95) {
+  if (opts.hasTouch && L.portrait) {
+    // Every portrait phone: the swap button sits below the board, never on the marbles.
     const sw = await page.locator('#btn-swap').boundingBox();
-    check('swap button below board', !!sw && sw.y >= b.y + b.h - 6, sw ? `swap top ${sw.y.toFixed(0)} board bottom ${(b.y + b.h).toFixed(0)}` : 'missing');
-    check('swap button is thumb-sized', !!sw && sw.height >= 44, sw ? `${sw.height.toFixed(0)}px` : '');
+    const tall = vp.height / vp.width >= 1.95;
+    check('swap button below board', !!sw && sw.y >= b.y + b.h - 2, sw ? `swap top ${sw.y.toFixed(0)} board bottom ${(b.y + b.h).toFixed(0)}` : 'missing');
+    check('swap button is thumb-sized', !!sw && sw.height >= (tall ? 44 : 38), sw ? `${sw.height.toFixed(0)}px` : '');
   }
 
   // ---- Scripted match: freeze a known chain, aim with real input, fire.

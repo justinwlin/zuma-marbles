@@ -26,7 +26,7 @@ import { characterNoun } from './game/characters';
 import { Rng } from './sim/rng';
 import { pointAt, type Pt } from './sim/track';
 import { computeLayout, type Layout, screenToWorld } from './game/layout';
-import { Renderer, PALETTE, type ViewState } from './game/render';
+import { BOLT_LIFE, Renderer, PALETTE, type ViewState } from './game/render';
 import { Particles } from './game/fx';
 import { FEEL, feedbackFor, shakeOffset, springAngle } from './game/feel';
 import { Audio } from './game/audio';
@@ -93,6 +93,7 @@ const view: ViewState = {
   ripples: new Map(),
   ripple0: null,
   shotTrails: new Map(),
+  bolts: [],
   colorblind: false,
   showGuide: true,
   banner: null,
@@ -133,6 +134,7 @@ function loadLevel(seed: string, index: number, state?: GameState) {
   fx.list.length = 0;
   view.ripples.clear();
   view.shotTrails.clear();
+  view.bolts.length = 0;
   view.banner = null;
   view.danger = 0;
   view.trauma = 0;
@@ -788,7 +790,7 @@ window.addEventListener('keydown', (e) => {
 
 // ------------------------------------------------------------------ events → feel
 
-const POWER_HINTS = ['', 'Bomb marble! Pop it in a match to blast everything nearby', 'Slow marble! Pop it in a match to slow the chain', 'Reverse marble! Pop it in a match to roll the chain back', 'Laser marble! Pop it in a match for a laser sight & rapid fire'];
+const POWER_HINTS = ['', 'Bomb marble! Pop it in a match to blast everything nearby', 'Slow marble! Pop it in a match to slow the chain', 'Reverse marble! Pop it in a match to roll the chain back', 'Lightning marble! Pop it in a match to strike every marble of its colour'];
 /** First time each power-up appears on screen, explain it once (tap ? for details). */
 function announcePowers() {
   const seen = save.seenPowers ?? 0;
@@ -894,13 +896,28 @@ function handleEvents(events: GameEvent[]) {
       }
       case 'power': {
         const label = POWER_NAMES[e.power].toUpperCase() + '!';
-        if (e.power === Power.Bomb) {
+        if (e.power === Power.Lightning) {
+          // Chain lightning: hop from the power marble to the nearest struck marble, and on.
+          const col = PALETTE[e.c];
+          const left = [...(e.zaps ?? [])];
+          let from = { x: e.x, y: e.y };
+          while (left.length) {
+            let k = 0;
+            for (let i = 1; i < left.length; i++) if (Math.hypot(left[i].x - from.x, left[i].y - from.y) < Math.hypot(left[k].x - from.x, left[k].y - from.y)) k = i;
+            const to = left.splice(k, 1)[0];
+            view.bolts.push({ pts: jagged(from, to), t: 0, color: col.light });
+            fx.burst(to.x, to.y, col.base, '#fff', 8, 0.9);
+            from = to;
+          }
+          fx.ring(e.x, e.y, '#fff3a0', 8, 700, 0.4);
+          fx.text(e.x, e.y, `ZAP ×${(e.zaps?.length ?? 0) + 1}`, '#ffe14a', 38, 1.1, -34);
+        } else if (e.power === Power.Bomb) {
           fx.ring(e.x, e.y, '#ffd86b', 10, 900, 0.45);
           fx.ring(e.x, e.y, '#fff', 4, 600, 0.3);
           fx.burst(e.x, e.y, '#ff8a3d', '#ffe08a', fb.particles, 1.6);
           fx.text(e.x, e.y, 'BOOM!', '#ffd86b', 40, 1.1, -34);
         } else {
-          const c = e.power === Power.Slow ? '#7cc4ff' : e.power === Power.Reverse ? '#ffd86b' : '#ff7cf1';
+          const c = e.power === Power.Slow ? '#7cc4ff' : '#ffd86b';
           fx.ring(e.x, e.y, c, 10, 500, 0.5);
           fx.burst(e.x, e.y, c, '#fff', fb.particles, 0.8);
           fx.text(e.x, e.y, label, c, 30, 1.2, -34);
@@ -1030,7 +1047,25 @@ function frame(now: number) {
   }
 }
 
+/** A jagged lightning path between two points (cosmetic only). */
+function jagged(a: Pt, b: Pt): Pt[] {
+  const d = Math.hypot(b.x - a.x, b.y - a.y);
+  const n = Math.max(3, Math.round(d / 26));
+  const nx = -(b.y - a.y) / (d || 1);
+  const ny = (b.x - a.x) / (d || 1);
+  const pts: Pt[] = [a];
+  for (let i = 1; i < n; i++) {
+    const t = i / n;
+    const j = (Math.random() - 0.5) * Math.min(28, d * 0.25);
+    pts.push({ x: a.x + (b.x - a.x) * t + nx * j, y: a.y + (b.y - a.y) * t + ny * j });
+  }
+  pts.push(b);
+  return pts;
+}
+
 function updateView(dt: number) {
+  for (const b of view.bolts) b.t += dt;
+  while (view.bolts.length && view.bolts[0].t > BOLT_LIFE) view.bolts.shift();
   if (aimLocked && save.settings.touchAim === 'aimtap' && mode === 'playing' && !attract) view.aimActive = true;
   // Aim spring
   [view.aimAngle, aimVel] = springAngle(view.aimAngle, aimVel, aimTarget, Math.min(dt, 1 / 30));

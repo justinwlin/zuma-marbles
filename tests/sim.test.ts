@@ -20,7 +20,7 @@ describe('level generation', () => {
     for (let i = 0; i < 120; i++) {
       const lvl = generateLevel('bulk', i);
       fams.add(lvl.family);
-      expect(validateLevel(lvl.paths, lvl.launcher, lvl.paths.length > 1)).not.toBeNull();
+      expect(validateLevel(lvl.paths, lvl.launcher, lvl.paths.length > 1, undefined, lvl.crossings)).not.toBeNull();
       expect(lvl.tracks.length).toBe(lvl.paths.length);
       for (const t of lvl.tracks) expect(t.length - t.visibleFrom).toBeGreaterThan(lvl.tracks.length > 1 ? 1100 : 2000);
       expect(lvl.launcher.x).toBeGreaterThan(0);
@@ -152,6 +152,55 @@ describe('difficulty shape (sawtooth, bosses, twists, two chains)', () => {
     expect(stacked).toBeGreaterThan(0);
     // Endless difficulty never dips.
     for (let i = 1; i < 30; i++) expect(effDifficulty(i, true)).toBeGreaterThan(effDifficulty(i - 1, true));
+  });
+});
+
+describe('figure-8 and tunnel tracks', () => {
+  const find = (fam: string) => {
+    for (let c = 0; c < 20; c++)
+      for (let i = 6; i < 80; i++) {
+        const l = generateLevel(`cross-${c}`, i);
+        if (l.family === fam) return l;
+      }
+    throw new Error(`no ${fam}`);
+  };
+
+  it('crossing tracks get a bridge and a hidden tunnel stretch, and still validate', () => {
+    for (const fam of ['figure8', 'tunnelSpiral']) {
+      const l = find(fam);
+      const t = l.tracks[0];
+      expect(t.hidden?.length).toBeGreaterThan(0);
+      expect(t.bridges?.length).toBe(t.hidden!.length);
+      // The tunnel and the bridge over it are different passes of the same track.
+      for (let k = 0; k < t.hidden!.length; k++) {
+        const [h0, h1] = t.hidden![k];
+        const [b0, b1] = t.bridges![k];
+        expect(h1 < b0 || b1 < h0).toBe(true);
+      }
+    }
+  });
+
+  it('tunnel spirals run the tunnel under the rings (the earlier pass is hidden)', () => {
+    const t = find('tunnelSpiral').tracks[0];
+    for (let k = 0; k < t.hidden!.length; k++) expect(t.hidden![k][0]).toBeLessThan(t.bridges![k][0]);
+  });
+
+  it('marbles in a tunnel cannot be hit; marbles on the bridge can', () => {
+    const level = find('figure8');
+    const t = level.tracks[0];
+    const st = createGame(level);
+    const ch = st.chains[0];
+    ch.rolling = false;
+    ch.stopT = 1e6;
+    st.spawning = false;
+    const [h0, h1] = t.hidden![0];
+    const [b0, b1] = t.bridges![0];
+    ch.balls = [mkBall(st, 0, (h0 + h1) / 2), mkBall(st, 1, (b0 + b1) / 2)].sort((a, b) => a.s - b.s);
+    // Aim straight at the crossing: the ray must hit the bridge marble, never the hidden one.
+    const p = { x: t.xs[Math.round((h0 + h1) / 4)], y: t.ys[Math.round((h0 + h1) / 4)] };
+    const hit = raycast(st, level, p.x - level.launcher.x, p.y - level.launcher.y);
+    expect(hit).not.toBeNull();
+    expect(ch.balls[hit!.index].c).toBe(1);
   });
 });
 
@@ -310,11 +359,26 @@ describe('power-ups', () => {
     expect(st.chains[0].balls.length).toBeLessThan(5);
   });
 
-  it('slow, reverse and laser set their timers', () => {
+  it('lightning strikes every visible marble of its colour, even far away', () => {
+    // Colour 2 marbles spread along the chain; the lightning marble is one of the matched 1s.
+    const { level, st } = frozenGame([2, 0, 1, 1, 3, 2, 0, 3, 2, 0, 2]);
+    st.chains[0].balls[2].p = Power.Lightning;
+    st.chains[0].balls[2].pt = 99;
+    st.chains[0].balls[2].c = 2;
+    st.chains[0].balls[3].c = 2;
+    st.gun.cur = 2;
+    const ev = run(st, level, 0.8, [aimAt(level, st, 3)]);
+    const p = ev.find((e) => e.type === 'power');
+    expect(p && p.type === 'power' && p.power).toBe(Power.Lightning);
+    // Every colour-2 marble is gone or clearing.
+    expect(st.chains[0].balls.filter((b) => b.c === 2 && b.clr < 0).length).toBe(0);
+    expect(p && p.type === 'power' ? p.zaps!.length : 0).toBeGreaterThanOrEqual(4);
+  });
+
+  it('slow and reverse set their timers', () => {
     for (const [p, key] of [
       [Power.Slow, 'slowT'],
       [Power.Reverse, 'revT'],
-      [Power.Aim, 'aimT'],
     ] as const) {
       const { level, st } = frozenGame([0, 1, 1, 2]);
       st.chains[0].balls[1].p = p;
@@ -439,7 +503,7 @@ describe('generator stability (golden)', () => {
     }
     // If this changes, every saved campaign and shared level code changes too:
     // bump GEN_VERSION (saves then drop stale mid-level snapshots) and update the hash.
-    expect(h.digest('hex').slice(0, 12)).toBe('7a8a1992c843');
+    expect(h.digest('hex').slice(0, 12)).toBe('b246f734f2bc');
   });
 
   it('large-marble campaigns use a smaller board with valid, varied tracks', () => {
@@ -448,7 +512,7 @@ describe('generator stability (golden)', () => {
       const l = generateLevel('xl-jade-1234', i);
       expect(l.worldW).toBe(1024);
       expect(l.worldH).toBe(576);
-      expect(validateLevel(l.paths, l.launcher, l.paths.length > 1, { w: l.worldW, h: l.worldH })).not.toBeNull();
+      expect(validateLevel(l.paths, l.launcher, l.paths.length > 1, { w: l.worldW, h: l.worldH }, l.crossings)).not.toBeNull();
       fams.add(l.family);
     }
     expect(fams.size).toBeGreaterThanOrEqual(8);

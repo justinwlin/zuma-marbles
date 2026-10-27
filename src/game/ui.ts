@@ -387,7 +387,7 @@ export class UI {
         ${row(1, 0, 'Bomb', 'Blasts every marble within ~3 marbles of it — even across tracks.')}
         ${row(2, 3, 'Slow', `The chain crawls at ¼ speed for ${TUNING.slowTime}s.`)}
         ${row(3, 1, 'Reverse', `The chain rolls backwards, away from the skull, for ${TUNING.reverseTime}s.`)}
-        ${row(4, 4, 'Laser', `A full aiming beam plus faster, double-rate shots for ${TUNING.aimTime}s.`)}
+        ${row(4, 4, 'Lightning', 'Strikes every marble of its colour on the board — on every track.')}
         <div class="tips">
           <b>Combos:</b> when a gap's two ends match, they snap together and pop again.<br>
           <b>Gap shot:</b> shoot through a gap in the chain for bonus points.<br>
@@ -407,7 +407,7 @@ export class UI {
         <p>Marbles roll toward the <b>skull</b>. Shoot marbles into the chain — <b>3 or more</b> of a colour pop.</p>
         <p>${coarse ? '<b>Drag</b> to aim, <b>release</b> to shoot. Changed your mind? Slide onto <b>✕</b> or back to the frog, or touch with a second finger. Tap your character (the launcher) or the swap button to swap.' : '<b>Move</b> to aim, <b>click</b> to shoot. <b>Right-click</b> or <b>Space</b> swaps marbles.'}</p>
         <p>When a gap opens and both sides match, they <b>snap together</b> for a combo. Fill the gold <b>ZUMA bar</b> to stop new marbles, then clear the rest.</p>
-        <div class="pw"><span>Bomb</span><span>blasts nearby marbles</span><span>Slow</span><span>slows the chain</span><span>Reverse</span><span>rolls the chain back</span><span>Laser</span><span>precise aim & rapid fire</span></div>
+        <div class="pw"><span>Bomb</span><span>blasts nearby marbles</span><span>Slow</span><span>slows the chain</span><span>Reverse</span><span>rolls the chain back</span><span>Lightning</span><span>pops every marble of its colour</span></div>
         <p style="color:var(--muted);font-size:13px">Pop a power-up marble as part of a match to trigger it. Keep the chain far from the skull for more stars.</p>
         <div class="btns" style="margin:12px auto 0"><button class="btn primary" data-a="back">Got it</button><button class="btn ghost" data-a="pw">Power-ups in detail →</button></div></div>`,
       { back, pw: () => this.powerups(() => this.help(back), 'Back') },
@@ -451,7 +451,6 @@ export class UI {
     const pw: [Power, number, number][] = [];
     if (st.slowT > 0) pw.push([2, st.slowT, 8]);
     if (st.revT > 0) pw.push([3, st.revT, 3]);
-    if (st.aimT > 0) pw.push([4, st.aimT, 16]);
     const key = pw.map((p) => `${p[0]}:${Math.ceil(p[1] * 4)}`).join(',');
     if (key !== this.lastPowers) {
       this.lastPowers = key;

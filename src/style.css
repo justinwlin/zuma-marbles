@@ -306,3 +306,13 @@ details.share .code-form { margin: 8px 0 10px; }
 
 .level-info { margin-top: -10px; font-size: 13px; }
 .level-info b { color: #ffcf4a; }
+
+/* Short portrait phones (< 19.5:9): slim bottom bar with a compact swap button. */
+@media (orientation: portrait) and (min-aspect-ratio: 20/39) {
+  .hud-bottom { padding-bottom: calc(var(--sab) + 8px); padding-top: 4px; }
+  .swap-btn { padding: 6px 12px 6px 8px; gap: 6px; }
+  .dot.big { width: 26px; height: 26px; }
+  .dot { width: 17px; height: 17px; }
+  .power { width: 38px; height: 38px; }
+  .cancel-zone { bottom: calc(var(--sab) + 8px); padding: 10px 16px; }
+}

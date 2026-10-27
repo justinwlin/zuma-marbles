@@ -17,7 +17,7 @@ describe('feedback mapping', () => {
       pop(0),
       { type: 'suck', x: 0, y: 0 },
       { type: 'contact', x: 0, y: 0, combo: 1, matched: true },
-      { type: 'power', power: Power.Bomb, x: 0, y: 0 },
+      { type: 'power', power: Power.Bomb, x: 0, y: 0, c: 0 },
       { type: 'swap' },
       { type: 'barFull' },
       { type: 'lose' },
@@ -58,7 +58,7 @@ describe('feedback mapping', () => {
   });
 
   it('bomb is the biggest moment in the game', () => {
-    const bomb = feedbackFor({ type: 'power', power: Power.Bomb, x: 0, y: 0 }, ctx);
+    const bomb = feedbackFor({ type: 'power', power: Power.Bomb, x: 0, y: 0, c: 0 }, ctx);
     const bigPop = feedbackFor(pop(4, 6), ctx);
     expect(bomb.trauma).toBeGreaterThan(bigPop.trauma);
     expect(bomb.flash).toBeGreaterThan(bigPop.flash);
@@ -71,7 +71,7 @@ describe('feedback mapping', () => {
 
   it('reduce-motion removes shake, flashes and slow-mo', () => {
     const r = { ...ctx, reduceMotion: true, headProgress: 0.95 };
-    const f = feedbackFor({ type: 'power', power: Power.Bomb, x: 0, y: 0 }, r);
+    const f = feedbackFor({ type: 'power', power: Power.Bomb, x: 0, y: 0, c: 0 }, r);
     expect(f.trauma).toBe(0);
     expect(f.flash).toBeLessThanOrEqual(0.05);
     expect(feedbackFor(pop(3), r).slowmo).toBeNull();
@@ -188,5 +188,14 @@ describe('whole-game feel budget', () => {
   it('run() helper sanity', () => {
     const { level, st } = frozenGame([0]);
     expect(run(st, level, 0.1).length).toBe(0);
+  });
+
+  it('lightning lands like a bomb: hit-stop, shake, flash, a zap sound and a long buzz', () => {
+    const f = feedbackFor({ type: 'power', power: Power.Lightning, x: 0, y: 0, c: 2, zaps: [] }, ctx);
+    expect(f.hitstop).toBeGreaterThan(50);
+    expect(f.trauma).toBeGreaterThan(0.5);
+    expect(f.flash).toBeGreaterThan(0.3);
+    expect(f.sound).toBe('zap');
+    expect(f.haptic!.reduce((a, b) => a + b, 0)).toBeGreaterThan(100);
   });
 });

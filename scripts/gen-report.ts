@@ -35,7 +35,7 @@ for (const f of Object.keys(__GEN) as TrackFamily[]) {
   const lens: number[] = [];
   for (let k = 0; k < 60; k++) {
     const cand = __GEN[f](rng, { index: 10, off: k % 2 === 0 });
-    const r = validateLevel(cand.paths, cand.launcher, cand.paths.length > 1, { w: world.w, h: world.h });
+    const r = validateLevel(cand.paths, cand.launcher, cand.paths.length > 1, { w: world.w, h: world.h }, (cand as { crossings?: { x: number; y: number }[] }).crossings);
     if (r) {
       ok++;
       lens.push(Math.round(r.reduce((a, b) => a + b, 0) / r.length));

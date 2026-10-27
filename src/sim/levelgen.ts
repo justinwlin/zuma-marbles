@@ -10,7 +10,7 @@ import { hash32, Rng } from './rng';
 import { buildTrack, chaikin, type Pt, type Track, TRACK_STEP } from './track';
 
 /** Bump when generated levels change; saves made with an older generator drop their mid-level snapshot. */
-export const GEN_VERSION = 2;
+export const GEN_VERSION = 3;
 
 export const WORLD_W = 1280;
 export const WORLD_H = 720;
@@ -50,6 +50,8 @@ export type TrackFamily =
   | 'columns'
   | 'comb'
   | 'horseshoe'
+  | 'figure8'
+  | 'tunnelSpiral'
   | 'twinSpiral'
   | 'twinSerpentine'
   | 'twinColumns';
@@ -65,12 +67,28 @@ export const FAMILY_LEN: Record<TrackFamily, number> = {
   columns: 3500,
   comb: 4350,
   horseshoe: 5350,
+  figure8: 3150,
+  tunnelSpiral: 3400,
   twinSpiral: 2000,
   twinSerpentine: 2300,
   twinColumns: 1700,
 };
 
-export const SINGLE_FAMILIES: TrackFamily[] = ['spiral', 'lobes', 'wave', 'square', 'heart', 'serpentine', 'columns', 'comb', 'horseshoe'];
+/**
+ * Chain speed per family, evening out how hard each shape plays: bot win rates at levels
+ * 9–23 ranged 42–94% by family before this, 67–77% after. Open shapes roll faster.
+ */
+export const FAMILY_SPEED: Partial<Record<TrackFamily, number>> = {
+  figure8: 1.38,
+  comb: 1.28,
+  horseshoe: 1.15,
+  serpentine: 1.12,
+  square: 0.95,
+  spiral: 0.96,
+  columns: 0.82,
+};
+
+export const SINGLE_FAMILIES: TrackFamily[] = ['spiral', 'lobes', 'wave', 'square', 'heart', 'serpentine', 'columns', 'comb', 'horseshoe', 'figure8', 'tunnelSpiral'];
 export const TWIN_FAMILIES: TrackFamily[] = ['twinSpiral', 'twinSerpentine', 'twinColumns'];
 
 /** Level twists. surge = 3× power-ups; streaky = long same-colour runs. */
@@ -92,6 +110,8 @@ export interface LevelDef {
   launcher: Pt;
   /** Launcher pushed away from the board centre. */
   offCentre: boolean;
+  /** Where track 0 crosses itself (bridge over tunnel), if anywhere. */
+  crossings?: Pt[];
   colors: number; // number of distinct colors (≤ 6)
   /** Cruise speed in px/s. */
   speed: number;
@@ -126,6 +146,8 @@ const NAMES_B: Record<TrackFamily, string[]> = {
   columns: ['Pillars', 'Colonnade', 'Organ', 'Falls'],
   comb: ['Comb', 'Teeth', 'Fringe', 'Crown'],
   horseshoe: ['Horseshoe', 'Rainbow', 'Arch', 'Fan'],
+  figure8: ['Infinity', 'Pretzel', 'Crossing', 'Overpass'],
+  tunnelSpiral: ['Undercroft', 'Catacomb', 'Wellspring', 'Burrow'],
   twinSpiral: ['Twin Vortex', 'Galaxy', 'Yin-Yang', 'Double Helix'],
   twinSerpentine: ['Twin Rivers', 'Mirror', 'Crossroads', 'Gemini'],
   twinColumns: ['Twin Pillars', 'Gateway', 'Twin Falls', 'Canyon'],
@@ -238,7 +260,7 @@ export function generateLevel(campaignSeed: string, index: number): Level {
     for (let k = 0; k < 12 && found < 3 && attempts < 90; k++) {
       attempts++;
       const cand = GENERATORS[family](rng, { index, off });
-      const lens = validateLevel(cand.paths, cand.launcher, twin);
+      const lens = validateLevel(cand.paths, cand.launcher, twin, undefined, cand.crossings);
       if (!lens) continue;
       found++;
       const avg = lens.reduce((a, b) => a + b, 0) / lens.length;
@@ -253,8 +275,10 @@ export function generateLevel(campaignSeed: string, index: number): Level {
   }
 
   const { cand, family } = best;
+  diff.speed *= FAMILY_SPEED[family] ?? 1;
   const name = `${rng.pick(NAMES_A)} ${rng.pick(NAMES_B[family])}`;
   const tracks = cand.paths.map((p) => buildTrack(p, { w: GW, h: GH }));
+  if (cand.crossings) addCrossings(tracks[0], cand.crossings, rng, cand.under ?? 'random');
   const off = Math.hypot(cand.launcher.x - GW / 2, cand.launcher.y - GH / 2) > 90 * ks;
   return {
     campaignSeed,
@@ -265,6 +289,7 @@ export function generateLevel(campaignSeed: string, index: number): Level {
     paths: cand.paths,
     launcher: cand.launcher,
     offCentre: off,
+    crossings: cand.crossings,
     colors: diff.colors,
     speed: diff.speed,
     target: Math.round(diff.target),
@@ -285,6 +310,10 @@ export function generateLevel(campaignSeed: string, index: number): Level {
 interface Cand {
   paths: Pt[][];
   launcher: Pt;
+  /** Points where path 0 crosses itself (one pass bridges over the other). */
+  crossings?: Pt[];
+  /** Which pass runs under: the earlier one ('first') or chosen at random. */
+  under?: 'first' | 'random';
 }
 interface GenOpts {
   index: number;
@@ -293,6 +322,7 @@ interface GenOpts {
   safe?: boolean;
 }
 type Gen = (rng: Rng, o: GenOpts) => Cand;
+export type { Cand };
 
 const q = (v: number) => Math.round(v * 16) / 16;
 
@@ -566,6 +596,69 @@ const GENERATORS: Record<TrackFamily, Gen> = {
     }
     return { paths: [chaikin(withEntry(clampIn(way)), 4)], launcher: F };
   },
+  figure8(rng) {
+    // A Lissajous ∞ (x = A sin t, y = B sin 2t) that crosses itself once in the middle;
+    // the amplitude shrinks so it ends inside where it started instead of closing up.
+    const cx = GW / 2 + rng.range(-30, 30);
+    const cy = GH / 2;
+    const A0 = Math.min(cx, GW - cx) - 52;
+    const B0 = GH / 2 - 52;
+    const A1 = A0 - rng.range(110, 150) * (GW / WORLD_W);
+    const B1 = B0 - rng.range(40, 70) * (GH / WORLD_H);
+    const flip = rng.chance(0.5) ? 1 : -1;
+    const t0 = -Math.PI / 2;
+    const t1 = (3 * Math.PI) / 2 - 0.3;
+    const pts: Pt[] = [];
+    const steps = 420;
+    for (let i = 0; i <= steps; i++) {
+      const u = i / steps;
+      const t = t0 + (t1 - t0) * u;
+      const A = A0 + (A1 - A0) * u;
+      const B = B0 + (B1 - B0) * u;
+      pts.push({ x: cx + A * Math.sin(t), y: cy + flip * B * Math.sin(2 * t) });
+    }
+    // Launcher above or below the crossing, between the lobes.
+    const side = rng.chance(0.5) ? 1 : -1;
+    const launcher = { x: cx, y: cy + side * B0 * rng.range(0.5, 0.6) };
+    return { paths: [chaikin(withEntry(clampIn(pts)), 2)], launcher, crossings: [{ x: q(cx), y: q(cy) }] };
+  },
+  tunnelSpiral(rng) {
+    // The chain comes in through a tunnel under the outer rings, surfaces beside the
+    // launcher, and spirals outward to a skull near the edge.
+    const cx = GW / 2 + rng.range(-40, 40);
+    const cy = GH / 2 + rng.range(-15, 15);
+    const dir = rng.chance(0.5) ? 1 : -1;
+    const fromLeft = rng.chance(0.5);
+    const ayIn = rng.range(120, 135);
+    const axIn = ayIn * rng.range(1.25, 1.45);
+    const ayOut = Math.min(cy, GH - cy) - 44;
+    const axOut = Math.min(cx, GW - cx) - 60;
+    const turns = Math.min(rng.range(1.25, 1.7), (ayOut - ayIn) / (BALL_D * 2.6)) * turnK();
+    const th0 = fromLeft ? Math.PI : 0;
+    const sx = fromLeft ? -1 : 1;
+    // Straight tunnel in from the side edge to the inner ring.
+    const entry: Pt[] = [];
+    const ex = cx + sx * axIn;
+    const edge = fromLeft ? -260 : GW + 260;
+    for (let k = 0; k <= 12; k++) entry.push({ x: edge + ((ex - edge) * k) / 12, y: cy });
+    const ring: Pt[] = [];
+    const crossings: Pt[] = [];
+    const steps = Math.ceil(turns * 180);
+    for (let i = 1; i <= steps; i++) {
+      const u = i / steps;
+      const th = th0 + dir * u * turns * Math.PI * 2;
+      const k = Math.pow(u, 1.05);
+      ring.push({ x: cx + (axIn + (axOut - axIn) * k) * Math.cos(th), y: cy + (ayIn + (ayOut - ayIn) * k) * Math.sin(th) });
+    }
+    // Each full turn passes back over the tunnel.
+    for (let n = 1; n <= Math.floor(turns); n++) {
+      const u = n / turns;
+      const k = Math.pow(u, 1.05);
+      crossings.push({ x: q(cx + sx * (axIn + (axOut - axIn) * k)), y: q(cy) });
+    }
+    const pts = [...entry.map((p) => ({ x: q(p.x), y: q(p.y) })), ...ring.map((p) => ({ x: q(p.x), y: q(p.y) }))];
+    return { paths: [chaikin(pts, 3)], launcher: { x: cx, y: cy }, crossings, under: 'first' as const };
+  },
   twinSpiral(rng) {
     return spiralLike(rng, { lobes: 0, lobeAmp: 0, turns: rng.range(0.85, 1.12) * turnK(), arms: 2, shape: rng.chance(0.3) ? 'square' : 'ellipse' });
   },
@@ -607,7 +700,11 @@ const GENERATORS: Record<TrackFamily, Gen> = {
 // ---------------------------------------------------------------- validation
 
 /** Rejects a track whose parts overlap, leave the board, or crowd the launcher. Returns its visible length. */
-function checkPath(track: Track, launcher: Pt, minLen: number, maxLen: number): number | null {
+/** Radius around a crossing where the track may come close to itself. */
+const CROSS_R = BALL_D * 3.2;
+
+function checkPath(track: Track, launcher: Pt, minLen: number, maxLen: number, crossings: Pt[] = []): number | null {
+  const nearCross = (x: number, y: number) => crossings.some((c) => (x - c.x) * (x - c.x) + (y - c.y) * (y - c.y) < CROSS_R * CROSS_R);
   const { xs, ys } = track;
   const n = xs.length;
   const visStart = Math.floor(track.visibleFrom / TRACK_STEP);
@@ -626,10 +723,11 @@ function checkPath(track: Track, launcher: Pt, minLen: number, maxLen: number): 
     const lx = x - launcher.x;
     const ly = y - launcher.y;
     if (lx * lx + ly * ly < 92 * 92) return null;
+    const iCross = crossings.length > 0 && nearCross(x, y);
     for (let j = i + arcSkip; j < n; j += stride) {
       const dx = xs[j] - x;
       const dy = ys[j] - y;
-      if (dx * dx + dy * dy < minSep2) return null;
+      if (dx * dx + dy * dy < minSep2 && !(iCross && nearCross(xs[j], ys[j]))) return null;
     }
   }
   return visLen;
@@ -653,7 +751,7 @@ function apart(a: Track, b: Track): boolean {
 }
 
 /** Validate every path of a level; returns visible lengths, or null if invalid. */
-export function validateLevel(paths: Pt[][], launcher: Pt, twin: boolean, world?: { w: number; h: number }): number[] | null {
+export function validateLevel(paths: Pt[][], launcher: Pt, twin: boolean, world?: { w: number; h: number }, crossings?: Pt[]): number[] | null {
   if (world) {
     GW = world.w;
     GH = world.h;
@@ -662,12 +760,44 @@ export function validateLevel(paths: Pt[][], launcher: Pt, twin: boolean, world?
   const tracks = paths.map((p) => buildTrack(p, { w: GW, h: GH }));
   const lens: number[] = [];
   for (const t of tracks) {
-    const l = checkPath(t, launcher, (twin ? 1100 : 2000) * ks, twin ? 4200 : 6200);
+    const l = checkPath(t, launcher, (twin ? 1100 : 2000) * ks, twin ? 4200 : 6200, t === tracks[0] ? crossings : undefined);
     if (l === null) return null;
     lens.push(l);
   }
   for (let i = 0; i < tracks.length; i++) for (let j = i + 1; j < tracks.length; j++) if (!apart(tracks[i], tracks[j])) return null;
   return lens;
+}
+
+/**
+ * Mark a crossing as a bridge + tunnel: find the two passes through the crossing point;
+ * one (chosen by the level's rng) runs under, hidden over a short stretch, the other is the bridge.
+ */
+function addCrossings(track: Track, crossings: Pt[], rng: Rng, mode: 'first' | 'random') {
+  const hidden: [number, number][] = [];
+  const bridges: [number, number][] = [];
+  for (const c of crossings) {
+    // Local minima of distance to the crossing, at least a few marbles apart in arc length.
+    const passes: { s: number; d: number }[] = [];
+    for (let i = 1; i < track.xs.length - 1; i++) {
+      const d = Math.hypot(track.xs[i] - c.x, track.ys[i] - c.y);
+      if (d > BALL_R) continue;
+      const s = i * TRACK_STEP;
+      const last = passes[passes.length - 1];
+      if (last && s - last.s < BALL_D * 4) {
+        if (d < last.d) passes[passes.length - 1] = { s, d };
+      } else passes.push({ s, d });
+    }
+    if (passes.length < 2) continue;
+    const under = mode === 'first' ? 0 : rng.chance(0.5) ? 0 : 1;
+    const su = passes[under].s;
+    const so = passes[1 - under].s;
+    hidden.push([su - BALL_D * 1.2, su + BALL_D * 1.2]);
+    bridges.push([so - BALL_D * 2.4, so + BALL_D * 2.4]);
+  }
+  if (hidden.length) {
+    track.hidden = hidden;
+    track.bridges = bridges;
+  }
 }
 
 /** Single-track check (kept for tests/tools). */

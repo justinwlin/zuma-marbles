@@ -15,6 +15,18 @@ export interface Track {
   length: number;
   /** Arc distance where the track first becomes visible (entry tunnel ends). */
   visibleFrom: number;
+  /** Arc ranges [s0, s1] where the track runs under a bridge: marbles there are hidden and can't be hit. */
+  hidden?: [number, number][];
+  /** Arc ranges [s0, s1] that form a bridge over another part of the track (drawn on top). */
+  bridges?: [number, number][];
+}
+
+/** Is arc distance s under a bridge (hidden)? */
+export function inTunnel(track: Track, s: number): boolean {
+  const h = track.hidden;
+  if (!h) return false;
+  for (const [a, b] of h) if (s > a && s < b) return true;
+  return false;
 }
 
 export function chaikin(points: Pt[], iterations = 4, closedEnds = true): Pt[] {

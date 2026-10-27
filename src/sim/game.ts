@@ -9,7 +9,7 @@
 
 import { BALL_D, BALL_R, type Level } from './levelgen';
 import { next as rngNext } from './rng';
-import { pointAt, type Pt, tangentAt, type Track } from './track';
+import { inTunnel, pointAt, type Pt, tangentAt, type Track } from './track';
 
 export const TICK_HZ = 120;
 export const DT = 1 / TICK_HZ;
@@ -42,10 +42,8 @@ export const TUNING = {
   insertTime: 0.15,
   /** Projectile speed px/s (Zuma 600; faster feels better on touch). */
   shotSpeed: 900,
-  shotSpeedAim: 1700,
   /** Seconds between shots. */
   cooldown: 0.24,
-  cooldownAim: 0.12,
   /** Hit distance between projectile and ball centres. */
   hitDist: BALL_D * 0.92,
   muzzle: 46,
@@ -55,7 +53,6 @@ export const TUNING = {
   slowTime: 8,
   reverseTime: 3,
   reverseSpeed: 100 * K,
-  aimTime: 16,
   /** When the bar fills with the chain past halfway: free reverse + slow. */
   barBackTime: 3,
   barSlowTime: 11,
@@ -63,9 +60,10 @@ export const TUNING = {
   rollInMax: 5,
 };
 
-export const Power = { None: 0, Bomb: 1, Slow: 2, Reverse: 3, Aim: 4 } as const;
+/** Power-ups. 4 was Laser (aim beam + rapid fire) before Lightning replaced it. */
+export const Power = { None: 0, Bomb: 1, Slow: 2, Reverse: 3, Lightning: 4 } as const;
 export type Power = (typeof Power)[keyof typeof Power];
-export const POWER_NAMES = ['', 'Bomb', 'Slow', 'Reverse', 'Laser'];
+export const POWER_NAMES = ['', 'Bomb', 'Slow', 'Reverse', 'Lightning'];
 
 export interface Ball {
   id: number;
@@ -129,7 +127,6 @@ export interface GameState {
   shots: Shot[];
   slowT: number;
   revT: number;
-  aimT: number;
   spawning: boolean;
   barFull: boolean;
   score: number;
@@ -157,7 +154,7 @@ export type GameEvent =
   | { type: 'pop'; balls: { x: number; y: number; c: number; p: Power }[]; combo: number; score: number; x: number; y: number; c: number; gapBonus: number; chainBonus: number }
   | { type: 'suck'; x: number; y: number }
   | { type: 'contact'; x: number; y: number; combo: number; matched: boolean }
-  | { type: 'power'; power: Power; x: number; y: number }
+  | { type: 'power'; power: Power; x: number; y: number; c: number; zaps?: { x: number; y: number }[] }
   | { type: 'miss' }
   | { type: 'swap' }
   | { type: 'barFull' }
@@ -182,7 +179,6 @@ export function createGame(level: Level): GameState {
     shots: [],
     slowT: 0,
     revT: 0,
-    aimT: 0,
     spawning: true,
     barFull: false,
     score: 0,
@@ -276,7 +272,6 @@ export function step(st: GameState, level: Level, cmds: readonly Command[] = [])
   st.gun.cool = Math.max(0, st.gun.cool - DT);
   st.slowT = Math.max(0, st.slowT - DT);
   st.revT = Math.max(0, st.revT - DT);
-  st.aimT = Math.max(0, st.aimT - DT);
   st.chains.forEach((ch, ci) => {
     ch.stopT = Math.max(0, ch.stopT - DT);
     const vis = level.tracks[ci].visibleFrom;
@@ -353,7 +348,7 @@ function applyCommand(st: GameState, level: Level, cmd: Command, ev: GameEvent[]
   if (len < 1e-6) return;
   dx /= len;
   dy /= len;
-  const speed = st.aimT > 0 ? TUNING.shotSpeedAim : TUNING.shotSpeed;
+  const speed = TUNING.shotSpeed;
   st.shots.push({
     id: st.nextId++,
     c: st.gun.cur,
@@ -368,7 +363,7 @@ function applyCommand(st: GameState, level: Level, cmd: Command, ev: GameEvent[]
   ev.push({ type: 'fire', x: L.x, y: L.y, dx, dy, c: st.gun.cur });
   st.gun.cur = st.gun.next;
   st.gun.next = randColor(st, level, 'gun');
-  st.gun.cool = st.aimT > 0 ? TUNING.cooldownAim : TUNING.cooldown;
+  st.gun.cool = TUNING.cooldown;
 }
 
 function rerollGun(st: GameState, level: Level) {
@@ -384,7 +379,7 @@ const tmp: Pt = { x: 0, y: 0 };
 const tmp2: Pt = { x: 0, y: 0 };
 
 function hittable(b: Ball, track: Track) {
-  return b.clr < 0 && b.ins >= 1 && b.s > track.visibleFrom + BALL_R * 0.5;
+  return b.clr < 0 && b.ins >= 1 && b.s > track.visibleFrom + BALL_R * 0.5 && !inTunnel(track, b.s);
 }
 
 function stepShots(st: GameState, level: Level, ev: GameEvent[]) {
@@ -715,18 +710,32 @@ function activatePower(st: GameState, level: Level, ci: number, b: Ball, ev: Gam
   pointAt(level.tracks[ci], b.s, tmp);
   const bx = tmp.x;
   const by = tmp.y;
-  ev.push({ type: 'power', power: p, x: bx, y: by });
+  const pev: GameEvent & { type: 'power' } = { type: 'power', power: p, x: bx, y: by, c: b.c };
+  ev.push(pev);
   if (p === Power.Slow) st.slowT = TUNING.slowTime;
   else if (p === Power.Reverse) st.revT = TUNING.reverseTime;
-  else if (p === Power.Aim) st.aimT = TUNING.aimTime;
-  else if (p === Power.Bomb) {
+  else if (p === Power.Lightning) {
+    // Every visible marble of the power marble's colour, on every track, is struck.
+    const zaps: { x: number; y: number }[] = [];
+    for (let oc = 0; oc < st.chains.length; oc++) {
+      const tr = level.tracks[oc];
+      for (const o of st.chains[oc].balls) {
+        if (o.clr >= 0 || o.c !== b.c || o.s < tr.visibleFrom || inTunnel(tr, o.s)) continue;
+        pointAt(tr, o.s, tmp);
+        zaps.push({ x: tmp.x, y: tmp.y });
+        startClear(st, level, oc, o, b.combo, ev);
+      }
+    }
+    st.score += 10 * zaps.length;
+    pev.zaps = zaps;
+  } else if (p === Power.Bomb) {
     const r2 = TUNING.bombRadius * TUNING.bombRadius;
     let n = 0;
     // The blast hits marbles on every track in range.
     for (let oc = 0; oc < st.chains.length; oc++) {
       const tr = level.tracks[oc];
       for (const o of st.chains[oc].balls) {
-        if (o.clr >= 0 || o.s < tr.visibleFrom) continue;
+        if (o.clr >= 0 || o.s < tr.visibleFrom || inTunnel(tr, o.s)) continue;
         pointAt(tr, o.s, tmp);
         const dx = tmp.x - bx;
         const dy = tmp.y - by;
@@ -773,7 +782,7 @@ function maybeSpawnPower(st: GameState, level: Level) {
     const balls = ch.balls;
     for (let i = 1; i < balls.length - 1; i++) {
       const b = balls[i];
-      if (b.p || b.clr >= 0 || b.s < level.tracks[ci].visibleFrom) continue;
+      if (b.p || b.clr >= 0 || b.s < level.tracks[ci].visibleFrom || inTunnel(level.tracks[ci], b.s)) continue;
       if (balls[i - 1].p || balls[i + 1].p) continue;
       cands.push(b);
     }

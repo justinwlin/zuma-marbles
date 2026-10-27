@@ -13,12 +13,15 @@ export const PALETTE = [
   { base: '#ff3b5c', light: '#ffa3b4', dark: '#7a0820', glyph: 'circle' },
   { base: '#ffbe1f', light: '#ffe9a3', dark: '#8a4a00', glyph: 'triangle' },
   { base: '#22df8c', light: '#a6ffd6', dark: '#035e35', glyph: 'square' },
-  { base: '#3a8bff', light: '#b0d2ff', dark: '#0a2a78', glyph: 'diamond' },
-  { base: '#b45cff', light: '#e6c2ff', dark: '#45108a', glyph: 'star' },
+  // Blue is a light sky blue and purple a deep violet, so they stay apart for everyone
+  // (blue/purple ΔE 49 → 89; under deuteranopia 3 → 31).
+  { base: '#1cb0ff', light: '#a9e4ff', dark: '#063f7a', glyph: 'diamond' },
+  { base: '#9a3cff', light: '#d6b3ff', dark: '#33087a', glyph: 'star' },
   { base: '#eef2ff', light: '#ffffff', dark: '#6f7899', glyph: 'cross' },
 ];
 
 const FRAMES = 12;
+export const BOLT_LIFE = 0.45;
 
 export interface ViewState {
   time: number;
@@ -41,6 +44,8 @@ export interface ViewState {
   ripples: Map<number, number>;
   ripple0: { s: number; t: number; c: number } | null;
   shotTrails: Map<number, Pt[]>;
+  /** Lightning strikes: jagged polylines that flicker and fade (world coords). */
+  bolts: { pts: Pt[]; t: number; color: string }[];
   colorblind: boolean;
   showGuide: boolean;
   banner: { text: string; sub?: string; t: number; color: string } | null;
@@ -336,12 +341,15 @@ export class Renderer {
     // Balls
     const pos: Pt = { x: 0, y: 0 };
     const rot = L.portrait ? -Math.PI / 2 : 0;
+    // Marbles on a bridge are drawn after the bridge deck; everything else (including
+    // marbles rolling through a tunnel) goes underneath it.
+    const onBridge = (tr: Track, b: Ball) => !!tr.bridges && b.ins >= 1 && tr.bridges.some(([a, c]) => b.s > a && b.s < c);
     // Shadows pass
     st.chains.forEach((ch, ci) => {
       const tr = lvl.tracks[ci];
       const vis = tr.visibleFrom - BALL_R;
       for (const b of ch.balls) {
-        if (b.s < vis) continue;
+        if (b.s < vis || onBridge(tr, b)) continue;
         ballPos(tr, b, pos);
         const sc = this.ballScale(b, v);
         this.blit(this.shadow, pos.x + 3, pos.y + 5, 0, sc * 1.05);
@@ -378,8 +386,20 @@ export class Renderer {
       const tr = lvl.tracks[ci];
       const vis = tr.visibleFrom - BALL_R;
       for (const b of ch.balls) {
-        if (b.s < vis) continue;
+        if (b.s < vis || onBridge(tr, b)) continue;
         ballPos(tr, b, pos);
+        this.drawBall(b, pos, v, rot, tr);
+      }
+    });
+    // Bridges, then the marbles crossing them.
+    lvl.tracks.forEach((tr, ti) => {
+      if (!tr.bridges) return;
+      for (const [a, c] of tr.bridges) this.drawBridge(tr, a, c, this.hue + ti * 70);
+      for (const b of st.chains[ti]?.balls ?? []) {
+        if (!onBridge(tr, b)) continue;
+        ballPos(tr, b, pos);
+        const sc = this.ballScale(b, v);
+        this.blit(this.shadow, pos.x + 3, pos.y + 5, 0, sc * 1.05);
         this.drawBall(b, pos, v, rot, tr);
       }
     });
@@ -407,6 +427,7 @@ export class Renderer {
     }
 
     this.drawLauncher(st, v, rot);
+    this.drawBolts(v);
 
     // Particles (world)
     this.drawParticles(fx, false);
@@ -555,6 +576,67 @@ export class Renderer {
     g.restore();
   }
 
+  /** A raised stretch of track: drop shadow onto the track below, bright rails, the usual groove. */
+  private drawBridge(tr: Track, s0: number, s1: number, hue: number) {
+    const g = this.ctx;
+    const path = new Path2D();
+    const p0 = pointAt(tr, s0);
+    path.moveTo(p0.x, p0.y);
+    for (let s = s0 + 4; s <= s1; s += 4) {
+      const p = pointAt(tr, s);
+      path.lineTo(p.x, p.y);
+    }
+    g.save();
+    g.lineCap = 'butt';
+    g.lineJoin = 'round';
+    g.translate(4, 7);
+    g.strokeStyle = 'rgba(0,0,0,0.5)';
+    g.lineWidth = BALL_D + 26;
+    g.stroke(path);
+    g.translate(-4, -7);
+    g.strokeStyle = `hsla(${hue}, 70%, 78%, 0.75)`;
+    g.lineWidth = BALL_D + 18;
+    g.stroke(path);
+    g.strokeStyle = '#04070e';
+    g.lineWidth = BALL_D + 11;
+    g.stroke(path);
+    g.strokeStyle = `hsl(${hue}, 40%, 14%)`;
+    g.lineWidth = BALL_D + 3;
+    g.stroke(path);
+    g.setLineDash([2, 14]);
+    g.strokeStyle = `hsla(${hue}, 80%, 75%, 0.3)`;
+    g.lineWidth = 2;
+    g.stroke(path);
+    g.restore();
+  }
+
+  /** Lightning: a glow pass, a coloured core and a white-hot centre line, flickering as it fades. */
+  private drawBolts(v: ViewState) {
+    const g = this.ctx;
+    for (const b of v.bolts) {
+      const life = 1 - b.t / BOLT_LIFE;
+      if (life <= 0 || b.pts.length < 2) continue;
+      const flick = 0.55 + 0.45 * Math.sin(b.t * 90);
+      g.save();
+      g.lineCap = 'round';
+      g.lineJoin = 'round';
+      g.beginPath();
+      g.moveTo(b.pts[0].x, b.pts[0].y);
+      for (let i = 1; i < b.pts.length; i++) g.lineTo(b.pts[i].x, b.pts[i].y);
+      g.strokeStyle = b.color;
+      g.globalAlpha = 0.35 * life * flick;
+      g.lineWidth = 16;
+      g.stroke();
+      g.globalAlpha = 0.9 * life;
+      g.lineWidth = 5;
+      g.stroke();
+      g.strokeStyle = '#fff';
+      g.lineWidth = 2;
+      g.stroke();
+      g.restore();
+    }
+  }
+
   drawPowerIcon(p: Power, x: number, y: number, r: number, rot: number) {
     const g = this.ctx;
     g.save();
@@ -597,19 +679,17 @@ export class Renderer {
         g.lineTo((dx + 0.3) * r, r * 0.5);
         g.stroke();
       }
-    } else if (p === Power.Aim) {
-      g.arc(0, 0, r * 0.6, 0, Math.PI * 2);
-      g.stroke();
-      g.beginPath();
-      g.moveTo(0, -r * 0.95);
-      g.lineTo(0, -r * 0.3);
-      g.moveTo(0, r * 0.95);
-      g.lineTo(0, r * 0.3);
-      g.moveTo(-r * 0.95, 0);
-      g.lineTo(-r * 0.3, 0);
-      g.moveTo(r * 0.95, 0);
-      g.lineTo(r * 0.3, 0);
-      g.stroke();
+    } else if (p === Power.Lightning) {
+      // Bolt
+      g.fillStyle = '#ffe14a';
+      g.moveTo(r * 0.18, -r * 0.95);
+      g.lineTo(-r * 0.5, r * 0.12);
+      g.lineTo(-r * 0.02, r * 0.12);
+      g.lineTo(-r * 0.2, r * 0.95);
+      g.lineTo(r * 0.52, -r * 0.18);
+      g.lineTo(r * 0.04, -r * 0.18);
+      g.closePath();
+      g.fill();
     }
     g.restore();
   }
@@ -648,24 +728,7 @@ export class Renderer {
       g.stroke();
       return;
     }
-    const laser = st.aimT > 0;
-    if (laser) {
-      g.beginPath();
-      g.moveTo(ox, oy);
-      g.lineTo(ox + dx * dist, oy + dy * dist);
-      g.strokeStyle = col.base;
-      g.globalAlpha = 0.3;
-      g.lineWidth = 14;
-      g.stroke();
-      g.strokeStyle = col.light;
-      g.globalAlpha = 0.85;
-      g.lineWidth = 4;
-      g.stroke();
-      g.lineWidth = 1.5;
-      g.strokeStyle = '#fff';
-      g.stroke();
-      g.globalAlpha = 1;
-    } else {
+    {
       const spacing = 24;
       const off = (v.time * 90) % spacing;
       const maxD = hit ? dist : 520;

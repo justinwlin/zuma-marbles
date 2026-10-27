@@ -34,11 +34,11 @@ export interface Insets {
 export function computeLayout(vw: number, vh: number, dpr: number, insets: Insets, world: { w: number; h: number } = { w: WORLD_W, h: WORLD_H }): Layout {
   const portrait = vh > vw * 1.05;
   // Space reserved for HUD bars (CSS px), on top of device safe areas.
-  // Tall phones (≥ ~19.5:9) have room for a bottom bar; on shorter screens the swap
-  // button floats over the board corner instead, so the marbles stay big.
+  // Tall phones (≥ ~19.5:9) get a roomy bottom bar; shorter phones a slim one with a
+  // compact swap button, so no button ever sits on top of the marbles.
   const tall = vh / vw >= 1.95;
-  const hudTop = (portrait ? 56 : 50) + insets.top;
-  const hudBottom = (portrait ? (tall ? 92 : 10) : 8) + insets.bottom;
+  const hudTop = (portrait ? (tall ? 56 : 50) : 50) + insets.top;
+  const hudBottom = (portrait ? (tall ? 92 : 54) : 8) + insets.bottom;
   const availW = vw - insets.left - insets.right - (portrait ? 8 : 16);
   const availH = vh - hudTop - hudBottom;
   const bw = portrait ? world.h : world.w;

@@ -325,3 +325,9 @@ Built in this folder. See `README.md`.
   - **Endless mode**: random or daily seed (`endless-…`, `daily-YYYYMMDD`), one life, score carries over, steady climb, a twist most stages.
   - Tuned with bot win rates (`scripts/balance.ts`). Bosses land around 45–70% at level 10 and 20–45% at levels 20–40. Two-chain levels are slower with a shorter bar, so they run about 15 points below single-chain ones.
   - Saves store the generator version: an update keeps unlocked levels and stars and drops only an in-progress level snapshot.
+- **Generator version 3**:
+  - Lightning replaced Laser. It pops every marble of the power marble's colour on every track, with chain-lightning bolts and a zap sound. Laser had become redundant once the always-on aim guide and hold-to-shoot existed.
+  - New figure-8 and tunnel-spiral tracks with bridges and tunnels. Marbles under a bridge are hidden and can't be hit.
+  - Per-family chain speeds even out difficulty.
+  - Clearer blue and purple.
+  - On short phones, a slim bottom bar so the swap button never covers the board.

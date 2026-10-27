@@ -16,7 +16,7 @@ for (const f of fams) {
   const rng = new Rng(7);
   for (let k = 0; k < PER; k++) {
     const cand = __GEN[f](rng, { index: 10, off: k % 2 === 1 });
-    const ok = validateLevel(cand.paths, cand.launcher, cand.paths.length > 1, { w: W, h: H });
+    const ok = validateLevel(cand.paths, cand.launcher, cand.paths.length > 1, { w: W, h: H }, (cand as { crossings?: { x: number; y: number }[] }).crossings);
     const cols = ['#4f8', '#4cf'];
     const paths = cand.paths
       .map((p, i) => `<polyline fill="none" stroke="${ok ? cols[i] : '#f55'}" stroke-width="36" stroke-opacity="0.35" stroke-linejoin="round" points="${p.map((q) => `${q.x.toFixed(0)},${q.y.toFixed(0)}`).join(' ')}"/>`)

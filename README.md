@@ -9,6 +9,7 @@ A Zuma-style marble shooter for phone (portrait) and desktop. It installs as a P
   - **Aim assist** (`src/sim/aim.ts`, can be turned off in Settings) moves the shot by at most ±3.5° toward the middle of the slot the ghost marble shows. It sticks to the current target so the preview doesn't flicker between neighbours.
   - The shot uses the aim from 70 ms before your finger lifts, so the wobble as you lift doesn't move it.
   - With a ±0.6° finger wobble, 95% of assisted shots stay in the previewed slot, compared with 54% unassisted.
+- **Colours** are picked to stay distinct: blue is a light sky blue and purple a deep violet (their ΔE went from 49 to 89, and from 3 to 31 under deuteranopia), and colour-blind symbols are available in Settings.
 - **Characters**: pick the launcher (Frog, Calico Cat, Fox, Penguin) in Settings. They're drawn in code in `src/game/characters.ts`, with blinking, tail sway and ear flicks on recoil.
 - **Large-marble campaigns**: switch Marbles to Large on the Levels screen. The levels are generated on a 25% smaller board with the same marble size, so when the board is scaled to fit the screen everything is 25% bigger. The campaign seed gets an `xl-` prefix, so codes like `xl-jade-1234/3` stay deterministic and shareable. Each campaign keeps its own progress. A golden test pins normal-campaign levels so they never change.
 - **Aim modes** (touch): Drag & release, **Aim + tap** (drag to set the aim, tap to shoot; the tap is a real one, so iPhones vibrate on every shot), and Tap.
@@ -21,9 +22,10 @@ A Zuma-style marble shooter for phone (portrait) and desktop. It installs as a P
   - Bomb: blasts nearby marbles.
   - Slow: slows the chain.
   - Reverse: rolls the chain back.
-  - Laser: aim beam and rapid fire.
+  - Lightning: strikes every marble of its colour on the board, on every track (it replaced Laser).
 - **Levels** come from `(campaignSeed, levelIndex)`, so the same seed gives the same levels on any device. Level codes look like `jade-1234/12` and can be shared from the Levels screen.
-  - **Shapes**: 9 single-chain families (spiral, lobes, wave, square, heart, serpentine, columns, comb, horseshoe) and 3 two-chain families (twin spiral, twin serpentine, twin columns). Some levels move the launcher off-centre.
+  - **Shapes**: 11 single-chain families (spiral, lobes, wave, square, heart, serpentine, columns, comb, horseshoe, figure-8, tunnel spiral) and 3 two-chain families (twin spiral, twin serpentine, twin columns). Some levels move the launcher off-centre. Per-family chain speeds even out how hard each shape plays.
+  - **Bridges and tunnels**: figure-8s cross themselves once, and tunnel spirals bring the chain in under the outer rings to surface beside the launcher. Marbles under a bridge are hidden and can't be hit (shots, bombs and lightning skip them).
   - **Difficulty** runs in a sawtooth: each block of 5 levels climbs to a **mini-boss** (every 5th) or **boss** (every 10th), and the next block starts lower than that peak but higher than the last. Later levels also pick shorter tracks for their shape.
   - **Two chains** show up from level 8 on (more often on bosses): two entrances, two skulls, and losing either chain loses the level.
   - **Twists** on about a third of levels from level 6: **Power surge** (3× power-ups) and **Streaky** (long same-colour runs).

@@ -143,9 +143,12 @@ export class Audio {
         for (let i = 0; i < 5; i++) this.tone(t + i * 0.06, 'square', 900 - i * 120, 700 - i * 120, 0.05, 0.08);
         this.noise(t, 0.4, 0.15, 'bandpass', 3000, 400, 3);
       },
-      laser: (t) => {
-        this.tone(t, 'sawtooth', 200, 1600, 0.25, 0.12);
-        this.tone(t + 0.05, 'sine', 1600, 2400, 0.3, 0.12);
+      zap: (t) => {
+        // Crackle + a falling electric whine + a thunder tail.
+        for (let i = 0; i < 6; i++) this.noise(t + i * 0.035, 0.05, 0.35, 'highpass', 6000, 2500, 0.7);
+        this.tone(t, 'sawtooth', 2200, 180, 0.35, 0.14);
+        this.tone(t + 0.02, 'square', 1400, 90, 0.25, 0.06);
+        this.noise(t + 0.08, 0.7, 0.45, 'lowpass', 900, 60, 0.8);
       },
       whiff: (t) => this.noise(t, 0.12, 0.08, 'bandpass', 1200, 400, 1),
       swap: (t) => {
