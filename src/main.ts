@@ -1,0 +1,762 @@
+// Game controller: fixed-timestep loop, input, feel (hit-stop, shake, slow-mo),
+// audio/haptics, saving, screens. The simulation itself lives in src/sim.
+
+import './style.css';
+import { BALL_D, generateLevel, type Level } from './sim/levelgen';
+import {
+  ballPos,
+  type Command,
+  createGame,
+  DT,
+  type GameEvent,
+  type GameState,
+  POWER_NAMES,
+  Power,
+  progress,
+  raycast,
+  runIfInserted,
+  snapshot,
+  step,
+  TICK_HZ,
+} from './sim/game';
+import { BOT_PRESETS, decide } from './sim/bot';
+import { Rng } from './sim/rng';
+import { pointAt, type Pt } from './sim/track';
+import { computeLayout, type Layout, screenToWorld } from './game/layout';
+import { Renderer, PALETTE, type ViewState } from './game/render';
+import { Particles } from './game/fx';
+import { FEEL, feedbackFor, shakeOffset, springAngle } from './game/feel';
+import { Audio } from './game/audio';
+import { Haptics } from './game/haptics';
+import { UI } from './game/ui';
+import { freshSave, loadSave, parseLevelCode, type SaveData, starsFor, writeSave } from './game/save';
+
+type Mode = 'title' | 'playing' | 'paused' | 'result';
+
+const canvas = document.getElementById('game') as HTMLCanvasElement;
+const renderer = new Renderer(canvas);
+const fx = new Particles();
+const audio = new Audio();
+const haptics = new Haptics();
+let save: SaveData = loadSave();
+
+let mode: Mode = 'title';
+let attract = true; // bot plays behind the title screen
+let level: Level;
+let st: GameState;
+let layout: Layout;
+let pending: Command[] = [];
+let recording: [number, Command][] = [];
+let acc = 0;
+let hitstop = 0; // ms
+let slowmo: { scale: number; left: number } | null = null;
+let peakDanger = 0;
+let resultTimer = -1;
+let lastHitBall = -1;
+let heartT = 0;
+let autosaveT = 0;
+let botRng = new Rng(1);
+const eventLog: { t: number; e: GameEvent }[] = [];
+const feelLog: { tick: number; type: string; hitstop: number; trauma: number; flash: number; particles: number; sound: string | null }[] = [];
+
+const view: ViewState = {
+  time: 0,
+  aimAngle: -Math.PI / 2,
+  aimActive: false,
+  aimHit: null,
+  aimWillPop: false,
+  recoil: 0,
+  trauma: 0,
+  shake: { x: 0, y: 0, rot: 0 },
+  flash: 0,
+  danger: 0,
+  ripples: new Map(),
+  ripple0: null,
+  shotTrails: new Map(),
+  colorblind: false,
+  showGuide: true,
+  banner: null,
+  hue: 200,
+};
+let aimVel = 0;
+let aimTarget = -Math.PI / 2;
+
+// ------------------------------------------------------------------ level lifecycle
+
+function hueFor(lvl: Level) {
+  return [195, 165, 260, 215, 285, 140, 330, 20][lvl.index % 8] + ((lvl.seed % 20) - 10);
+}
+
+function loadLevel(seed: string, index: number, state?: GameState) {
+  level = generateLevel(seed, index);
+  st = state ?? createGame(level);
+  view.hue = hueFor(level);
+  renderer.setLevel(level, view.hue);
+  pending = [];
+  recording = [];
+  acc = 0;
+  hitstop = 0;
+  slowmo = null;
+  peakDanger = 0;
+  resultTimer = -1;
+  fx.list.length = 0;
+  view.ripples.clear();
+  view.shotTrails.clear();
+  view.banner = null;
+  view.danger = 0;
+  view.trauma = 0;
+  view.flash = 0;
+  aimTarget = aimAngleToward({ x: level.launcher.x, y: 0 });
+  view.aimAngle = aimTarget;
+  ui.resetHud();
+}
+
+function startLevel(index: number, fromSnapshot = false) {
+  attract = false;
+  if (fromSnapshot && save.snapshot) loadLevel(save.campaignSeed, save.snapshot.levelIndex, save.snapshot.state);
+  else {
+    loadLevel(save.campaignSeed, index);
+    save.snapshot = null;
+    writeSave(save);
+  }
+  mode = 'playing';
+  ui.hide();
+  ui.showHud(true);
+  view.banner = { text: `Level ${level.index + 1}`, sub: level.name, t: 0, color: '#ffe08a' };
+  audio.unlock();
+  requestWakeLock();
+  if (!save.tutorialSeen) {
+    save.tutorialSeen = true;
+    writeSave(save);
+    ui.toast(matchMedia('(pointer: coarse)').matches ? 'Drag to aim · release to shoot · tap the frog to swap' : 'Move to aim · click to shoot · right-click / Space to swap', 4200);
+  }
+}
+
+function startAttract() {
+  attract = true;
+  loadLevel('attract-demo', 2 + Math.floor(Math.random() * 6));
+  botRng = new Rng(7);
+}
+
+function toTitle() {
+  mode = 'title';
+  ui.showHud(false);
+  ui.title(save);
+  startAttract();
+  releaseWakeLock();
+}
+
+function saveSnapshot() {
+  if (attract || mode === 'title' || mode === 'result' || !st || st.phase !== 'playing') return;
+  save.snapshot = { levelIndex: level.index, state: JSON.parse(snapshot(st)), savedAt: Date.now() };
+  writeSave(save);
+}
+
+function pause() {
+  if (mode !== 'playing') return;
+  mode = 'paused';
+  view.aimActive = false;
+  saveSnapshot();
+  ui.pause(save, level);
+  releaseWakeLock();
+}
+
+function finishLevel(won: boolean) {
+  mode = 'result';
+  ui.showHud(false);
+  const seconds = st.tick / TICK_HZ;
+  const stars = won ? starsFor(peakDanger) : 0;
+  const prev = save.best[level.index];
+  if (won) {
+    if (!prev || st.score > prev.score || stars > prev.stars) {
+      save.best[level.index] = { score: Math.max(st.score, prev?.score ?? 0), stars: Math.max(stars, prev?.stars ?? 0), seconds };
+    }
+    save.unlocked = Math.max(save.unlocked, level.index + 1);
+    save.totalScore += st.score;
+  }
+  save.snapshot = null;
+  writeSave(save);
+  ui.result(won, st, level, stars, seconds, save.best[level.index]?.score ?? st.score, peakDanger);
+  releaseWakeLock();
+}
+
+// ------------------------------------------------------------------ UI wiring
+
+const ui = new UI({
+  play: (i) => startLevel(i),
+  continueSnapshot: () => startLevel(0, true),
+  resume: () => {
+    mode = 'playing';
+    ui.hide();
+    audio.unlock();
+    requestWakeLock();
+  },
+  restart: () => startLevel(level.index),
+  quit: () => {
+    saveSnapshot();
+    toTitle();
+  },
+  showLevels: () => {
+    toTitle();
+    ui.levels(save);
+  },
+  next: () => startLevel(level.index + 1),
+  settingsChanged: (s) => {
+    applySettings();
+    writeSave(save);
+    void s;
+  },
+  resetProgress: () => {
+    const settings = save.settings;
+    save = freshSave();
+    save.settings = settings;
+    writeSave(save);
+    toTitle();
+    ui.toast('Progress reset — new campaign ' + save.campaignSeed);
+  },
+  newCampaign: (seed) => {
+    const clean = seed.replace(/[^\w-]/g, '').slice(0, 40);
+    if (!clean) return;
+    const settings = save.settings;
+    save = freshSave(clean);
+    save.settings = settings;
+    writeSave(save);
+    ui.levels(save);
+    ui.toast(`New campaign “${clean}”`);
+  },
+  playCode: (code) => {
+    const p = parseLevelCode(code);
+    if (!p) return ui.toast('Level codes look like  jade-1234/12');
+    if (p.seed !== save.campaignSeed) {
+      const settings = save.settings;
+      save = freshSave(p.seed);
+      save.settings = settings;
+    }
+    save.unlocked = Math.max(save.unlocked, p.index);
+    writeSave(save);
+    startLevel(p.index);
+  },
+  install: () => void installPrompt?.prompt(),
+  click: () => {
+    audio.unlock();
+    audio.play('ui');
+  },
+});
+
+function applySettings() {
+  const s = save.settings;
+  audio.setVolumes(s.sfx, s.music);
+  haptics.enabled = s.haptics;
+  view.colorblind = s.colorblind;
+  view.showGuide = s.guide;
+}
+
+// ------------------------------------------------------------------ layout
+
+function readInsets() {
+  const cs = getComputedStyle(document.documentElement);
+  const px = (v: string) => parseFloat(cs.getPropertyValue(v)) || 0;
+  return { top: px('--sat'), bottom: px('--sab'), left: px('--sal'), right: px('--sar') };
+}
+
+function resize() {
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  layout = computeLayout(vw, vh, dpr, readInsets());
+  canvas.style.width = `${vw}px`;
+  canvas.style.height = `${vh}px`;
+  renderer.setLayout(layout);
+}
+window.addEventListener('resize', resize);
+window.visualViewport?.addEventListener('resize', resize);
+
+// ------------------------------------------------------------------ input
+
+function aimAngleToward(w: Pt) {
+  return Math.atan2(w.y - level.launcher.y, w.x - level.launcher.x);
+}
+
+function onLauncher(w: Pt) {
+  return Math.hypot(w.x - level.launcher.x, w.y - level.launcher.y) < 58;
+}
+
+let touchStart: { id: number; w: Pt; sx: number; sy: number; onFrog: boolean; moved: boolean } | null = null;
+
+function queueFire(w: Pt) {
+  if (mode !== 'playing' || st.phase !== 'playing') return;
+  if (Math.hypot(w.x - level.launcher.x, w.y - level.launcher.y) < 4) return;
+  pending.push({ type: 'fire', x: w.x, y: w.y });
+}
+function queueSwap() {
+  if (mode !== 'playing' || st.phase !== 'playing') return;
+  pending.push({ type: 'swap' });
+}
+
+canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+canvas.addEventListener('pointerdown', (e) => {
+  audio.unlock();
+  if (mode !== 'playing') return;
+  const w = screenToWorld(layout, e.clientX, e.clientY);
+  if (e.pointerType === 'mouse') {
+    aimTarget = aimAngleToward(w);
+    view.aimActive = true;
+    if (e.button === 2) queueSwap();
+    else if (e.button === 0) {
+      if (onLauncher(w)) queueSwap();
+      else queueFire(w);
+    }
+    return;
+  }
+  canvas.setPointerCapture(e.pointerId);
+  const frog = onLauncher(w);
+  touchStart = { id: e.pointerId, w, sx: e.clientX, sy: e.clientY, onFrog: frog, moved: false };
+  if (save.settings.touchAim === 'tap' && !frog) {
+    aimTarget = aimAngleToward(w);
+    view.aimAngle = aimTarget;
+    queueFire(w);
+    return;
+  }
+  if (!frog) {
+    aimTarget = aimAngleToward(w);
+    view.aimActive = true;
+  }
+});
+canvas.addEventListener('pointermove', (e) => {
+  if (mode !== 'playing') return;
+  const w = screenToWorld(layout, e.clientX, e.clientY);
+  if (e.pointerType === 'mouse') {
+    aimTarget = aimAngleToward(w);
+    view.aimActive = true;
+    return;
+  }
+  if (!touchStart || touchStart.id !== e.pointerId) return;
+  if (Math.hypot(e.clientX - touchStart.sx, e.clientY - touchStart.sy) > 10) touchStart.moved = true;
+  if (save.settings.touchAim === 'drag' && (!onLauncher(w) || !touchStart.onFrog)) {
+    aimTarget = aimAngleToward(w);
+    view.aimActive = !onLauncher(w);
+  }
+});
+function endTouch(e: PointerEvent, cancelled: boolean) {
+  if (e.pointerType === 'mouse' || !touchStart || touchStart.id !== e.pointerId) return;
+  const w = screenToWorld(layout, e.clientX, e.clientY);
+  const t = touchStart;
+  touchStart = null;
+  if (cancelled || mode !== 'playing') {
+    view.aimActive = false;
+    return;
+  }
+  if (t.onFrog && !t.moved) queueSwap();
+  else if (save.settings.touchAim === 'drag' && !onLauncher(w)) {
+    // Fire along the current (sprung) aim so the shot matches the guide you were looking at.
+    aimTarget = aimAngleToward(w);
+    queueFire(w);
+  }
+  view.aimActive = false;
+}
+canvas.addEventListener('pointerup', (e) => endTouch(e, false));
+canvas.addEventListener('pointercancel', (e) => endTouch(e, true));
+canvas.addEventListener('pointerleave', (e) => {
+  if (e.pointerType === 'mouse') view.aimActive = false;
+});
+
+document.getElementById('btn-swap')!.addEventListener('pointerdown', (e) => {
+  e.preventDefault();
+  audio.unlock();
+  queueSwap();
+});
+document.getElementById('btn-pause')!.addEventListener('click', () => {
+  audio.play('ui');
+  pause();
+});
+
+window.addEventListener('keydown', (e) => {
+  if ((e.target as HTMLElement).tagName === 'INPUT') return;
+  if (e.code === 'Escape' || e.code === 'KeyP') {
+    if (mode === 'playing') pause();
+    else if (mode === 'paused') {
+      mode = 'playing';
+      ui.hide();
+    }
+  } else if (mode === 'playing') {
+    if (e.code === 'Space' || e.code === 'KeyS') {
+      e.preventDefault();
+      queueSwap();
+    } else if (e.code === 'ArrowLeft' || e.code === 'ArrowRight') {
+      aimTarget += (e.code === 'ArrowLeft' ? -1 : 1) * 0.06;
+      view.aimActive = true;
+    } else if (e.code === 'Enter' || e.code === 'ArrowUp') {
+      queueFire({ x: level.launcher.x + Math.cos(aimTarget) * 300, y: level.launcher.y + Math.sin(aimTarget) * 300 });
+    }
+  }
+});
+
+// ------------------------------------------------------------------ events → feel
+
+function handleEvents(events: GameEvent[]) {
+  const head = progress(st, level).head;
+  for (const e of events) {
+    if (!attract) eventLog.push({ t: st.tick, e });
+    if (eventLog.length > 400) eventLog.shift();
+    const fb = feedbackFor(e, { streak: st.streak, headProgress: head, reduceMotion: save.settings.reduceMotion });
+    if (attract) {
+      // Silent, gentle visuals only behind the menu.
+      fb.hitstop = 0;
+      fb.trauma *= 0.3;
+      fb.flash = 0;
+      fb.sound = null;
+      fb.haptic = [];
+      fb.slowmo = null;
+    }
+    if (!attract) feelLog.push({ tick: st.tick, type: e.type, hitstop: fb.hitstop, trauma: fb.trauma, flash: fb.flash, particles: fb.particles, sound: fb.sound });
+    if (feelLog.length > 400) feelLog.shift();
+    hitstop = Math.max(hitstop, fb.hitstop);
+    view.trauma = Math.min(FEEL.maxTrauma, view.trauma + fb.trauma);
+    view.flash = Math.max(view.flash, fb.flash);
+    audio.play(fb.sound, fb.pitch);
+    haptics.pulse(fb.haptic);
+    if (fb.slowmo) slowmo = { scale: fb.slowmo[0], left: fb.slowmo[1] / 1000 };
+
+    switch (e.type) {
+      case 'fire': {
+        view.recoil = 1;
+        const col = PALETTE[e.c];
+        const mx = e.x + e.dx * 50;
+        const my = e.y + e.dy * 50;
+        for (let i = 0; i < fb.particles; i++) {
+          const a = Math.atan2(e.dy, e.dx) + (fx.rand() - 0.5) * 0.9;
+          const sp = 200 + fx.rand() * 300;
+          fx.spawn({ k: 0, x: mx, y: my, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp, max: 0.18 + fx.rand() * 0.12, size: 2, color: col.light, drag: 6 });
+        }
+        fx.ring(mx, my, col.light, 8, 160, 0.18);
+        break;
+      }
+      case 'hit': {
+        const col = PALETTE[e.c];
+        fx.burst(e.x, e.y, col.base, col.light, fb.particles, 0.5);
+        // Ripple through the chain from the impact point.
+        let best = -1;
+        let bd = Infinity;
+        for (const b of st.balls) {
+          const p = pointAt(level.track, b.s);
+          const d = Math.hypot(p.x - e.x, p.y - e.y);
+          if (d < bd) {
+            bd = d;
+            best = b.s;
+          }
+        }
+        view.ripple0 = { s: best, t: view.time };
+        break;
+      }
+      case 'pop': {
+        const col = PALETTE[e.c];
+        const per = Math.max(4, Math.floor(fb.particles / e.balls.length));
+        for (const b of e.balls) {
+          fx.burst(b.x, b.y, col.base, col.light, per, 1 + e.combo * 0.15);
+          fx.ring(b.x, b.y, col.light, 6, 240 + e.combo * 60, 0.32);
+        }
+        fx.text(e.x, e.y, `+${e.score}`, '#fff', 24 + e.combo * 4);
+        if (e.combo > 0) {
+          const words = ['', 'COMBO ×2', 'COMBO ×3!', 'AMAZING ×4!', 'INCREDIBLE ×5!!'];
+          fx.text(e.x, e.y, words[Math.min(e.combo, 4)] || `COMBO ×${e.combo + 1}!!`, col.light, 28 + e.combo * 4, 1.2, -38);
+        }
+        if (e.gapBonus) fx.text(e.x, e.y, `GAP BONUS +${e.gapBonus}`, '#7cf7ff', 20, 1.2, 32);
+        if (e.chainBonus) fx.text(e.x, e.y, `CHAIN ×${st.streak} +${e.chainBonus}`, '#ffd86b', 20, 1.2, e.gapBonus ? 58 : 32);
+        if (fb.slowmo) fx.text(e.x, e.y, 'CLOSE CALL!', '#ff8fa3', 30, 1.3, e.combo > 0 ? -76 : -40);
+        break;
+      }
+      case 'suck': {
+        for (let i = 0; i < fb.particles; i++) fx.spawn({ k: 1, x: e.x, y: e.y, vx: (fx.rand() - 0.5) * 80, vy: (fx.rand() - 0.5) * 80, max: 0.3, size: 14, color: '#bdf', drag: 3 });
+        break;
+      }
+      case 'contact': {
+        fx.ring(e.x, e.y, e.matched ? '#fff' : 'rgba(255,255,255,0.5)', 10, e.matched ? 300 : 120, 0.25);
+        if (e.matched) fx.burst(e.x, e.y, '#fff', '#fff', fb.particles, 0.6);
+        break;
+      }
+      case 'power': {
+        const label = POWER_NAMES[e.power].toUpperCase() + '!';
+        if (e.power === Power.Bomb) {
+          fx.ring(e.x, e.y, '#ffd86b', 10, 900, 0.45);
+          fx.ring(e.x, e.y, '#fff', 4, 600, 0.3);
+          fx.burst(e.x, e.y, '#ff8a3d', '#ffe08a', fb.particles, 1.6);
+          fx.text(e.x, e.y, 'BOOM!', '#ffd86b', 40, 1.1, -34);
+        } else {
+          const c = e.power === Power.Slow ? '#7cc4ff' : e.power === Power.Reverse ? '#ffd86b' : '#ff7cf1';
+          fx.ring(e.x, e.y, c, 10, 500, 0.5);
+          fx.burst(e.x, e.y, c, '#fff', fb.particles, 0.8);
+          fx.text(e.x, e.y, label, c, 30, 1.2, -34);
+        }
+        break;
+      }
+      case 'barFull':
+        view.banner = { text: 'ZUMA!', sub: 'No more marbles — clear the rest', t: 0, color: '#ffd86b' };
+        break;
+      case 'lose':
+        view.banner = { text: 'Oh no!', t: 0, color: '#ff8fa3' };
+        break;
+      case 'lost':
+        if (attract) startAttract();
+        else resultTimer = 0.6;
+        break;
+      case 'won': {
+        if (attract) {
+          startAttract();
+          break;
+        }
+        view.banner = { text: 'Level clear!', t: 0, color: '#7dffcf' };
+        const lc = level.launcher;
+        fx.confetti(lc.x, lc.y, PALETTE.map((p) => p.base), fb.particles);
+        resultTimer = 1.8;
+        break;
+      }
+    }
+  }
+}
+
+// ------------------------------------------------------------------ main loop
+
+let last = performance.now();
+let fpsFrames = 0;
+let fpsT = 0;
+let fps = 0;
+
+function frame(now: number) {
+  requestAnimationFrame(frame);
+  let dt = Math.min(0.05, (now - last) / 1000);
+  last = now;
+  fpsFrames++;
+  fpsT += dt;
+  if (fpsT >= 1) {
+    fps = fpsFrames / fpsT;
+    fpsFrames = 0;
+    fpsT = 0;
+  }
+  if (document.hidden) return;
+  view.time += dt;
+
+  const simulate = attract || mode === 'playing';
+  if (simulate) {
+    let simDt = dt;
+    if (hitstop > 0) {
+      hitstop -= dt * 1000;
+      simDt = 0;
+    } else if (slowmo) {
+      slowmo.left -= dt;
+      simDt *= slowmo.scale;
+      if (slowmo.left <= 0) slowmo = null;
+    }
+    acc += simDt;
+    let steps = 0;
+    while (acc >= DT && steps < 8) {
+      acc -= DT;
+      steps++;
+      let cmds: Command[] = [];
+      if (attract) {
+        if (st.tick % 30 === 0 && !st.rolling) {
+          cmds = decide(st, level, BOT_PRESETS.casual, botRng);
+          const f = cmds.find((c) => c.type === 'fire');
+          if (f && f.type === 'fire') aimTarget = aimAngleToward(f);
+        }
+      } else {
+        cmds = pending;
+        pending = [];
+        for (const c of cmds) recording.push([st.tick + 1, c]);
+      }
+      const ev = step(st, level, cmds);
+      if (ev.length) handleEvents(ev);
+      if (hitstop > 0) {
+        acc = 0;
+        break;
+      }
+    }
+    if (!attract && st.phase === 'playing') {
+      const head = progress(st, level).head;
+      peakDanger = Math.max(peakDanger, head);
+    }
+  }
+  if (resultTimer > 0) {
+    resultTimer -= dt;
+    if (resultTimer <= 0) {
+      resultTimer = -1;
+      finishLevel(st.phase === 'won');
+    }
+  }
+
+  updateView(dt);
+  fx.update(dt * (slowmo ? slowmo.scale * 1.5 : 1));
+  renderer.draw(st, view, fx);
+  if (!attract && (mode === 'playing' || mode === 'paused')) ui.updateHud(st, level);
+
+  // Autosave every few seconds
+  if (!attract && mode === 'playing') {
+    autosaveT += dt;
+    if (autosaveT > 4) {
+      autosaveT = 0;
+      saveSnapshot();
+    }
+  }
+}
+
+function updateView(dt: number) {
+  // Aim spring
+  [view.aimAngle, aimVel] = springAngle(view.aimAngle, aimVel, aimTarget, Math.min(dt, 1 / 30));
+  view.recoil = Math.max(0, view.recoil - dt / FEEL.recoilReturn);
+  view.trauma = Math.max(0, view.trauma - FEEL.traumaDecay * dt);
+  view.shake = shakeOffset(view.trauma, view.time);
+  view.flash = Math.max(0, view.flash - dt * 4);
+  if (view.banner) {
+    view.banner.t += dt;
+    if (view.banner.t > 1.8) view.banner = null;
+  }
+  // Danger
+  const head = st ? progress(st, level).head : 0;
+  const targetDanger = st && st.phase === 'playing' && !attract ? Math.max(0, Math.min(1, (head - FEEL.dangerStart) / (0.97 - FEEL.dangerStart))) : 0;
+  view.danger += (targetDanger - view.danger) * Math.min(1, dt * 4);
+  if (view.danger > 0.05 && mode === 'playing') {
+    heartT -= dt;
+    if (heartT <= 0) {
+      heartT = 1.15 - view.danger * 0.6;
+      audio.play('heart');
+      if (view.danger > 0.6) haptics.pulse([14]);
+    }
+  }
+  audio.updateMusic(dt, attract || mode !== 'playing' ? 0 : view.danger);
+
+  // Aim raycast + lock-on tick
+  if (st && st.phase === 'playing' && view.aimActive && !attract) {
+    const hit = raycast(st, level, Math.cos(view.aimAngle), Math.sin(view.aimAngle));
+    view.aimHit = hit;
+    view.aimWillPop = !!hit && runIfInserted(st, hit, st.gun.cur) >= 2;
+    const id = hit ? hit.ballId : -1;
+    if (id !== lastHitBall && id >= 0) {
+      audio.play('tick', view.aimWillPop ? 7 : 0);
+      if (touchStart) haptics.pulse([4]);
+    }
+    lastHitBall = id;
+  } else if (attract) {
+    view.aimHit = null;
+  }
+
+  // Ripples: a pulse travelling outward along the chain from the impact.
+  view.ripples.clear();
+  if (view.ripple0) {
+    const age = view.time - view.ripple0.t;
+    if (age > 0.6) view.ripple0 = null;
+    else {
+      const front = age * FEEL.ripple.speed;
+      const fade = Math.exp(-age / FEEL.ripple.decay);
+      for (const b of st.balls) {
+        const d = Math.abs(b.s - view.ripple0.s);
+        if (d > front + BALL_D * 2) continue;
+        const w = Math.exp(-((d - front) * (d - front)) / (2 * BALL_D * BALL_D));
+        view.ripples.set(b.id, FEEL.ripple.amp * w * fade);
+      }
+    }
+  }
+  // Shot trails
+  const alive = new Set<number>();
+  for (const sh of st.shots) {
+    alive.add(sh.id);
+    let tr = view.shotTrails.get(sh.id);
+    if (!tr) view.shotTrails.set(sh.id, (tr = []));
+    tr.push({ x: sh.x, y: sh.y });
+    if (tr.length > 7) tr.shift();
+  }
+  for (const id of view.shotTrails.keys()) if (!alive.has(id)) view.shotTrails.delete(id);
+}
+
+// ------------------------------------------------------------------ platform glue
+
+let wakeLock: { release(): Promise<void> } | null = null;
+async function requestWakeLock() {
+  try {
+    const wl = (navigator as unknown as { wakeLock?: { request(t: string): Promise<{ release(): Promise<void> }> } }).wakeLock;
+    if (wl && !wakeLock) wakeLock = await wl.request('screen');
+  } catch {
+    /* not supported / denied */
+  }
+}
+function releaseWakeLock() {
+  void wakeLock?.release().catch(() => {});
+  wakeLock = null;
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    pause();
+    saveSnapshot();
+    audio.suspend();
+  }
+});
+window.addEventListener('pagehide', saveSnapshot);
+
+let installPrompt: (Event & { prompt(): Promise<void> }) | null = null;
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  installPrompt = e as Event & { prompt(): Promise<void> };
+  ui.canInstall = true;
+  if (mode === 'title') ui.title(save);
+});
+
+// ------------------------------------------------------------------ test hook (used by scripts/e2e.ts)
+
+declare global {
+  interface Window {
+    __zuma: unknown;
+  }
+}
+window.__zuma = {
+  get mode() {
+    return mode;
+  },
+  get attract() {
+    return attract;
+  },
+  state: () => st,
+  level: () => ({ index: level.index, seed: level.campaignSeed, launcher: level.launcher, length: level.track.length, family: level.family }),
+  layout: () => layout,
+  view: () => ({ aimAngle: view.aimAngle, aimActive: view.aimActive, aimHit: view.aimHit, willPop: view.aimWillPop, trauma: view.trauma, danger: view.danger }),
+  fps: () => fps,
+  events: () => eventLog.slice(),
+  feel: () => feelLog.slice(),
+  recording: () => recording.slice(),
+  particles: () => fx.list.length,
+  save: () => save,
+  start: (i: number) => startLevel(i),
+  fireAt: (wx: number, wy: number) => queueFire({ x: wx, y: wy }),
+  swap: () => queueSwap(),
+  pause,
+  ballScreen: (i: number) => {
+    const b = st.balls[i];
+    if (!b) return null;
+    const p = ballPos(level, b);
+    return { x: layout.a * p.x + layout.c * p.y + layout.e, y: layout.b * p.x + layout.d * p.y + layout.f, s: b.s, c: b.c };
+  },
+  worldToScreen: (x: number, y: number) => ({ x: layout.a * x + layout.c * y + layout.e, y: layout.b * x + layout.d * y + layout.f }),
+  /** Drop the chain into a scripted test layout (frozen) for deterministic visual checks. */
+  setup: (colors: number[], opts: { headGap?: number; power?: [number, number] } = {}) => {
+    st.spawning = false;
+    st.rolling = false;
+    st.speed = 0;
+    st.stopT = 1e6;
+    st.gun.cool = 0;
+    const headS = level.track.length - (opts.headGap ?? 500);
+    st.balls = colors.map((c, i) => ({ id: st.nextId++, c, s: headS - (colors.length - 1 - i) * BALL_D, p: 0 as Power, pt: 0, g: 1, ins: 1, ix: 0, iy: 0, clr: -1, combo: 0, suck: 0, rt: 0, rv: 0, gb: 0 }));
+    if (opts.power) {
+      st.balls[opts.power[0]].p = opts.power[1] as Power;
+      st.balls[opts.power[0]].pt = 99;
+    }
+  },
+};
+
+// ------------------------------------------------------------------ boot
+
+applySettings();
+resize();
+toTitle();
+requestAnimationFrame(frame);
+
+if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+  import('virtual:pwa-register').then(({ registerSW }) => registerSW({ immediate: true })).catch(() => {});
+}
