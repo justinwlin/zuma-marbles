@@ -8,6 +8,8 @@ A Zuma-style marble shooter for phone (portrait) and desktop. It installs as a P
   - **Aim assist** (`src/sim/aim.ts`, can be turned off in Settings) moves the shot by at most ±3.5° toward the middle of the slot the ghost marble shows. It sticks to the current target so the preview doesn't flicker between neighbours.
   - The shot uses the aim from 70 ms before your finger lifts, so the wobble as you lift doesn't move it.
   - With a ±0.6° finger wobble, 95% of assisted shots stay in the previewed slot, compared with 54% unassisted.
+- **Characters**: pick the launcher (Frog, Calico Cat, Fox, Penguin) in Settings. They're drawn in code in `src/game/characters.ts`, with blinking, tail sway and ear flicks on recoil.
+- **Settings mid-game**: the gear button in the HUD pauses the game and opens Settings.
 - **Haptics**:
   - Android uses `navigator.vibrate` with full patterns.
   - iOS Safari only gives a tick when a real finger taps a switch; since iOS 26 it ignores toggles from code. So invisible switches sit under the board and inside the swap button. Taps (tap-aim shots, tapping the frog, the swap button) tick, but drag-and-release can't.
