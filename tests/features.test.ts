@@ -289,7 +289,7 @@ describe('mini-boss serpent', () => {
     const head0 = st.chains[0].balls[st.chains[0].balls.length - 1];
     const n0 = st.chains[0].balls.length;
     const evs: string[] = [];
-    for (let t = 0; t < 2 * TICK_HZ; t++) for (const e of step(st, level)) evs.push(e.type);
+    for (let t = 0; t < (TUNING.serpentWindup + 1) * TICK_HZ; t++) for (const e of step(st, level)) evs.push(e.type);
     expect(evs).toContain('bossWindup');
     expect(evs).toContain('spit');
     const balls = st.chains[0].balls;
