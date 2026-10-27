@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { generateLevel } from '../src/sim/levelgen';
 import { createGame, Power, progress, stateHash, step, TICK_HZ, TUNING } from '../src/sim/game';
 import { ITEMS, NO_MODS } from '../src/sim/items';
-import { activeItems, bossPicks, priceAt, gain, miniPicks, modsForStage, newEco, reroll, rerollCost, reserve, sellCharm, settleStage, shopOffers, traderOffers, TRADER_BOOSTS, TRADER_CHARMS } from '../src/sim/economy';
+import { activeItems, bossPicks, priceAt, gain, miniPicks, modsForStage, newEco, reroll, rerollCost, reserve, sellCharm, settleStage, shopOffers, traderOffers, TRADER_BOOSTS, TRADER_CHARMS, retryCost, canRetry, payRetry, RETRY_MIN } from '../src/sim/economy';
 import { checkUnlocks, LevelTracker, newMeta } from '../src/sim/achievements';
 import { runExpedition } from '../src/sim/expedition';
 import { BOT_PRESETS } from '../src/sim/bot';
@@ -363,6 +363,34 @@ describe('serpent trader', () => {
     expect(r.picked.length).toBe(1);
     expect(r.traded.length).toBeGreaterThanOrEqual(1);
     for (const id of r.traded) expect(activeItems(r.eco, 5)).toContain(id);
+  });
+});
+
+describe('endless retry', () => {
+  it('costs half your coins, rounded up, and never less than the minimum', () => {
+    const eco = newEco();
+    eco.coins = 1001;
+    expect(retryCost(eco)).toBe(501);
+    eco.coins = 150;
+    expect(retryCost(eco)).toBe(RETRY_MIN);
+    expect(canRetry(eco)).toBe(true);
+    eco.coins = RETRY_MIN - 1;
+    expect(canRetry(eco)).toBe(false);
+    expect(payRetry(eco)).toBe('coins');
+    expect(eco.coins).toBe(RETRY_MIN - 1);
+  });
+
+  it('paying halves your coins and keeps your items; repeated retries drain them until it ends', () => {
+    const eco = newEco();
+    eco.coins = 1600;
+    gain(eco, 'shockwave', 'endless-r', 9, { free: true });
+    expect(payRetry(eco)).toBeNull();
+    expect(eco.coins).toBe(800);
+    expect(eco.charms.map((c) => c.id)).toEqual(['shockwave']);
+    let n = 1;
+    while (!payRetry(eco)) n++;
+    expect(n).toBeLessThan(6);
+    expect(eco.coins).toBeLessThan(RETRY_MIN);
   });
 });
 

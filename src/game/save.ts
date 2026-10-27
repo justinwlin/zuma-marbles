@@ -78,7 +78,11 @@ export interface EndlessRun {
   /** Coins and items for this run. */
   eco?: RunEco;
   /** A free pick or the shop still to show before `stage` starts (survives closing the app). */
-  pending?: 'mini' | 'boss' | 'shop' | null;
+  pending?: 'mini' | 'boss' | 'shop' | 'retry' | null;
+  /** Lost the current stage: its score (counted if the run ends here). */
+  lostScore?: number;
+  /** Paid retries so far this run. */
+  retries?: number;
   /** The serpent's trader screen, drawn once so closing the app can't re-roll it. */
   trader?: TraderVisit | null;
 }

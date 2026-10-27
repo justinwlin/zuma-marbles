@@ -131,6 +131,16 @@ The shop opens after every boss (after levels 10, 20, 30…).
 
 ---
 
+## Retrying a lost stage
+
+Losing a stage doesn't have to end the run:
+
+- **Retry it for half your coins**, rounded up, and at least 100. You keep your charms and boosts, and the stage restarts from the beginning.
+- **Coins earned during the failed attempt aren't banked,** so dying can't be used to farm coins. An Extra Life spent in the failed attempt stays spent for that world.
+- **Each retry halves what's left,** so repeated retries drain a run quickly. Below 100 coins, the only option is to end the run.
+- **The loss is saved the instant a chain reaches the skull.** Force-closing the app during the "Oh no!" animation brings back the retry screen; it can't be used to resume from before the loss.
+- **Daily runs allow retries too.** They cost coins like any other run, and the daily best is a personal record.
+
 ## The mini-boss pick and trader (level 5)
 
 After the mini-boss, one screen offers:

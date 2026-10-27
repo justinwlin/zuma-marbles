@@ -190,6 +190,20 @@ export function reserve(eco: RunEco, id: ItemId): Fail | null {
   return null;
 }
 
+// ------------------------------------------------------------------ retry
+
+/** Retrying a lost stage costs half your coins, at least RETRY_MIN (so it's never free). */
+export const RETRY_MIN = 100;
+export const retryCost = (eco: RunEco) => Math.max(RETRY_MIN, Math.ceil(eco.coins / 2));
+export const canRetry = (eco: RunEco) => eco.coins >= retryCost(eco);
+
+/** Pay for a retry of the lost stage (coins earned in the failed attempt were never banked). */
+export function payRetry(eco: RunEco): Fail | null {
+  if (!canRetry(eco)) return 'coins';
+  eco.coins -= retryCost(eco);
+  return null;
+}
+
 /** Leaving the shop: rerolls reset for the next one. */
 export function closeShop(eco: RunEco) {
   eco.rerolls = 0;

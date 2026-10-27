@@ -264,6 +264,27 @@ export class UI {
     );
   }
 
+  /** Endless: a stage was lost. Retry it for half your coins, or end the run. */
+  retry(o: { stage: number; coins: number; cost: number; can: boolean; onRetry: () => void; onEnd: () => void }) {
+    this.show(
+      'retry',
+      `<div class="panel solid">
+        <h2>Swallowed!</h2>
+        <p class="sub">Stage ${o.stage} lost. You have 🪙 ${o.coins.toLocaleString()}.</p>
+        ${
+          o.can
+            ? `<p class="sub">Retry this stage for <b>half your coins</b>. You keep your charms and boosts.</p>`
+            : `<p class="sub">A retry costs half your coins, and at least 🪙 ${o.cost.toLocaleString()}. Not enough this time.</p>`
+        }
+        <div class="btns" style="margin:0 auto">
+          <button class="btn primary" data-a="retry" ${o.can ? '' : 'disabled'}>Retry stage ${o.stage} · 🪙 ${o.cost.toLocaleString()}</button>
+          <button class="btn" data-a="end">End run</button>
+        </div>
+      </div>`,
+      { retry: () => o.can && o.onRetry(), end: () => o.onEnd() },
+    );
+  }
+
   endlessOver(r: { daily: boolean; total: number; stage: number; newBest: boolean; best: number }) {
     this.show(
       'result',

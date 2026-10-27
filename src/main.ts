@@ -31,7 +31,7 @@ import { assistAim, type Slot } from './sim/aim';
 import { characterNoun } from './game/characters';
 import { Rng } from './sim/rng';
 import { checkUnlocks, LevelTracker, newMeta, withStarters } from './sim/achievements';
-import { afterStage, bossPicks, closeShop, gain, miniPicks, modsForStage, newEco, reroll, reserve, sellCharm, settleStage, shopOffers, traderOffers } from './sim/economy';
+import { afterStage, bossPicks, canRetry, closeShop, gain, miniPicks, modsForStage, newEco, payRetry, reroll, reserve, retryCost, sellCharm, settleStage, shopOffers, traderOffers, worldOf } from './sim/economy';
 import { ITEMS, type Mods, NO_MODS } from './sim/items';
 import { pointAt, type Pt } from './sim/track';
 import { computeLayout, type Layout, screenToWorld } from './game/layout';
@@ -225,6 +225,8 @@ function continueEndless() {
   attract = false;
   run = save.endless;
   run.eco ??= newEco();
+  // Lost a stage and closed the app before deciding: back to the retry screen.
+  if (run.pending === 'retry') return offerRetry(run);
   // Closed the app on a pick or shop screen: show it again before the stage starts.
   if (run.pending) return betweenStages(run);
   loadLevel(run.seed, run.stage, run.snapshot ?? undefined, modsForStage(run.eco, run.stage));
@@ -402,7 +404,8 @@ function pause() {
 /** Endless: a cleared stage rolls straight into the next; losing ends the run. */
 function endlessStageDone(won: boolean, r: EndlessRun) {
   const eco = (r.eco ??= newEco());
-  settleStage(eco, st, level.index, won);
+  // A lost attempt banks nothing (no farming coins by dying); its Extra Life was marked spent when the chain hit the skull.
+  if (won) settleStage(eco, st, level.index, won);
   const fresh = checkUnlocks(withStarters((save.meta ??= newMeta())), tracker, level, { won, peakDanger });
   if (fresh.length) ui.toast(`🔓 Unlocked ${fresh.map((id) => `${ITEMS[id].icon} ${ITEMS[id].name}`).join(', ')}! It can now show up in the shop.`, 4200);
   if (won) {
@@ -415,10 +418,50 @@ function endlessStageDone(won: boolean, r: EndlessRun) {
     betweenStages(r);
     return;
   }
+  markLost(r);
+  offerRetry(r);
+}
+
+/** The moment a stage is lost: record it, so closing the app can't resume from before the loss. */
+function markLost(r: EndlessRun) {
+  if (r.pending === 'retry') return;
+  const eco = (r.eco ??= newEco());
+  if (st.lives < st.mods.lives) eco.lifeWorld = worldOf(level.index);
+  r.pending = 'retry';
+  r.lostScore = st.score;
+  r.snapshot = null;
+  save.endless = r;
+  writeSave(save);
+}
+
+/** Lost a stage: retry it for half your coins (at least 100), or end the run. */
+function offerRetry(r: EndlessRun) {
+  const eco = (r.eco ??= newEco());
   mode = 'result';
   ui.showHud(false);
-  const total = r.runScore + st.score;
-  const stage = level.index + 1;
+  releaseWakeLock();
+  ui.retry({
+    stage: r.stage + 1,
+    coins: eco.coins,
+    cost: retryCost(eco),
+    can: canRetry(eco),
+    onRetry: () => {
+      if (payRetry(eco)) return;
+      r.retries = (r.retries ?? 0) + 1;
+      r.lostScore = 0;
+      ui.toast(`Retrying stage ${r.stage + 1} · 🪙 ${eco.coins.toLocaleString()} left`, 2200);
+      playStage(r);
+    },
+    onEnd: () => endRun(r),
+  });
+}
+
+/** The run is over: record bests and show the run-over screen. */
+function endRun(r: EndlessRun) {
+  mode = 'result';
+  ui.showHud(false);
+  const total = r.runScore + (r.lostScore ?? 0);
+  const stage = r.stage + 1;
   let newBest = false;
   if (r.daily) {
     const day = r.seed.replace(/^(xl-)?daily-/, '');
@@ -1345,6 +1388,7 @@ function handleEvents(events: GameEvent[]) {
         break;
       case 'lose':
         view.banner = { text: 'Oh no!', t: 0, color: '#ff8fa3' };
+        if (run && !attract) markLost(run);
         break;
       case 'lost':
         if (attract) startAttract();
@@ -1726,6 +1770,11 @@ window.__zuma = {
     run!.stage = stage;
     run!.eco!.coins = coins;
     playStage(run!);
+  },
+  /** Test hook: lose the current stage now (chain 0 is pushed into its skull). */
+  loseNow: () => {
+    const L = level.tracks[0].length;
+    for (const b of st.chains[0].balls) b.s = Math.min(L, b.s + L);
   },
   /** Test hook: win the current stage now (bosses are slain, chains cleared). */
   winNow: () => {

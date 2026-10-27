@@ -481,9 +481,14 @@ async function runProfile(name: string, opts: BrowserContextOptions) {
     const z = (window as unknown as { __zuma: ZE }).__zuma;
     const L = z.level().length;
     const c = (z.state() as unknown as { chains: { balls: { s: number }[] }[] }).chains[0];
+    (z as any).run().eco.coins = 40; // under the 100-coin retry minimum
     c.balls.forEach((b, i, a) => (b.s = L + 2 - (a.length - 1 - i) * 36));
   });
   await page.waitForFunction(() => (window as unknown as { __zuma: ZE }).__zuma.mode === 'result', null, { timeout: 8000 }).catch(() => {});
+  // A loss first offers a retry for half your coins; this run has fewer than 100, so it's disabled. End the run.
+  check('a loss with too few coins offers no retry', await page.locator('[data-screen=retry] [data-a=retry][disabled]').count() === 1);
+  await page.locator('[data-screen=retry] [data-a=end]').click().catch(() => {});
+  await page.waitForTimeout(300);
   const over = await page.locator('[data-screen=result] h2').textContent().catch(() => '');
   check('losing ends the run with a run-over screen', over === 'Run over', String(over));
   await page.screenshot({ path: `${OUT}/${name}-13-runover.png` });
@@ -522,6 +527,35 @@ async function runProfile(name: string, opts: BrowserContextOptions) {
   check('trader: Continue starts stage 6 with the items', tr2.mode === 'playing' && tr2.hud === 'Stage 6' && !tr2.trader, JSON.stringify(tr2));
   await page.evaluate(() => (window as any).__zuma.pause());
   await page.locator('[data-a=quit]').click().catch(() => {});
+  await page.waitForTimeout(300);
+
+  // ---- Endless retry: losing a stage offers a retry for half your coins; the loss survives closing the app.
+  await page.evaluate(() => (window as any).__zuma.expedition(2, 1000));
+  await page.waitForTimeout(600);
+  await page.evaluate(() => (window as any).__zuma.loseNow());
+  await page.waitForSelector('[data-screen=retry]', { timeout: 8000 }).catch(() => null);
+  const rt0 = (await page.locator('[data-screen=retry] [data-a=retry]').textContent().catch(() => '')) ?? '';
+  check('retry: losing a stage offers a retry for half your coins', rt0.includes('Retry stage 3') && rt0.includes('500'), rt0.trim());
+  await page.screenshot({ path: `${OUT}/${name}-18-retry.png` });
+  await page.locator('[data-screen=retry] [data-a=retry]').click();
+  await page.waitForTimeout(700);
+  const rt1 = await page.evaluate(() => ({ mode: (window as any).__zuma.mode, hud: document.getElementById('hud-level')!.textContent, coins: (window as any).__zuma.run().eco.coins, pending: (window as any).__zuma.run().pending }));
+  check('retry: paying restarts the same stage with half the coins', rt1.mode === 'playing' && rt1.hud === 'Stage 3' && rt1.coins === 500 && !rt1.pending, JSON.stringify(rt1));
+  // Lose again, then "close the app" during the loss: the retry screen comes back (no resuming from before the loss).
+  await page.evaluate(() => (window as any).__zuma.loseNow());
+  await page.waitForTimeout(400);
+  await page.reload();
+  await page.waitForFunction(() => (window as any).__zuma?.mode === 'title');
+  await page.locator('[data-a=endless]').click();
+  await page.locator('[data-a=cont]').click();
+  await page.waitForTimeout(300);
+  const rt2 = (await page.locator('[data-screen=retry] [data-a=retry]').textContent().catch(() => '')) ?? '';
+  check('retry: closing the app mid-loss brings back the retry screen, not the stage', rt2.includes('250'), rt2.trim() || 'no retry screen');
+  await page.locator('[data-screen=retry] [data-a=end]').click();
+  await page.waitForTimeout(300);
+  const runOver = await page.locator('[data-screen=result] h2').textContent().catch(() => '');
+  check('retry: End run ends the run', runOver === 'Run over' && (await page.evaluate(() => (window as any).__zuma.save().endless)) == null, String(runOver));
+  await page.locator('[data-screen=result] [data-a=quit]').click().catch(() => {});
   await page.waitForTimeout(300);
 
   // ---- Two chains: both roll in, shots can land in the second chain.

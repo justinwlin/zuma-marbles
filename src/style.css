@@ -516,6 +516,6 @@ body.rail-touch .cancel-zone { display: none; }
 }
 
 /* Shop and trader: nearly opaque so the board (and the launcher) never shows through the cards. */
-.panel.shop { background: rgba(9, 18, 31, 0.96); }
+.panel.shop, .panel.solid { background: rgba(9, 18, 31, 0.96); }
 .tag.got { color: #7dffcf; }
 .screen.again, .screen.again .panel { animation: none; }
