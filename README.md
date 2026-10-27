@@ -61,14 +61,16 @@ npm run build        # production build + service worker in dist/
 npm run preview      # serve dist/ (needed to test the PWA / offline)
 ```
 
+**Developing?** See the [development guide](docs/development.md). It covers project layout, the determinism rules for `src/sim`, unit and e2e tests, screenshot tools, bot balance runs, the branch → validate → ship workflow, and deploys.
+
 ## Architecture
 
 ```
 src/sim/      pure, deterministic simulation (no DOM): unit-testable and replayable
   rng.ts        mulberry32 PRNG + string hash; state is one uint32
   track.ts      arc-length lookup table; a ball's position is distance s along the track
-  levelgen.ts   infinite level generator (12 shape families, 1–2 chains) + validator + sawtooth difficulty, bosses, twists
-  game.ts       fixed-tick (120 Hz) step(state, level, commands) → events; one chain per track
+  levelgen.ts   infinite level generator (15 shape families incl. rail boss arenas, 1–2 chains) + validator + sawtooth difficulty, bosses, twists, ace time
+  game.ts       fixed-tick (120 Hz) step(state, level, commands) → events; one chain per track, power-ups, coins, rail + boss
   bot.ts        scripted player used by tests and the balance report
 src/game/     presentation
   feel.ts       pure event → feedback map (hit-stop, shake, flash, haptics, sound pitch, particles, slow-mo)
@@ -102,8 +104,8 @@ Mechanics are ported from the Zuma Deluxe decompilation ([alula/CircleShootApp](
 
 | Command | What it checks |
 |---|---|
-| `npm test` | 45 Vitest tests (summarized below) |
-| `npm run e2e` | Real Chromium on 6 device profiles (summarized below). Needs `npm run dev` running. |
+| `npm test` | 81 Vitest tests (summarized below) |
+| `npm run e2e` | Real Chromium on 7 device profiles (summarized below). Needs `npm run dev` or `npm run preview` running. |
 | `npm run pwa-check` | After `npm run build`: manifest, Chrome installability, active service worker, cold **offline** boot and play |
 | `npm run sim -- <seed> <levels>` | Bot playthroughs per level: outcome, time, peak danger, combos, gap shots, power-ups |
 | `npm run balance -- <campaigns> <levels…>` | Win-rate/time table per bot skill. Difficulty ramps, then plateaus for endless play. |
