@@ -239,11 +239,12 @@ const SERPENT_FAMILIES: TrackFamily[] = ['serpentine', 'columns', 'comb', 'figur
 const SERPENT_MIN_DIST = 350;
 
 /**
- * Ace time in seconds, rounded to 5 s. Fit to the good bot's clear times so that a bit
- * under half of its wins beat it: quick, accurate play earns it, average play doesn't.
+ * Ace time in seconds, rounded to 5 s. The base curves were fit so a bit under half of the good
+ * bot's wins beat them; ACE_SLACK then loosens them so most clean wins earn it (casual bot ~75%).
  */
+const ACE_SLACK = 1.25;
 export function aceTime(target: number, o: { bossHp?: number; serpentHp?: number; twin?: boolean } = {}): number {
-  const t = o.bossHp ? 12 + o.bossHp * 0.38 : o.serpentHp ? (5 + o.serpentHp * 0.26) * (o.twin ? 1.2 : 1) : (25 + target * 0.22) * (o.twin ? 1.2 : 1);
+  const t = ACE_SLACK * (o.bossHp ? 12 + o.bossHp * 0.38 : o.serpentHp ? (5 + o.serpentHp * 0.26) * (o.twin ? 1.2 : 1) : (25 + target * 0.22) * (o.twin ? 1.2 : 1));
   return Math.round(t / 5) * 5;
 }
 
