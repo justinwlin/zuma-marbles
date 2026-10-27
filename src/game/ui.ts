@@ -1,7 +1,7 @@
 // DOM screens (menus, results, settings) and the HUD. Kept separate from the
 // canvas so text is crisp, accessible and laid out by CSS on every screen size.
 
-import { type BossKind, generateLevel, isLargeCampaign, type Mutator, MUTATOR_INFO } from '../sim/levelgen';
+import { type BossKind, generateLevel, INTRO, isLargeCampaign, type Mutator, MUTATOR_INFO } from '../sim/levelgen';
 import { POWER_NAMES, type GameState, progress, type Power, WILD } from '../sim/game';
 import type { Level } from '../sim/levelgen';
 import { PALETTE, powerIconUrl } from './render';
@@ -444,6 +444,15 @@ export class UI {
         ${row(4, 4, 'Lightning', 'Strikes every marble of its colour on the board — on every track.')}
         ${row(5, 2, 'Wild', 'Your next marble turns rainbow: it takes the colour of whichever neighbour makes the longer run.')}
         ${row(6, 0, 'Scorpion', `A scorpion runs back from the skull and eats the ${TUNING.scorpionEats} marbles closest to it.`)}
+        ${row(7, 2, 'Colour Cloud', '<i>From level ' + (INTRO.colorCloud + 1) + '.</i> The 4 marbles on each side take its colour, so the gap snaps shut into a big combo.')}
+        ${row(8, 4, 'Black Hole', `<i>From level ${INTRO.blackHole + 1}.</i> A vortex opens in the chain and swallows up to ${TUNING.holeEats} marbles around it, one by one.`)}
+        ${row(9, 0, 'Magnet', `<i>From level ${INTRO.magnet + 1}.</i> For ${TUNING.magnetTime}s your shots curve toward the nearest marble of their colour.`)}
+        <h3 style="margin-top:14px">Special marbles</h3>
+        <div class="tips">
+          <b>💎 Gem</b> (from level ${INTRO.gem + 1}): pop it for +${TUNING.gemScore} points.<br>
+          <b>🛡️ Armored</b> (from level ${INTRO.armor + 1}): takes two matches — the first only cracks the steel band.<br>
+          <b>🦎 Chameleon</b> (from level ${INTRO.chameleon + 1}): a rainbow ring means it changes colour every ${TUNING.chameleonEvery}s.
+        </div>
         <div class="tips">
           <b>Combos:</b> when a gap's two ends match, they snap together and pop again.<br>
           <b>Gap shot:</b> shoot through a gap in the chain for bonus points.<br>
@@ -451,7 +460,7 @@ export class UI {
           <b>Bonus coins:</b> shoot a floating coin before it vanishes for +${TUNING.coinValue}.<br>
           <b>Level end:</b> a light runs down the empty track — points for every bit the chain never reached, plus <b>+${TUNING.aceBonus}</b> for beating the ace time.<br>
           <b>Boss fights</b> (every 10th level): your character slides along a rail and shoots straight across${coarse ? ' — <b>drag anywhere</b> to slide, press the <b>FIRE</b> button to shoot (hold it to keep firing), tap your character to swap' : ''}. Every marble you pop hurts the boss; a shot through a gap that hits it does ${TUNING.bossDirectHit}. Watch the hands: the target follows you while one winds up, then locks — step out before the rock lands.<br>
-          <b>Mini-bosses</b> (levels 5, 15, 25…): a serpent lives in the skull pit and spits marbles onto the front of the chain. Popped marbles hurt it. Shots into its mouth get swallowed and spat back, unless you hit the target ring while it rears up to spit. That chokes it: big damage and 3-5 power-ups along the chain. Slay it to clear the level.<br>
+          <b>Mini-bosses</b> (levels 5, 15, 25…): a serpent lives in the skull pit and spits marbles onto the front of the chain. Popped marbles hurt it. Shots into its mouth get swallowed and spat back, unless you hit the target ring while it rears up to spit. That chokes it: big damage and 1-2 power-ups along the chain. Slay it to clear the level.<br>
           ${coarse ? '<b>Cancel a shot:</b> slide onto <b>✕</b> (or back onto your character), or touch with a second finger.' : '<b>Swap:</b> right-click or Space.'}
         </div>
         <div class="btns" style="margin:14px auto 0"><button class="btn primary" data-a="back">${backLabel}</button></div></div>`,
@@ -467,7 +476,7 @@ export class UI {
         <p>Marbles roll toward the <b>skull</b>. Shoot marbles into the chain — <b>3 or more</b> of a colour pop.</p>
         <p>${coarse ? '<b>Drag</b> to aim, <b>release</b> to shoot. Changed your mind? Slide onto <b>✕</b> or back to the frog, or touch with a second finger. Tap your character (the launcher) or the swap button to swap.' : '<b>Move</b> to aim, <b>click</b> to shoot. <b>Right-click</b> or <b>Space</b> swaps marbles.'}</p>
         <p>When a gap opens and both sides match, they <b>snap together</b> for a combo. Fill the gold <b>ZUMA bar</b> to stop new marbles, then clear the rest.</p>
-        <div class="pw"><span>Bomb</span><span>blasts nearby marbles</span><span>Slow</span><span>slows the chain</span><span>Reverse</span><span>rolls the chain back</span><span>Lightning</span><span>pops every marble of its colour</span><span>Wild</span><span>next shot matches anything</span><span>Scorpion</span><span>eats the 10 front marbles</span></div>
+        <div class="pw"><span>Bomb</span><span>blasts nearby marbles</span><span>Slow</span><span>slows the chain</span><span>Reverse</span><span>rolls the chain back</span><span>Lightning</span><span>pops every marble of its colour</span><span>Wild</span><span>next shot matches anything</span><span>Scorpion</span><span>eats the 10 front marbles</span><span>Colour Cloud</span><span>sets up a big combo</span><span>Black Hole</span><span>swallows nearby marbles</span><span>Magnet</span><span>shots curve to their colour</span></div>
         <p style="font-size:14px">Shoot <b>gold coins</b> for bonus points. Every 10th level is a <b>boss fight</b>: slide along your rail, pop marbles to hurt the boss, dodge its rocks.</p>
         <p style="color:var(--muted);font-size:13px">Pop a power-up marble as part of a match to trigger it. Keep the chain far from the skull for more stars.</p>
         <div class="btns" style="margin:12px auto 0"><button class="btn primary" data-a="back">Got it</button><button class="btn ghost" data-a="pw">Power-ups in detail →</button></div></div>`,
@@ -475,36 +484,37 @@ export class UI {
     );
   }
 
-  /** An item as a card. `price` 0 = free. */
-  private card(id: ItemId, o: { price?: number; action?: string; disabled?: boolean; extra?: string; luckyColor?: number } = {}) {
+  /** An item as a compact card. `price` 0 = free. */
+  private card(id: ItemId, o: { price?: number; action?: string; disabled?: boolean; hold?: string; luckyColor?: number } = {}) {
     const d = ITEMS[id];
     const desc = id === 'luckyColor' && o.luckyColor !== undefined ? `${PALETTE_NAMES[o.luckyColor]} pays triple coins` : d.desc;
     const price = o.price === undefined ? '' : o.price === 0 ? '<span class="price free">FREE</span>' : `<span class="price">🪙 ${o.price.toLocaleString()}</span>`;
     return `<div class="item-card ${d.kind} ${o.disabled ? 'off' : ''}">
       <button class="item-main" ${o.action && !o.disabled ? `data-a="${o.action}" data-id="${id}"` : 'disabled'}>
-        <span class="item-ico">${d.icon}</span><b>${d.name}</b><span class="item-kind">${d.kind === 'charm' ? 'Charm · kept' : 'Boost · this world'}</span><span class="item-desc">${desc}</span>${price}
-      </button>${o.extra ?? ''}</div>`;
+        <span class="item-ico">${d.icon}</span><b>${d.name}</b><span class="item-desc">${desc}</span>${price}
+      </button>${o.hold ?? ''}</div>`;
   }
 
-  /** Owned charms and live boosts, as rows. */
+  /** Owned charms and live boosts as one compact strip of 6 slots. */
   private owned(eco: RunEco, stage: number, mode: 'view' | 'sell' | 'replace-charm' | 'replace-boost') {
     const live = eco.boosts.filter((b) => b.until > stage);
-    const slot = (inner: string) => `<span class="slot">${inner}</span>`;
+    const slot = (kind: string, inner: string, title = '') => `<span class="slot ${kind}" title="${title}">${inner}</span>`;
     const charms = Array.from({ length: CHARM_SLOTS }, (_, i) => {
       const c = eco.charms[i];
-      if (!c) return slot('<span class="empty">empty</span>');
+      if (!c) return slot('charm empty', 'empty charm');
       const d = ITEMS[c.id];
-      const act = mode === 'sell' ? `<button class="mini-btn" data-a="sell" data-i="${i}">Sell +${Math.floor(c.paid / 2)}</button>` : mode === 'replace-charm' ? `<button class="mini-btn warn" data-a="replace" data-i="${i}">Replace</button>` : '';
-      return slot(`<span title="${d.desc}">${d.icon} ${d.name}</span>${act}`);
+      const act =
+        mode === 'sell' ? `<button class="mini-btn" data-a="sell" data-i="${i}">sell +${Math.floor(c.paid / 2)}</button>` : mode === 'replace-charm' ? `<button class="mini-btn warn" data-a="replace" data-i="${i}">replace</button>` : '';
+      return slot('charm', `<span class="slot-name">${d.icon} ${d.name}</span>${act}`, d.desc);
     }).join('');
     const boosts = Array.from({ length: BOOST_SLOTS }, (_, i) => {
       const b = live[i];
-      if (!b) return slot('<span class="empty">empty</span>');
+      if (!b) return slot('boost empty', 'empty boost');
       const d = ITEMS[b.id];
-      const act = mode === 'replace-boost' ? `<button class="mini-btn warn" data-a="replace" data-i="${i}">Replace</button>` : `<small>until stage ${b.until + 1}</small>`;
-      return slot(`<span title="${d.desc}">${d.icon} ${d.name}</span>${act}`);
+      const act = mode === 'replace-boost' ? `<button class="mini-btn warn" data-a="replace" data-i="${i}">replace</button>` : `<small>→ stage ${b.until + 1}</small>`;
+      return slot('boost', `<span class="slot-name">${d.icon} ${d.name}</span>${act}`, d.desc);
     }).join('');
-    return `<div class="owned"><div><h3>Your charms</h3>${charms}</div><div><h3>Your boosts</h3>${boosts}</div></div>`;
+    return `<div class="owned"><div class="owned-col"><h3>Your charms</h3>${charms}</div><div class="owned-col"><h3>Your boosts</h3>${boosts}</div></div>`;
   }
 
   /** A free pick: choose one of `ids`, or skip. A full row asks which item to replace. */
@@ -512,13 +522,13 @@ export class UI {
     const render = (choosing: ItemId | null) => {
       const kind = choosing ? ITEMS[choosing].kind : null;
       const html = choosing
-        ? `<div class="panel wide"><h2>No room</h2><p class="sub">Your ${kind}s are full. Pick one to replace with <b>${ITEMS[choosing].icon} ${ITEMS[choosing].name}</b>${kind === 'charm' ? ' (a bought charm sells for half)' : ''}.</p>
+        ? `<div class="panel wide fit"><h2>No room</h2><p class="sub">Your ${kind}s are full. Pick one to replace with <b>${ITEMS[choosing].icon} ${ITEMS[choosing].name}</b>${kind === 'charm' ? ' (a bought charm sells for half)' : ''}.</p>
             ${this.owned(o.eco, o.stage, kind === 'charm' ? 'replace-charm' : 'replace-boost')}
-            <div class="btns" style="margin:14px auto 0"><button class="btn ghost" data-a="cancel">Back</button></div></div>`
-        : `<div class="panel wide"><h2>${o.title}</h2><p class="sub">${o.sub}</p>
+            <div class="fit-actions"><button class="btn ghost" data-a="cancel">Back</button></div></div>`
+        : `<div class="panel wide fit"><h2>${o.title}</h2><p class="sub">${o.sub}</p>
             <div class="cards">${o.ids.map((id) => this.card(id, { price: 0, action: 'take', luckyColor: o.eco.luckyColor })).join('')}</div>
             ${this.owned(o.eco, o.stage, 'view')}
-            <div class="btns" style="margin:14px auto 0"><button class="btn ghost" data-a="skip">Skip</button></div></div>`;
+            <div class="fit-actions"><button class="btn ghost" data-a="skip">Skip</button></div></div>`;
       this.show('pick', html, {
         take: (el) => {
           const id = el.dataset.id as ItemId;
@@ -529,12 +539,12 @@ export class UI {
         replace: (el) => o.onPick(choosing, Number(el.dataset.i)),
         cancel: () => render(null),
         skip: () => o.onPick(null),
-      });
+      }, 'fit-screen');
     };
     render(null);
   }
 
-  /** The shop after a boss. Re-renders after every action. */
+  /** The shop after a boss, laid out to fit one screen. Re-renders after every action. */
   shop(api: ShopApi) {
     let replacing: ItemId | null = null;
     let msg = '';
@@ -543,83 +553,110 @@ export class UI {
       const eco = api.eco;
       const offers = api.offers();
       const next = api.stage + 1;
-      const mini = next + 4;
       const boss = bossStageFor(next);
       const liveBoosts = eco.boosts.filter((b) => b.until > api.stage).length;
       const charmCard = (id: ItemId, reserved = false) => {
         const price = priceAt(id, api.stage);
-        const extra = reserved || eco.reserved ? (reserved ? '<span class="tag">held for you</span>' : '') : `<button class="mini-btn" data-a="hold" data-id="${id}" ${eco.coins < RESERVE_COST ? 'disabled' : ''}>Hold for next shop · 🪙${RESERVE_COST}</button>`;
-        return this.card(id, { price, action: 'buy', disabled: eco.coins + (eco.charms.length >= CHARM_SLOTS ? Math.max(...eco.charms.map((c) => Math.floor(c.paid / 2))) : 0) < price, extra, luckyColor: eco.luckyColor });
+        const hold = reserved ? '<span class="tag">held for you</span>' : eco.reserved ? '' : `<button class="mini-btn hold" data-a="hold" data-id="${id}" ${eco.coins < RESERVE_COST ? 'disabled' : ''}>hold · 🪙${RESERVE_COST}</button>`;
+        const refund = eco.charms.length >= CHARM_SLOTS ? Math.max(...eco.charms.map((c) => Math.floor(c.paid / 2))) : 0;
+        return this.card(id, { price, action: 'buy', disabled: eco.coins + refund < price, hold, luckyColor: eco.luckyColor });
       };
+      const charms = [...(offers.reserved ? [charmCard(offers.reserved, true)] : []), ...offers.charms.map((id) => charmCard(id))];
+      const boosts = offers.boosts.map((id) => this.card(id, { price: priceAt(id, api.stage), action: 'buy', disabled: eco.coins < priceAt(id, api.stage) || liveBoosts >= BOOST_SLOTS }));
       const html = replacing
-        ? `<div class="panel wide"><h2>Replace a charm</h2><p class="sub">Your charms are full. Pick one to give up for <b>${ITEMS[replacing].icon} ${ITEMS[replacing].name}</b>. It sells for half of what you paid.</p>
+        ? `<div class="panel wide fit"><h2>Replace a charm</h2><p class="sub">Your charms are full. Pick one to give up for <b>${ITEMS[replacing].icon} ${ITEMS[replacing].name}</b>. It sells for half of what you paid.</p>
             ${this.owned(eco, api.stage, 'replace-charm')}
-            <div class="btns" style="margin:14px auto 0"><button class="btn ghost" data-a="cancel">Back to shop</button></div></div>`
-        : `<div class="panel wide shop">
+            <div class="fit-actions"><button class="btn ghost" data-a="cancel">Back to shop</button></div></div>`
+        : `<div class="panel wide fit shop">
             <div class="shop-head"><h2>Shop</h2><span class="coins-big">🪙 ${eco.coins.toLocaleString()}</span></div>
-            <p class="sub">Next: stages ${next + 1}–${boss + 1} · serpent at stage ${mini + 1}, boss at stage ${boss + 1}. Boosts last until that boss is beaten.</p>
+            <p class="sub">Next world: stages ${next + 1}–${boss + 1}. Boosts last until its boss is beaten.</p>
             ${msg ? `<p class="shop-msg">${msg}</p>` : ''}
-            <h3>Charms <small>kept until you replace them</small></h3>
-            <div class="cards">${offers.reserved ? charmCard(offers.reserved, true) : ''}${offers.charms.map((id) => charmCard(id)).join('') || '<p class="sub">Nothing left to offer.</p>'}</div>
-            <h3>Boosts <small>strong, for the next world only</small></h3>
-            <div class="cards">${offers.boosts.map((id) => this.card(id, { price: priceAt(id, api.stage), action: 'buy', disabled: eco.coins < priceAt(id, api.stage) || liveBoosts >= BOOST_SLOTS })).join('') || '<p class="sub">Nothing left to offer.</p>'}</div>
-            ${this.owned(eco, api.stage, 'sell')}
-            <div class="row shop-actions"><button class="btn" data-a="reroll" ${eco.coins < rerollCost(eco) ? 'disabled' : ''}>New offers<small>🪙 ${rerollCost(eco)}</small></button><button class="btn primary" data-a="go">Continue ▶</button></div>
+            <div class="shop-body">
+              <div class="shop-offers">
+                <h3>Charms <small>kept</small></h3>
+                <div class="cards">${charms.join('') || '<p class="sub">Nothing left to offer.</p>'}</div>
+                <h3>Boosts <small>next world only</small></h3>
+                <div class="cards">${boosts.join('') || '<p class="sub">Nothing left to offer.</p>'}</div>
+              </div>
+              <div class="shop-side">
+                ${this.owned(eco, api.stage, 'sell')}
+                <div class="fit-actions row"><button class="btn" data-a="reroll" ${eco.coins < rerollCost(eco) ? 'disabled' : ''}>New offers · 🪙${rerollCost(eco)}</button><button class="btn primary" data-a="go">Continue ▶</button></div>
+              </div>
+            </div>
           </div>`;
-      this.show('shop', html, {
-        buy: (el) => {
-          const id = el.dataset.id as ItemId;
-          if (ITEMS[id].kind === 'charm' && eco.charms.length >= CHARM_SLOTS) {
-            replacing = id;
-            return render();
-          }
-          msg = fail(api.buy(id));
-          render();
+      this.show(
+        'shop',
+        html,
+        {
+          buy: (el) => {
+            const id = el.dataset.id as ItemId;
+            if (ITEMS[id].kind === 'charm' && eco.charms.length >= CHARM_SLOTS) {
+              replacing = id;
+              return render();
+            }
+            msg = fail(api.buy(id));
+            render();
+          },
+          replace: (el) => {
+            msg = fail(api.buy(replacing!, Number(el.dataset.i)));
+            replacing = null;
+            render();
+          },
+          cancel: () => {
+            replacing = null;
+            render();
+          },
+          sell: (el) => {
+            api.sell(Number(el.dataset.i));
+            msg = '';
+            render();
+          },
+          hold: (el) => {
+            msg = fail(api.reserve(el.dataset.id as ItemId));
+            render();
+          },
+          reroll: () => {
+            msg = fail(api.reroll());
+            render();
+          },
+          go: () => api.done(),
         },
-        replace: (el) => {
-          msg = fail(api.buy(replacing!, Number(el.dataset.i)));
-          replacing = null;
-          render();
-        },
-        cancel: () => {
-          replacing = null;
-          render();
-        },
-        sell: (el) => {
-          api.sell(Number(el.dataset.i));
-          msg = '';
-          render();
-        },
-        hold: (el) => {
-          msg = fail(api.reserve(el.dataset.id as ItemId));
-          render();
-        },
-        reroll: () => {
-          msg = fail(api.reroll());
-          render();
-        },
-        go: () => api.done(),
-      });
+        'fit-screen',
+      );
     };
     render();
   }
 
-  /** Every item: unlocked ones with their effect, locked ones as silhouettes with their unlock hint. */
+  /** Every item as a small tile; tap one to read what it does. Locked ones show their unlock hint. */
   collection(meta: MetaProgress, back: () => void) {
     const ids = Object.keys(ITEMS) as ItemId[];
     const tile = (id: ItemId) => {
       const d = ITEMS[id];
-      if (meta.unlocked.includes(id)) return `<div class="col-tile ${d.kind}"><span class="item-ico">${d.icon}</span><b>${d.name}</b><span class="item-kind">${d.kind === 'charm' ? 'Charm' : 'Boost'}</span><span class="item-desc">${d.desc}</span></div>`;
-      const hint = UNLOCKS.find((u) => u.id === id)?.hint ?? '';
-      return `<div class="col-tile locked"><span class="item-ico">🔒</span><b>???</b><span class="item-desc">${hint}</span></div>`;
+      return meta.unlocked.includes(id)
+        ? `<button class="col-tile ${d.kind}" data-a="info" data-id="${id}"><span class="item-ico">${d.icon}</span><b>${d.name}</b></button>`
+        : `<button class="col-tile locked" data-a="info" data-id="${id}"><span class="item-ico">🔒</span><b>???</b></button>`;
+    };
+    const info = (id: ItemId) => {
+      const d = ITEMS[id];
+      if (meta.unlocked.includes(id)) return `<b>${d.icon} ${d.name}</b> · ${d.kind === 'charm' ? 'Charm, kept' : 'Boost, one world'} · ${d.desc}`;
+      return `<b>🔒 Locked</b> · ${UNLOCKS.find((u) => u.id === id)?.hint ?? ''}`;
     };
     const n = ids.filter((id) => meta.unlocked.includes(id)).length;
     this.show(
       'collection',
-      `<div class="panel wide"><h2>Collection</h2><p class="sub">${n} of ${ids.length} unlocked. Locked items join the shop when you earn them.</p>
+      `<div class="panel wide fit"><h2>Collection</h2><p class="sub">${n} of ${ids.length} unlocked. Locked items join the shop when you earn them.</p>
         <div class="col-grid">${ids.map(tile).join('')}</div>
-        <div class="btns" style="margin:14px auto 0"><button class="btn primary" data-a="back">Back</button></div></div>`,
-      { back },
+        <p class="col-info" id="col-info">Tap an item to see what it does.</p>
+        <div class="fit-actions"><button class="btn primary" data-a="back">Back</button></div></div>`,
+      {
+        info: (el) => {
+          document.querySelectorAll('.col-tile.on').forEach((t) => t.classList.remove('on'));
+          el.classList.add('on');
+          $('col-info').innerHTML = info(el.dataset.id as ItemId);
+        },
+        back,
+      },
+      'fit-screen',
     );
   }
 
@@ -691,15 +728,16 @@ export class UI {
       $('fire-cur').setAttribute('style', marbleCss(cur));
     }
     const pw: [Power, number, number][] = [];
-    if (st.slowT > 0) pw.push([2, st.slowT, 8]);
-    if (st.revT > 0) pw.push([3, st.revT, 3]);
+    if (st.slowT > 0) pw.push([2, st.slowT, Math.max(st.slowT, TUNING.slowTime * st.mods.slowTimeMul)]);
+    if (st.revT > 0) pw.push([3, st.revT, Math.max(st.revT, TUNING.reverseTime * st.mods.reverseTimeMul)]);
+    if (st.magnetT > 0) pw.push([9, st.magnetT, TUNING.magnetTime]);
     const key = pw.map((p) => `${p[0]}:${Math.ceil(p[1] * 4)}`).join(',');
     if (key !== this.lastPowers) {
       this.lastPowers = key;
       $('hud-powers').innerHTML = pw
         .map(([p, t, max]) => {
           const c = 2 * Math.PI * 22;
-          const col = p === 2 ? '#7fbfff' : '#ffc850';
+          const col = p === 2 ? '#7fbfff' : p === 9 ? '#ff7a88' : '#ffc850';
           return `<div class="power${t < 1.5 ? ' ending' : ''}" style="--pc:${col}"><svg class="ring" viewBox="0 0 50 50"><circle cx="25" cy="25" r="22" fill="none" stroke="rgba(255,255,255,.12)" stroke-width="4"/><circle cx="25" cy="25" r="22" fill="none" stroke="${col}" stroke-width="4" stroke-dasharray="${c}" stroke-dashoffset="${c * (1 - t / max)}" stroke-linecap="round"/></svg><span class="lbl">${POWER_NAMES[p]}</span><b class="sec">${Math.ceil(t)}</b></div>`;
         })
         .join('');
@@ -709,9 +747,10 @@ export class UI {
   resetHud() {
     this.lastGun = [-1, -1];
     this.lastScore = -1;
-    this.lastPowers = '';
-    this.lastAce = '';
-    this.lastCoins = '';
+    // Not '' (the key for "nothing showing"), so the next update always redraws.
+    this.lastPowers = '-';
+    this.lastAce = '-';
+    this.lastCoins = '-';
   }
 }
 

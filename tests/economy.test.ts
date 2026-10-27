@@ -192,7 +192,29 @@ describe('items', () => {
     const hit = ev.find((e) => e.type === 'bossHit');
     expect(hit && hit.type === 'bossHit' ? hit.dmg : 0).toBe(TUNING.serpentChoke * 2);
     const choke = ev.find((e) => e.type === 'choke');
-    expect(choke && choke.type === 'choke' ? choke.at.length : 0).toBeGreaterThanOrEqual(5);
+    expect(choke && choke.type === 'choke' ? choke.at.length : 0).toBeGreaterThanOrEqual(3); // 1-2 + Snake Charmer's 2
+  });
+
+  it('Deep Freeze, Rewinder, Hungry Scorpion, Double Wild: stronger power-ups', () => {
+    const trigger = (power: Power, mods: Partial<typeof NO_MODS>) => {
+      const colors = Array.from({ length: 24 }, (_, i) => [1, 0][i % 2]);
+      colors.splice(10, 2, 2, 2);
+      const { level, st } = frozenGame(colors, { mods });
+      st.chains[0].balls[10].p = power;
+      st.chains[0].balls[10].pt = 99;
+      st.gun.cur = 2;
+      // Step until the power fires, then look at the state right away.
+      const cmd = aimAt(level, st, 10);
+      for (let t = 0; t < 2 * TICK_HZ; t++) if (step(st, level, t === 0 ? [cmd] : []).some((e) => e.type === 'power')) break;
+      return st;
+    };
+    expect(trigger(Power.Slow, {}).slowT).toBeLessThanOrEqual(TUNING.slowTime);
+    expect(trigger(Power.Slow, { slowTimeMul: 2 }).slowT).toBeGreaterThan(TUNING.slowTime);
+    expect(trigger(Power.Reverse, {}).revT).toBeLessThanOrEqual(TUNING.reverseTime);
+    expect(trigger(Power.Reverse, { reverseTimeMul: 2 }).revT).toBeGreaterThan(TUNING.reverseTime);
+    expect(trigger(Power.Scorpion, { scorpionEatsMul: 2 }).scorps[0]?.left ?? 0).toBeGreaterThan(TUNING.scorpionEats);
+    expect(trigger(Power.Wild, {}).gun.w).toBe(1);
+    expect(trigger(Power.Wild, { wildShots: 2 }).gun.w).toBe(3);
   });
 
   it('Scavenger: floating coins come twice as often', () => {

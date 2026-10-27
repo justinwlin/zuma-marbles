@@ -9,6 +9,7 @@ import {
   createGame,
   normalizeState,
   DT,
+  type Ball,
   type GameEvent,
   type GameState,
   POWER_NAMES,
@@ -29,7 +30,7 @@ import { BOT_PRESETS, decide } from './sim/bot';
 import { assistAim, type Slot } from './sim/aim';
 import { characterNoun } from './game/characters';
 import { Rng } from './sim/rng';
-import { checkUnlocks, LevelTracker, newMeta } from './sim/achievements';
+import { checkUnlocks, LevelTracker, newMeta, withStarters } from './sim/achievements';
 import { afterStage, bossPicks, closeShop, gain, miniPicks, modsForStage, newEco, reroll, reserve, sellCharm, settleStage, shopOffers } from './sim/economy';
 import { ITEMS, type Mods, NO_MODS } from './sim/items';
 import { pointAt, type Pt } from './sim/track';
@@ -242,7 +243,7 @@ function playStage(r: EndlessRun) {
 function betweenStages(r: EndlessRun) {
   const eco = r.eco!;
   const won = r.stage - 1;
-  const meta = (save.meta ??= newMeta());
+  const meta = withStarters((save.meta ??= newMeta()));
   mode = 'result';
   ui.showHud(false);
   releaseWakeLock();
@@ -384,7 +385,7 @@ function pause() {
 function endlessStageDone(won: boolean, r: EndlessRun) {
   const eco = (r.eco ??= newEco());
   settleStage(eco, st, level.index, won);
-  const fresh = checkUnlocks((save.meta ??= newMeta()), tracker, level, { won, peakDanger });
+  const fresh = checkUnlocks(withStarters((save.meta ??= newMeta())), tracker, level, { won, peakDanger });
   if (fresh.length) ui.toast(`🔓 Unlocked ${fresh.map((id) => `${ITEMS[id].icon} ${ITEMS[id].name}`).join(', ')}! It can now show up in the shop.`, 4200);
   if (won) {
     r.runScore += st.score;
@@ -426,7 +427,7 @@ function lossTip(): string {
   const noun = characterNoun(save.settings.character);
   if ((lossStreak.get(level.index) ?? 0) >= 2 && !save.settings.relaxed) return 'Stuck? Turn on <b>Relaxed speed</b> in Settings — chains roll 25% slower.';
   if (level.rail && stuns >= 2) return 'The yellow target follows you while the idol winds up, then turns <b>red and locks</b> — slide away before the rock lands.';
-  if (level.bossFight?.kind === 'serpent') return 'Every marble you pop hurts the serpent — <b>combos</b> hurt it more. It swallows shots, but hit the <b>target ring while it rears up</b> to choke it: big damage and 3-5 power-ups along the chain.';
+  if (level.bossFight?.kind === 'serpent') return 'Every marble you pop hurts the serpent — <b>combos</b> hurt it more. It swallows shots, but hit the <b>target ring while it rears up</b> to choke it: big damage and 1-2 power-ups along the chain.';
   if (level.rail && s.bossHits === 0) return 'Shoot through <b>gaps in the chain</b> to hit the boss directly — and every marble you pop hurts it.';
   if (level.tracks.length > 1) return 'Two chains: deal with whichever is <b>closer to its skull</b> first.';
   if (s.shots >= 8 && s.misses / s.shots > 0.3) return 'Missed shots fly off the board. The <b>ghost marble</b> shows exactly where a shot will land.';
@@ -471,7 +472,7 @@ const ui = new UI({
   restart: () => (run ? startEndless(run.daily) : startLevel(level.index)),
   endless: (daily) => startEndless(daily),
   continueEndless: () => continueEndless(),
-  collection: () => ui.collection(save.meta ?? newMeta(), () => ui.endless(save)),
+  collection: () => ui.collection(withStarters((save.meta ??= newMeta())), () => ui.endless(save)),
   quit: () => {
     saveSnapshot();
     toTitle();
@@ -1051,7 +1052,18 @@ const POWER_HINTS = [
   'Lightning marble! Pop it in a match to strike every marble of its colour',
   'Wild marble! Pop it in a match and your next shot matches any colour',
   'Scorpion marble! Pop it in a match and a scorpion eats the 10 front marbles',
+  'Colour Cloud marble! Pop it in a match: 4 marbles on each side take its colour for a big combo',
+  'Black Hole marble! Pop it in a match: a vortex swallows the marbles around it',
+  'Magnet marble! Pop it in a match: for 8 seconds your shots curve toward their colour',
 ];
+/** One-time hints for special marbles: [flag on the ball, seen bit, text]. */
+const MARBLE_HINTS: [keyof Ball, number, string][] = [
+  ['gem', 1 << 13, 'Gem marble! Pop it for bonus points'],
+  ['a', 1 << 14, 'Armored marble! It takes two matches: the first one only cracks the armor'],
+  ['cm', 1 << 15, 'Chameleon marble! It changes colour every few seconds — time your shot'],
+];
+/** seenPowers bit for a power-up (8 and up skip past the coin bit). */
+const powerBit = (p: number) => 1 << (p < 8 ? p : p + 2);
 /** seenPowers bits past the power-ups, for one-time hints. */
 const SEEN_COIN = 1 << 8;
 /** First time each power-up appears on screen, explain it once (tap ? for details). */
@@ -1060,8 +1072,18 @@ function announcePowers() {
   for (let ci = 0; ci < st.chains.length; ci++) {
     const tr = level.tracks[ci];
     for (const b of st.chains[ci].balls) {
-      if (b.p && !(seen & (1 << b.p)) && b.s > tr.visibleFrom + 40) {
-        save.seenPowers = seen | (1 << b.p);
+      if (b.s <= tr.visibleFrom + 40) continue;
+      const mh = MARBLE_HINTS.find(([k, bit]) => b[k] && !(seen & bit));
+      if (mh) {
+        save.seenPowers = seen | mh[1];
+        writeSave(save);
+        ui.toast(mh[2], 4200);
+        const p = pointAt(tr, b.s);
+        fx.ring(p.x, p.y, '#fff', 20, 120, 0.8);
+        return;
+      }
+      if (b.p && !(seen & powerBit(b.p))) {
+        save.seenPowers = seen | powerBit(b.p);
         writeSave(save);
         ui.toast(`${POWER_HINTS[b.p]} · tap ? for all power-ups`, 4200);
         const p = pointAt(tr, b.s);
@@ -1210,6 +1232,15 @@ function handleEvents(events: GameEvent[]) {
           fx.text(p.x, p.y, POWER_NAMES[p.power].toUpperCase(), '#7dffcf', 18, 1.2, -24);
         }
         break;
+      case 'crack':
+        fx.burst(e.x, e.y, '#c9d2dc', '#fff', fb.particles, 0.9);
+        fx.text(e.x, e.y, 'CRACK!', '#dfe6ee', 22, 0.9, -26);
+        break;
+      case 'gem':
+        fx.burst(e.x, e.y, '#fff1a8', '#fff', fb.particles, 1.1);
+        fx.ring(e.x, e.y, '#fff1a8', 8, 420, 0.4);
+        fx.text(e.x, e.y, `GEM +${e.score}`, '#fff1a8', 26, 1.1, -30);
+        break;
       case 'rescue':
         fx.ring(e.x, e.y, '#ff7a9a', 14, 600, 0.6);
         fx.text(e.x, e.y, 'EXTRA LIFE!', '#ff9ab3', 34, 1.4, -50);
@@ -1267,6 +1298,17 @@ function handleEvents(events: GameEvent[]) {
         } else if (e.power === Power.Scorpion) {
           fx.ring(e.x, e.y, '#ffb347', 10, 520, 0.5);
           fx.text(e.x, e.y, 'SCORPION!', '#ffb347', 32, 1.2, -34);
+        } else if (e.power === Power.ColorCloud) {
+          const col = PALETTE[e.c];
+          for (const z of e.zaps ?? []) fx.burst(z.x, z.y, col.base, col.light, 10, 0.8);
+          fx.ring(e.x, e.y, col.light, 12, 600, 0.5);
+          fx.text(e.x, e.y, 'COLOUR CLOUD!', col.light, 32, 1.2, -34);
+        } else if (e.power === Power.BlackHole) {
+          fx.ring(e.x, e.y, '#a35bff', 14, 500, 0.6);
+          fx.text(e.x, e.y, 'BLACK HOLE!', '#c9a0ff', 32, 1.2, -34);
+        } else if (e.power === Power.Magnet) {
+          fx.ring(e.x, e.y, '#ff5a6a', 12, 520, 0.5);
+          fx.text(e.x, e.y, 'MAGNET SHOTS!', '#ff8a96', 32, 1.2, -34);
         } else if (e.power === Power.Bomb) {
           fx.ring(e.x, e.y, '#ffd86b', 10, 900, 0.45);
           fx.ring(e.x, e.y, '#fff', 4, 600, 0.3);
@@ -1716,7 +1758,7 @@ resize();
 toTitle();
 if (levelsUpdated) {
   writeSave(save);
-  ui.toast('Levels got an update! Tunnels on every kind of track, and serpents you can choke mid-spit for power-ups', 5000);
+  ui.toast('Levels got an update! New power-ups (Colour Cloud, Black Hole, Magnet) and special marbles (gem, armored, chameleon) arrive as you climb', 5000);
 }
 requestAnimationFrame(frame);
 

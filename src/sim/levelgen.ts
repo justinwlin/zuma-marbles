@@ -10,7 +10,7 @@ import { hash32, Rng } from './rng';
 import { buildTrack, chaikin, type Pt, type Track, TRACK_STEP } from './track';
 
 /** Bump when generated levels change; saves made with an older generator drop their mid-level snapshot. */
-export const GEN_VERSION = 8;
+export const GEN_VERSION = 9;
 
 export const WORLD_W = 1280;
 export const WORLD_H = 720;
@@ -138,6 +138,12 @@ export interface LevelDef {
   /** Balls that must be popped to fill the progress bar and stop spawning. */
   target: number;
   powerChance: number;
+  /** Power-ups that can appear here; repeats are weights (new ones ramp in). */
+  powerPool: number[];
+  /** Chance each new marble is a gem / armored / chameleon. */
+  gemChance: number;
+  armorChance: number;
+  chameleonChance: number;
   /** Chance a new chain ball repeats the previous colour (Zuma: 0.41). */
   repeatChance: number;
   mutators: Mutator[];
@@ -196,6 +202,36 @@ export function effDifficulty(index: number, endless = false): number {
   const i = Math.max(0, index);
   if (endless) return i * 0.9;
   return Math.floor(i / 5) * 4 + (i % 5) * 1.6;
+}
+
+/**
+ * New power-ups and marble types arrive a few levels apart (level = index + 1) and start rare,
+ * so players meet one new thing at a time and get used to it before it's common.
+ */
+export const INTRO = {
+  colorCloud: 4,
+  gem: 5,
+  blackHole: 8,
+  armor: 10,
+  magnet: 13,
+  chameleon: 16,
+};
+/** 0 before `from`, rising linearly from `lo` to `hi` over `span` levels. */
+const ramp = (i: number, from: number, lo: number, hi: number, span: number) => (i < from ? 0 : lo + (hi - lo) * Math.min(1, (i - from) / span));
+
+export function variety(index: number) {
+  const i = Math.max(0, index);
+  // The original six power-ups weigh 2 each; a new one weighs 1 for its first 10 levels, then 2.
+  const powerPool = [1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6];
+  for (const [p, from] of [[7, INTRO.colorCloud], [8, INTRO.blackHole], [9, INTRO.magnet]] as const) {
+    if (i >= from) powerPool.push(...(i >= from + 10 ? [p, p] : [p]));
+  }
+  return {
+    powerPool,
+    gemChance: ramp(i, INTRO.gem, 0.01, 0.025, 20),
+    armorChance: ramp(i, INTRO.armor, 0.015, 0.035, 40),
+    chameleonChance: ramp(i, INTRO.chameleon, 0.01, 0.02, 40),
+  };
 }
 
 /** Tuning for a level index (0-based). */
@@ -332,6 +368,8 @@ export function generateLevel(campaignSeed: string, index: number): Level {
 
   const { cand, family } = best;
   diff.speed *= FAMILY_SPEED[family] ?? 1;
+  // Armored marbles cost extra shots: chains roll a little slower to pay that back (tuned with scripts/balance.ts).
+  diff.speed *= 1 - 2 * variety(index).armorChance;
   const name = `${rng.pick(NAMES_A)} ${rng.pick(NAMES_B[family])}`;
   const tracks = cand.paths.map((p) => buildTrack(p, { w: GW, h: GH }));
   if (cand.crossings) addCrossings(tracks[0], cand.crossings, rng, cand.under ?? 'random');
@@ -362,6 +400,7 @@ export function generateLevel(campaignSeed: string, index: number): Level {
     speed: diff.speed,
     target,
     powerChance: diff.powerChance,
+    ...variety(index),
     repeatChance,
     mutators,
     boss,

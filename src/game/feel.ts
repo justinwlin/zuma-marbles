@@ -88,7 +88,7 @@ export function feedbackFor(e: GameEvent, ctx: FeelContext): Feedback {
       f.particles = e.matched ? 10 : 3;
       break;
     case 'power':
-      f.sound = ['', 'boom', 'slow', 'rewind', 'zap', 'wild', 'scorpion'][e.power];
+      f.sound = ['', 'boom', 'slow', 'rewind', 'zap', 'wild', 'scorpion', 'wild', 'magnet', 'swap'][e.power];
       if (e.power === Power.Lightning) {
         f.hitstop = 80;
         f.trauma = 0.75;
@@ -171,6 +171,18 @@ export function feedbackFor(e: GameEvent, ctx: FeelContext): Feedback {
     case 'choke':
       f.sound = 'power';
       f.particles = 20;
+      break;
+    case 'crack':
+      f.sound = 'clack';
+      f.pitch = -3;
+      f.trauma = 0.08;
+      f.haptic = [10];
+      f.particles = 10;
+      break;
+    case 'gem':
+      f.sound = 'coin';
+      f.particles = 20;
+      f.haptic = [12, 20, 12];
       break;
     case 'rescue':
       f.sound = 'barfull';

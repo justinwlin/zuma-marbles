@@ -521,11 +521,11 @@ describe('generator stability (golden)', () => {
     const h = createHash('sha1');
     for (let i = 0; i < 40; i++) {
       const l = generateLevel('jade-1234', i);
-      h.update(JSON.stringify([l.paths, l.colors, l.speed, l.target, l.mutators, l.repeatChance, l.tracks.map((t) => t.tunnels ?? [])]));
+      h.update(JSON.stringify([l.paths, l.colors, l.speed, l.target, l.mutators, l.repeatChance, l.tracks.map((t) => t.tunnels ?? []), l.powerPool, l.gemChance, l.armorChance, l.chameleonChance]));
     }
     // If this changes, every saved campaign and shared level code changes too:
     // bump GEN_VERSION (saves then drop stale mid-level snapshots) and update the hash.
-    expect(h.digest('hex').slice(0, 12)).toBe('144014b0f521');
+    expect(h.digest('hex').slice(0, 12)).toBe('d449de61fa72');
   });
 
   it('large-marble campaigns use a smaller board with valid, varied tracks', () => {

@@ -418,6 +418,8 @@ export class Renderer {
     // Aim guide (under the balls)
     if (v.showGuide && (v.aimActive || v.aimIdle) && st.phase === 'playing') this.drawAim(st, v);
 
+    // Black holes sit under the marbles they swallow.
+    for (const h of st.holes) this.drawHole(lvl.tracks[h.ci], h, v);
     // Balls
     const pos: Pt = { x: 0, y: 0 };
     const rot = L.portrait ? -Math.PI / 2 : 0;
@@ -510,6 +512,7 @@ export class Renderer {
       const ang = Math.atan2(sh.vy, sh.vx);
       this.drawMarble(sh.w ? WILD : sh.c, sh.x, sh.y, ang, v.time * 30, 1, rot, 1.18, 0.88);
       if (sh.b) this.drawBombMark(sh.x, sh.y, BALL_R, v);
+      if (st.magnetT > 0 && !sh.w && !sh.b) g.drawImage(this.glowSprite('#ff5a6a'), sh.x - 34, sh.y - 34, 68, 68);
     }
 
     this.drawLauncher(st, v, rot);
@@ -573,6 +576,7 @@ export class Renderer {
       g.fill();
     }
     g.globalAlpha = 1;
+    if (b.clr < 0 && (b.a || b.cm || b.gem)) this.drawSpecial(b, pos, sc, v);
     if (v.colorblind && b.clr < 0) this.drawGlyph(b.c, pos.x, pos.y, rot, sc);
     if (b.p !== Power.None && b.clr < 0) {
       const blink = b.pt < 3 ? (Math.sin(v.time * 18) > 0 ? 1 : 0.25) : 1;
@@ -589,6 +593,92 @@ export class Renderer {
       this.drawPowerIcon(b.p, pos.x, pos.y, BALL_R * 0.62, rot);
       g.globalAlpha = 1;
     }
+  }
+
+  /** Armored plates, a chameleon's shifting ring, or a gem's sparkle over a marble. */
+  private drawSpecial(b: Ball, pos: Pt, sc: number, v: ViewState) {
+    const g = this.ctx;
+    const r = BALL_R * sc;
+    g.save();
+    g.translate(pos.x, pos.y);
+    if (b.a) {
+      // Steel band with rivets: it takes two pops.
+      g.strokeStyle = 'rgba(20,24,30,0.9)';
+      g.lineWidth = r * 0.42;
+      g.beginPath();
+      g.arc(0, 0, r * 0.8, 0, Math.PI * 2);
+      g.stroke();
+      g.strokeStyle = '#c9d2dc';
+      g.lineWidth = r * 0.26;
+      g.stroke();
+      g.fillStyle = '#5b6672';
+      for (let k = 0; k < 6; k++) {
+        const a = (k * Math.PI) / 3 + Math.PI / 6;
+        g.beginPath();
+        g.arc(Math.cos(a) * r * 0.8, Math.sin(a) * r * 0.8, r * 0.09, 0, Math.PI * 2);
+        g.fill();
+      }
+    }
+    if (b.cm) {
+      // Rotating rainbow dashes: its colour will change.
+      g.rotate(v.time * 2.5);
+      const cg = g.createConicGradient(0, 0, 0);
+      RAINBOW.forEach((c, i) => cg.addColorStop(i / (RAINBOW.length - 1), c));
+      g.strokeStyle = cg;
+      g.lineWidth = r * 0.22;
+      g.setLineDash([r * 0.45, r * 0.3]);
+      g.beginPath();
+      g.arc(0, 0, r * 1.08, 0, Math.PI * 2);
+      g.stroke();
+      g.setLineDash([]);
+    }
+    if (b.gem) {
+      // A cut gem shine, twinkling.
+      const tw = 0.6 + 0.4 * Math.sin(v.time * 5 + b.id);
+      g.fillStyle = `rgba(255,255,255,${0.75 * tw})`;
+      g.beginPath();
+      g.moveTo(0, -r * 0.62);
+      g.lineTo(r * 0.42, -r * 0.1);
+      g.lineTo(0, r * 0.55);
+      g.lineTo(-r * 0.42, -r * 0.1);
+      g.closePath();
+      g.fill();
+      g.strokeStyle = `rgba(255,240,170,${tw})`;
+      g.lineWidth = 1.5;
+      g.beginPath();
+      g.arc(0, 0, r * 1.05, 0, Math.PI * 2);
+      g.stroke();
+    }
+    g.restore();
+  }
+
+  /** Black hole: a swirling vortex on the track that swallows marbles. */
+  private drawHole(tr: Track, h: { s: number; t: number }, v: ViewState) {
+    const g = this.ctx;
+    const p = pointAt(tr, h.s);
+    const life = Math.min(1, h.t / 0.4, (TUNING.holeTime - h.t + 0.05) / 0.25);
+    const R = BALL_R * 1.6 * life;
+    g.save();
+    g.translate(p.x, p.y);
+    g.drawImage(this.glowSprite('#a35bff'), -R * 2.4, -R * 2.4, R * 4.8, R * 4.8);
+    const grad = g.createRadialGradient(0, 0, 0, 0, 0, R);
+    grad.addColorStop(0, '#000');
+    grad.addColorStop(0.6, '#12002a');
+    grad.addColorStop(1, 'rgba(120,60,255,0)');
+    g.fillStyle = grad;
+    g.beginPath();
+    g.arc(0, 0, R, 0, Math.PI * 2);
+    g.fill();
+    g.rotate(-v.time * 6);
+    g.strokeStyle = 'rgba(200,160,255,0.8)';
+    g.lineWidth = 2;
+    for (let k = 0; k < 3; k++) {
+      g.rotate((Math.PI * 2) / 3);
+      g.beginPath();
+      g.arc(R * 0.35, 0, R * 0.55, Math.PI * 0.9, Math.PI * 1.6);
+      g.stroke();
+    }
+    g.restore();
   }
 
   /** Draw a marble sprite. roll = rolling angle in radians, ang = travel direction. */
@@ -851,6 +941,35 @@ export class Renderer {
       g.fill();
     } else if (p === Power.Scorpion) {
       drawScorpionShape(g, r * 0.95, 0, '#ffb347');
+    } else if (p === Power.ColorCloud) {
+      // Three puffs in rainbow colours
+      [[-0.38, 0.1, '#ff6b8a'], [0.36, 0.1, '#6bc7ff'], [0, -0.28, '#ffe14a']].forEach(([dx, dy, c]) => {
+        g.fillStyle = c as string;
+        g.beginPath();
+        g.arc((dx as number) * r, (dy as number) * r, r * 0.42, 0, Math.PI * 2);
+        g.fill();
+      });
+    } else if (p === Power.BlackHole) {
+      g.fillStyle = '#000';
+      g.arc(0, 0, r * 0.5, 0, Math.PI * 2);
+      g.fill();
+      g.strokeStyle = '#c9a0ff';
+      g.lineWidth = r * 0.16;
+      for (let k = 0; k < 3; k++) {
+        g.beginPath();
+        g.arc(0, 0, r * (0.62 + k * 0.001), (k * Math.PI * 2) / 3, (k * Math.PI * 2) / 3 + 1.4);
+        g.stroke();
+      }
+    } else if (p === Power.Magnet) {
+      // Horseshoe magnet
+      g.strokeStyle = '#ff5a6a';
+      g.lineWidth = r * 0.34;
+      g.lineCap = 'butt';
+      g.arc(0, -r * 0.05, r * 0.5, Math.PI, 0, true);
+      g.stroke();
+      g.fillStyle = '#e8eef5';
+      g.fillRect(-r * 0.67, -r * 0.1, r * 0.34, r * 0.32);
+      g.fillRect(r * 0.33, -r * 0.1, r * 0.34, r * 0.32);
     }
     g.restore();
   }

@@ -92,15 +92,28 @@ export const TUNING = {
   serpentEvery: 4,
   serpentEvery2: 2.5,
   serpentFirst: 8,
+  /** Black hole: lasts this long, swallows at most this many marbles. */
+  holeTime: 3.5,
+  holeEats: 14,
+  /** One marble every holeRate s, from within holeReach px of the vortex. */
+  holeRate: 0.12,
+  holeReach: BALL_D * 6,
+  /** Magnet Shot: seconds, and how hard shots steer toward their colour (per second). */
+  magnetTime: 8,
+  magnetSteer: 9,
+  /** Chameleon marbles change colour this often (seconds). */
+  chameleonEvery: 2.5,
+  /** Gem marbles: bonus score when popped. */
+  gemScore: 150,
   /** No spitting once the head is past this fraction of the track. */
   serpentMercy: 0.86,
 };
 
 /** Power-ups. 4 was Laser (aim beam + rapid fire) before Lightning replaced it. */
-export const Power = { None: 0, Bomb: 1, Slow: 2, Reverse: 3, Lightning: 4, Wild: 5, Scorpion: 6 } as const;
+export const Power = { None: 0, Bomb: 1, Slow: 2, Reverse: 3, Lightning: 4, Wild: 5, Scorpion: 6, ColorCloud: 7, BlackHole: 8, Magnet: 9 } as const;
 export type Power = (typeof Power)[keyof typeof Power];
-export const POWER_NAMES = ['', 'Bomb', 'Slow', 'Reverse', 'Lightning', 'Wild', 'Scorpion'];
-export const POWER_COUNT = 6;
+export const POWER_NAMES = ['', 'Bomb', 'Slow', 'Reverse', 'Lightning', 'Wild', 'Scorpion', 'Colour Cloud', 'Black Hole', 'Magnet'];
+export const POWER_COUNT = 9;
 /** Colour index used to draw a wild (rainbow) marble. */
 export const WILD = 6;
 
@@ -131,6 +144,12 @@ export interface Ball {
   w?: 1;
   /** Spat by the serpent (its settling match doesn't count toward your streak). */
   sp?: 1;
+  /** Armored: the first pop only cracks the armor. */
+  a?: 1;
+  /** Chameleon: changes colour every few seconds. */
+  cm?: 1;
+  /** Gem: pays bonus score and coins when popped. */
+  gem?: 1;
 }
 
 export interface Shot {
@@ -249,6 +268,10 @@ export interface GameState {
   coinsEarned: CoinLedger;
   /** Extra Life rescues left this level. */
   lives: number;
+  /** Black holes: a vortex at arc position s on chain ci, swallowing marbles that reach it. */
+  holes: { ci: number; s: number; t: number; left: number; n: number }[];
+  /** Magnet Shot time left: shots curve toward a marble of their colour. */
+  magnetT: number;
 }
 
 /** move: rail levels only — slide the frog toward the point's spot on the rail. */
@@ -278,6 +301,8 @@ export type GameEvent =
   | { type: 'bossAttack'; x: number; y: number; tx: number; ty: number }
   | { type: 'swallow'; x: number; y: number }
   | { type: 'rescue'; x: number; y: number }
+  | { type: 'crack'; x: number; y: number; c: number }
+  | { type: 'gem'; x: number; y: number; score: number }
   | { type: 'choke'; x: number; y: number; at: { x: number; y: number; power: Power }[] }
   | { type: 'spit'; x: number; y: number; tx: number; ty: number; c: number }
   | { type: 'stun'; x: number; y: number }
@@ -322,6 +347,8 @@ export function createGame(level: Level, mods: Mods = NO_MODS): GameState {
     mods: { ...mods },
     coinsEarned: emptyLedger(),
     lives: mods.lives,
+    holes: [],
+    magnetT: 0,
   };
   // Roll-in: choose an initial speed that decelerates to cruise after covering rollIn × length.
   const v = cruise(st, level);
@@ -425,6 +452,11 @@ export function step(st: GameState, level: Level, cmds: readonly Command[] = [])
   st.gun.cool = Math.max(0, st.gun.cool - DT);
   st.slowT = Math.max(0, st.slowT - DT);
   st.revT = Math.max(0, st.revT - DT);
+  st.magnetT = Math.max(0, st.magnetT - DT);
+  // Chameleon marbles step to the next colour together.
+  if (st.tick % Math.round(TUNING.chameleonEvery * TICK_HZ) === 0) {
+    for (const ch of st.chains) for (const b of ch.balls) if (b.cm && b.clr < 0 && b.ins >= 1) b.c = (b.c + 1) % level.colors;
+  }
   st.chains.forEach((ch, ci) => {
     ch.stopT = Math.max(0, ch.stopT - DT);
     const vis = level.tracks[ci].visibleFrom;
@@ -441,6 +473,7 @@ export function step(st: GameState, level: Level, cmds: readonly Command[] = [])
   stepBoss(st, level, ev);
   for (let ci = 0; ci < st.chains.length; ci++) stepChain(st, level, ci, ev);
   stepScorpions(st, level, ev);
+  stepHoles(st, level, ev);
   for (let ci = 0; ci < st.chains.length; ci++) stepClearing(st, level, ci, ev);
   if (st.boss && st.boss.hp <= 0 && !st.boss.dead) bossDefeated(st, level, ev);
   stepCascade(st, level, ev);
@@ -755,7 +788,7 @@ function serpentPush(st: GameState, level: Level, colors: number[], ev: GameEven
   return true;
 }
 
-/** Choked mid-spit: the spit is cancelled and it coughs 3-5 power-ups onto random marbles along chain 0. */
+/** Choked mid-spit: the spit is cancelled and it coughs 1-2 power-ups onto random marbles along chain 0. */
 function serpentChoke(st: GameState, level: Level, ev: GameEvent[]) {
   st.boss!.wind = 0;
   const balls = st.chains[0].balls;
@@ -768,9 +801,9 @@ function serpentChoke(st: GameState, level: Level, ev: GameEvent[]) {
     cands.push(b);
   }
   const at: { x: number; y: number; power: Power }[] = [];
-  for (let n = 3 + Math.floor(rand(st, 'bonus') * 3) + st.mods.chokeExtra; n > 0 && cands.length; n--) {
+  for (let n = 1 + Math.floor(rand(st, 'bonus') * 2) + st.mods.chokeExtra; n > 0 && cands.length; n--) {
     const b = cands.splice(Math.floor(rand(st, 'bonus') * cands.length), 1)[0];
-    b.p = (1 + Math.floor(rand(st, 'bonus') * POWER_COUNT)) as Power;
+    b.p = level.powerPool[Math.floor(rand(st, 'bonus') * level.powerPool.length)] as Power;
     b.pt = TUNING.powerLife * st.mods.powerLifeMul;
     pointAt(tr, b.s, tmpL);
     at.push({ x: tmpL.x, y: tmpL.y, power: b.p });
@@ -839,6 +872,37 @@ function stepScorpions(st: GameState, level: Level, ev: GameEvent[]) {
       ev.push({ type: 'eat', x: tmp.x, y: tmp.y, c: b.c });
     }
     if (sc.left <= 0 || sc.s < tr.visibleFrom) st.scorps.splice(k, 1);
+  }
+}
+
+/** Black holes pull in the nearest marble around them, one at a time, until they close. */
+function stepHoles(st: GameState, level: Level, ev: GameEvent[]) {
+  for (let k = st.holes.length - 1; k >= 0; k--) {
+    const h = st.holes[k];
+    h.t -= DT;
+    h.n -= DT;
+    const tr = level.tracks[h.ci];
+    if (h.n <= 0) {
+      h.n = TUNING.holeRate;
+      let best: Ball | null = null;
+      let bd = TUNING.holeReach;
+      for (const b of st.chains[h.ci]?.balls ?? []) {
+        if (b.clr >= 0 || b.ins < 1 || b.s < tr.visibleFrom || inTunnel(tr, b.s)) continue;
+        const d = b.s > h.s ? b.s - h.s : h.s - b.s;
+        if (d < bd) {
+          bd = d;
+          best = b;
+        }
+      }
+      if (best) {
+        startClear(st, level, h.ci, best, 0, ev);
+        st.score += 10;
+        h.left--;
+        pointAt(tr, best.s, tmp);
+        ev.push({ type: 'eat', x: tmp.x, y: tmp.y, c: best.c });
+      }
+    }
+    if (h.t <= 0 || h.left <= 0) st.holes.splice(k, 1);
   }
 }
 
@@ -917,11 +981,43 @@ function hittable(b: Ball, track: Track) {
   return b.clr < 0 && b.ins >= 1 && b.s > track.visibleFrom + BALL_R * 0.5 && !inTunnel(track, b.s);
 }
 
+/** Magnet Shot: curve toward the nearest hittable marble of the shot's colour ahead of it. */
+function steerShot(st: GameState, level: Level, sh: Shot, spd: number) {
+  let best = 1e12;
+  let tx = 0;
+  let ty = 0;
+  st.chains.forEach((ch, ci) => {
+    const tr = level.tracks[ci];
+    for (const b of ch.balls) {
+      if (b.c !== sh.c || !hittable(b, tr)) continue;
+      pointAt(tr, b.s, tmp);
+      const dx = tmp.x - sh.x;
+      const dy = tmp.y - sh.y;
+      if (dx * sh.vx + dy * sh.vy <= 0) continue; // only ahead
+      const d2 = dx * dx + dy * dy;
+      if (d2 < best) {
+        best = d2;
+        tx = dx;
+        ty = dy;
+      }
+    }
+  });
+  if (best > 450 * 450) return;
+  const d = Math.sqrt(best);
+  const k = Math.min(1, TUNING.magnetSteer * DT);
+  const vx = sh.vx + ((tx / d) * spd - sh.vx) * k;
+  const vy = sh.vy + ((ty / d) * spd - sh.vy) * k;
+  const n = Math.sqrt(vx * vx + vy * vy);
+  sh.vx = (vx / n) * spd;
+  sh.vy = (vy / n) * spd;
+}
+
 function stepShots(st: GameState, level: Level, ev: GameEvent[]) {
   const hd2 = TUNING.hitDist * TUNING.hitDist;
   for (let si = st.shots.length - 1; si >= 0; si--) {
     const sh = st.shots[si];
     const spd = Math.sqrt(sh.vx * sh.vx + sh.vy * sh.vy);
+    if (st.magnetT > 0 && !sh.w && !sh.b) steerShot(st, level, sh, spd);
     const sub = Math.max(1, Math.ceil((spd * DT) / (BALL_R * 0.5)));
     let done = false;
     for (let k = 0; k < sub && !done; k++) {
@@ -1207,7 +1303,16 @@ function stepChain(st: GameState, level: Level, ci: number, ev: GameEvent[]) {
         c = randColor(st, level, 'chain', ch);
         ch.lastColor = c;
       }
-      balls.unshift(newBall(st, c, s));
+      const nb = newBall(st, c, s);
+      // Special marbles (none on early levels, so their chains are unchanged).
+      const sp = level.gemChance + level.armorChance + level.chameleonChance;
+      if (sp > 0 && !ch.pending.length) {
+        const r = rand(st, 'chain');
+        if (r < level.gemChance) nb.gem = 1;
+        else if (r < level.gemChance + level.armorChance) nb.a = 1;
+        else if (r < sp) nb.cm = 1;
+      }
+      balls.unshift(nb);
       if (balls.length > 400) break;
     }
   }
@@ -1306,20 +1411,31 @@ function checkMatch(st: GameState, level: Level, ci: number, i: number, combo: n
   if (combo > 0) earn(st, 'combos', COINS.comboStep * combo * st.mods.comboCoinMul);
   // Shockwave: big matches (5+) also pop the marble on each side.
   const extra = st.mods.shockwave && n >= 5 ? [lo - 1, hi + 1].filter((k) => balls[k] && hittable(balls[k], track)) : [];
+  // Mark the whole run first, then fire its powers (so a power sees the run as already popping).
+  const powered: Ball[] = [];
   for (const k of [...extra, ...Array.from({ length: n }, (_, j) => lo + j)]) {
     pointAt(track, balls[k].s, tmp);
-    popped.push({ x: tmp.x, y: tmp.y, c: balls[k].c, p: balls[k].p });
-    startClear(st, level, ci, balls[k], combo, ev);
+    if (!balls[k].a) popped.push({ x: tmp.x, y: tmp.y, c: balls[k].c, p: balls[k].p });
+    startClear(st, level, ci, balls[k], combo, ev, powered);
     sx += tmp.x;
     sy += tmp.y;
   }
+  for (const pb of powered) activatePower(st, level, ci, pb, ev);
   st.score += 10 * extra.length;
-  ev.push({ type: 'pop', balls: popped, combo, score, x: sx / popped.length, y: sy / popped.length, c: b.c, gapBonus: gb, chainBonus });
+  ev.push({ type: 'pop', balls: popped, combo, score, x: sx / (extra.length + n), y: sy / (extra.length + n), c: b.c, gapBonus: gb, chainBonus });
   return true;
 }
 
-function startClear(st: GameState, level: Level, ci: number, b: Ball, combo: number, ev: GameEvent[]) {
+/** Start popping a marble. With `defer`, a power marble is collected there instead of firing now. */
+function startClear(st: GameState, level: Level, ci: number, b: Ball, combo: number, ev: GameEvent[], defer?: Ball[]) {
   if (b.clr >= 0) return;
+  if (b.a && !st.cascade) {
+    // Armored: this pop only cracks the armor.
+    delete b.a;
+    pointAt(level.tracks[ci], b.s, tmp);
+    ev.push({ type: 'crack', x: tmp.x, y: tmp.y, c: b.c });
+    return;
+  }
   b.clr = 0;
   b.combo = combo;
   b.suck = 0;
@@ -1332,8 +1448,17 @@ function startClear(st: GameState, level: Level, ci: number, b: Ball, combo: num
     if (b.c === st.mods.luckyColor) c *= COINS.lucky;
     if (st.mods.dangerCoinMul !== 1 && headProgress(st, level) > COINS.dangerFrac) c *= st.mods.dangerCoinMul;
     earn(st, 'pops', c);
+    if (b.gem) {
+      st.score += TUNING.gemScore;
+      earn(st, 'gems', COINS.gem);
+      pointAt(level.tracks[ci], b.s, tmp);
+      ev.push({ type: 'gem', x: tmp.x, y: tmp.y, score: TUNING.gemScore });
+    }
   }
-  if (b.p !== Power.None) activatePower(st, level, ci, b, ev);
+  if (b.p !== Power.None) {
+    if (defer) defer.push(b);
+    else activatePower(st, level, ci, b, ev);
+  }
 }
 
 function activatePower(st: GameState, level: Level, ci: number, b: Ball, ev: GameEvent[]) {
@@ -1345,10 +1470,33 @@ function activatePower(st: GameState, level: Level, ci: number, b: Ball, ev: Gam
   const by = tmp.y;
   const pev: GameEvent & { type: 'power' } = { type: 'power', power: p, x: bx, y: by, c: b.c };
   ev.push(pev);
-  if (p === Power.Slow) st.slowT = TUNING.slowTime;
-  else if (p === Power.Reverse) st.revT = TUNING.reverseTime;
-  else if (p === Power.Wild) st.gun.w |= st.gun.w & 1 ? 2 : 1;
-  else if (p === Power.Scorpion) st.scorps.push({ ci, s: level.tracks[ci].length + BALL_D, left: TUNING.scorpionEats });
+  if (p === Power.Slow) st.slowT = TUNING.slowTime * st.mods.slowTimeMul;
+  else if (p === Power.Reverse) st.revT = TUNING.reverseTime * st.mods.reverseTimeMul;
+  else if (p === Power.Wild) st.gun.w |= st.mods.wildShots > 1 ? 3 : st.gun.w & 1 ? 2 : 1;
+  else if (p === Power.Scorpion) st.scorps.push({ ci, s: level.tracks[ci].length + BALL_D, left: TUNING.scorpionEats * st.mods.scorpionEatsMul });
+  else if (p === Power.Magnet) st.magnetT = TUNING.magnetTime;
+  else if (p === Power.BlackHole) st.holes.push({ ci, s: b.s, t: TUNING.holeTime, left: TUNING.holeEats, n: 0.15 });
+  else if (p === Power.ColorCloud) {
+    // The 4 marbles on each side take its colour, so the gap snaps shut into a big combo.
+    const balls = st.chains[ci].balls;
+    const tr = level.tracks[ci];
+    const i = balls.indexOf(b);
+    const pts: { x: number; y: number }[] = [];
+    for (const dir of [-1, 1]) {
+      let left = 4;
+      for (let k = i + dir; k >= 0 && k < balls.length && left > 0; k += dir) {
+        const o = balls[k];
+        if (o.clr >= 0) continue;
+        if (o.s < tr.visibleFrom || inTunnel(tr, o.s)) break;
+        o.c = b.c;
+        delete o.cm;
+        left--;
+        pointAt(tr, o.s, tmp);
+        pts.push({ x: tmp.x, y: tmp.y });
+      }
+    }
+    pev.zaps = pts;
+  }
   else if (p === Power.Lightning) {
     // Every visible marble of the power marble's colour, on every track, is struck.
     const zaps: { x: number; y: number }[] = [];
@@ -1449,7 +1597,7 @@ function maybeSpawnPower(st: GameState, level: Level) {
   });
   if (!cands.length) return;
   const b = cands[Math.floor(rand(st, 'chain') * cands.length)];
-  b.p = (1 + Math.floor(rand(st, 'chain') * POWER_COUNT)) as Power;
+  b.p = level.powerPool[Math.floor(rand(st, 'chain') * level.powerPool.length)] as Power;
   b.pt = TUNING.powerLife * st.mods.powerLifeMul;
 }
 
@@ -1548,6 +1696,8 @@ export function normalizeState(st: GameState): GameState {
   st.lives ??= 0;
   st.gun.b ??= 0;
   st.gun.after ??= -1;
+  st.holes ??= [];
+  st.magnetT ??= 0;
   return st;
 }
 

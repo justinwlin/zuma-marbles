@@ -65,7 +65,7 @@ Coins are separate from your score. Score still fills the bar and decides stars.
 | ⚡ **Power Surge** | Power-ups appear twice as often | 450 |
 | 💣 **Pocket Bomb** | You start every level with one Bomb shot loaded. It explodes where it lands | 500 |
 | ⏳ **Long Fuse** | Power marbles last twice as long before they expire (18 s → 36 s) | 400 |
-| 🐍 **Snake Charmer** | The serpent's rear-up lasts 1 s longer, and choking it drops 2 extra power-ups | 400 |
+| 🐍 **Snake Charmer** | The serpent's rear-up lasts 1 s longer, and choking it drops 2 extra power-ups (a choke normally drops 1–2) | 400 |
 | 🔨 **Boss Breaker** | Direct hits on bosses do double damage (shots through gaps at the idol, chokes on the serpent) | 500 |
 
 Pocket Bomb is a new mechanic. Today Bombs only come from popping a Bomb marble in the chain.
@@ -88,6 +88,12 @@ Each charm nudges you toward a play style. With only 3 slots, picking your 3 is 
 | 🔥 **Daredevil** | Pops while the chain is past 75% of the track pay double coins | Risky play | 700 |
 | 🌩️ **Lightning Rod** | Lightning also strikes a second colour, in the front half of the chain only | Power-ups | 1,000 |
 | 🪙 **Scavenger** | Floating coins appear twice as often | Coins | 600 |
+| ❄️ **Deep Freeze** | Slow lasts twice as long | Power-ups | 600 |
+| ⏪ **Rewinder** | Reverse lasts twice as long | Power-ups | 650 |
+| 🦂 **Hungry Scorpion** | Scorpions eat 20 marbles instead of 10 | Power-ups | 600 |
+| 🃏 **Double Wild** | Wild power-ups make your next two shots Wild | Power-ups | 650 |
+
+Every in-game power-up has a charm that makes it stronger: Bomber (Bomb), Lightning Rod (Lightning), Deep Freeze (Slow), Rewinder (Reverse), Hungry Scorpion (Scorpion), Double Wild (Wild). Together with Power Surge and Long Fuse, that's a full power-up build.
 
 Shockwave and Lucky Colour replaced the earlier Magnet and Sniper ideas: closing gaps faster and shooting through gaps weren't interesting enough.
 
@@ -136,7 +142,7 @@ After the mini-boss, choose 1 of 2 boosts for free. It lasts until the end of th
 At the start, only some items can show up. Achievements add more, so the shop keeps surprising you. This is how The Binding of Isaac keeps runs fresh. A **collection screen** shows locked items as silhouettes with their unlock hint.
 
 **Available from the start:**
-- **Charms:** Shockwave, Bomber, Quick Draw, Rainbow, Colour Scout.
+- **Charms:** Shockwave, Bomber, Quick Draw, Rainbow, Colour Scout, Deep Freeze, Hungry Scorpion.
 - **Boosts:** Slowpoke, Power Surge, Pocket Bomb, Long Fuse.
 
 **Unlocked by playing:**
@@ -151,6 +157,8 @@ At the start, only some items can show up. Achievements add more, so the shop ke
 | Win a level with the chain past 90% of the track | 🔥 Daredevil (charm) |
 | Choke a serpent 6 times in one fight | 🌩️ Lightning Rod (charm) |
 | Shoot 10 floating coins | 🪙 Scavenger (charm) |
+| Trigger 8 power-ups in one level | ⏪ Rewinder (charm) |
+| Use 3 Wild power-ups in one level | 🃏 Double Wild (charm) |
 
 ---
 
@@ -178,7 +186,7 @@ At the start, only some items can show up. Achievements add more, so the shop ke
 |---|---|
 | **1. Coins** | ✅ Coin ledger in the simulation, HUD counter, coins in the stage-clear banner |
 | **2. Shop** | ✅ Free charm pick and shop after each boss, 3 + 3 slots, reroll, buying, selling and replacing, boosts running out |
-| **3. Full item list** | ✅ All 7 boosts and 10 charms, the mini-boss pick, Reserve |
+| **3. Full item list** | ✅ All 7 boosts and 14 charms, the mini-boss pick, Reserve |
 | **4. Unlocks** | ✅ Achievement tracking, unlock toasts, the collection screen |
 | **5. Campaign** | Not started |
 

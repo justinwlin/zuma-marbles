@@ -22,7 +22,11 @@ export type ItemId =
   | 'comboKing'
   | 'daredevil'
   | 'lightningRod'
-  | 'scavenger';
+  | 'scavenger'
+  | 'deepFreeze'
+  | 'rewinder'
+  | 'hungryScorpion'
+  | 'doubleWild';
 
 export interface ItemDef {
   id: ItemId;
@@ -53,6 +57,10 @@ export const ITEMS: Record<ItemId, ItemDef> = {
   daredevil: { id: 'daredevil', kind: 'charm', name: 'Daredevil', icon: '🔥', desc: 'Pops with the chain past 75% of the track pay double coins', price: 700, starter: false },
   lightningRod: { id: 'lightningRod', kind: 'charm', name: 'Lightning Rod', icon: '🌩️', desc: 'Lightning also strikes a second colour, in the front half of the chain', price: 1000, starter: false },
   scavenger: { id: 'scavenger', kind: 'charm', name: 'Scavenger', icon: '🪙', desc: 'Floating coins appear twice as often', price: 600, starter: false },
+  deepFreeze: { id: 'deepFreeze', kind: 'charm', name: 'Deep Freeze', icon: '❄️', desc: 'Slow lasts twice as long', price: 600, starter: true },
+  rewinder: { id: 'rewinder', kind: 'charm', name: 'Rewinder', icon: '⏪', desc: 'Reverse lasts twice as long', price: 650, starter: false },
+  hungryScorpion: { id: 'hungryScorpion', kind: 'charm', name: 'Hungry Scorpion', icon: '🦂', desc: 'Scorpions eat 20 marbles instead of 10', price: 600, starter: true },
+  doubleWild: { id: 'doubleWild', kind: 'charm', name: 'Double Wild', icon: '🃏', desc: 'Wild power-ups make your next two shots Wild', price: 650, starter: false },
 };
 
 export const ITEM_IDS = Object.keys(ITEMS) as ItemId[];
@@ -82,6 +90,11 @@ export interface Mods {
   dangerCoinMul: number;
   /** Lucky Colour's colour (-1 = off). */
   luckyColor: number;
+  slowTimeMul: number;
+  reverseTimeMul: number;
+  scorpionEatsMul: number;
+  /** Wild power-up: how many shots become Wild. */
+  wildShots: number;
 }
 
 export const NO_MODS: Mods = {
@@ -103,6 +116,10 @@ export const NO_MODS: Mods = {
   comboCoinMul: 1,
   dangerCoinMul: 1,
   luckyColor: -1,
+  slowTimeMul: 1,
+  reverseTimeMul: 1,
+  scorpionEatsMul: 1,
+  wildShots: 1,
 };
 
 /** Resolve owned items into mods. `luckyColor` is the colour rolled when Lucky Colour was gained. */
@@ -127,6 +144,10 @@ export function modsFor(items: readonly ItemId[], opts: { luckyColor?: number; l
       case 'daredevil': m.dangerCoinMul = 2; break;
       case 'lightningRod': m.lightningRod = true; break;
       case 'scavenger': m.coinSpawnMul = 2; break;
+      case 'deepFreeze': m.slowTimeMul = 2; break;
+      case 'rewinder': m.reverseTimeMul = 2; break;
+      case 'hungryScorpion': m.scorpionEatsMul = 2; break;
+      case 'doubleWild': m.wildShots = 2; break;
     }
   }
   return m;
@@ -144,13 +165,14 @@ export const COINS = {
   dangerFrac: 0.75,
   /** Lucky Colour multiplier. */
   lucky: 3,
+  gem: 10,
 };
 
-export type CoinSource = 'pops' | 'combos' | 'floating' | 'ace' | 'clean' | 'boss';
+export type CoinSource = 'pops' | 'combos' | 'floating' | 'ace' | 'clean' | 'boss' | 'gems';
 export interface CoinLedger {
   total: number;
   by: Record<CoinSource, number>;
 }
 export function emptyLedger(): CoinLedger {
-  return { total: 0, by: { pops: 0, combos: 0, floating: 0, ace: 0, clean: 0, boss: 0 } };
+  return { total: 0, by: { pops: 0, combos: 0, floating: 0, ace: 0, clean: 0, boss: 0, gems: 0 } };
 }
