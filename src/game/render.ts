@@ -158,6 +158,26 @@ export class Renderer {
     this.shadow = sh;
   }
 
+  private glows = new Map<string, HTMLCanvasElement>();
+  /** Soft radial glow in a colour, cached (64×64). */
+  glowSprite(color: string): HTMLCanvasElement {
+    let c = this.glows.get(color);
+    if (!c) {
+      c = document.createElement('canvas');
+      c.width = c.height = 64;
+      const g = c.getContext('2d')!;
+      const gr = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+      gr.addColorStop(0, color);
+      gr.addColorStop(0.35, color);
+      gr.addColorStop(1, 'rgba(0,0,0,0)');
+      g.globalAlpha = 0.55;
+      g.fillStyle = gr;
+      g.fillRect(0, 0, 64, 64);
+      this.glows.set(color, c);
+    }
+    return c;
+  }
+
   // ------------------------------------------------------------ static background
 
   private buildBackground() {
@@ -321,18 +341,21 @@ export class Renderer {
       const a = pointAt(lvl.track, st.balls[i - 1].s);
       const p = pointAt(lvl.track, b.s);
       const col = PALETTE[b.c];
-      g.strokeStyle = col.light;
-      g.globalAlpha = 0.5 + 0.5 * Math.sin(v.time * 40);
-      g.lineWidth = 3;
-      g.shadowColor = col.base;
-      g.shadowBlur = 12 * L.scale * L.dpr;
+      const flick = 0.5 + 0.5 * Math.sin(v.time * 40);
       g.beginPath();
       g.moveTo(a.x, a.y);
       const mx = (a.x + p.x) / 2 + Math.sin(v.time * 30) * 6;
       const my = (a.y + p.y) / 2 + Math.cos(v.time * 27) * 6;
       g.quadraticCurveTo(mx, my, p.x, p.y);
+      // Glow = wide translucent stroke under a thin bright one (shadowBlur is slow on phones).
+      g.strokeStyle = col.base;
+      g.globalAlpha = 0.25 * flick;
+      g.lineWidth = 10;
       g.stroke();
-      g.shadowBlur = 0;
+      g.strokeStyle = col.light;
+      g.globalAlpha = 0.5 + 0.5 * flick;
+      g.lineWidth = 3;
+      g.stroke();
       g.globalAlpha = 1;
     }
     for (const b of st.balls) {
@@ -426,14 +449,14 @@ export class Renderer {
       const blink = b.pt < 3 ? (Math.sin(v.time * 18) > 0 ? 1 : 0.25) : 1;
       g.globalAlpha = blink;
       const pr = BALL_R * (1.25 + 0.12 * Math.sin(v.time * 6));
-      g.strokeStyle = '#fff';
-      g.lineWidth = 2.5;
-      g.shadowColor = '#fff';
-      g.shadowBlur = 14 * this.L.scale * this.L.dpr;
       g.beginPath();
       g.arc(pos.x, pos.y, pr, 0, Math.PI * 2);
+      g.strokeStyle = 'rgba(255,255,255,0.25)';
+      g.lineWidth = 8;
       g.stroke();
-      g.shadowBlur = 0;
+      g.strokeStyle = '#fff';
+      g.lineWidth = 2.5;
+      g.stroke();
       this.drawPowerIcon(b.p, pos.x, pos.y, BALL_R * 0.62, rot);
       g.globalAlpha = 1;
     }
@@ -584,16 +607,17 @@ export class Renderer {
     const col = PALETTE[st.gun.cur];
     const laser = st.aimT > 0;
     if (laser) {
-      g.strokeStyle = col.light;
-      g.shadowColor = col.base;
-      g.shadowBlur = 16 * this.L.scale * this.L.dpr;
-      g.lineWidth = 4;
-      g.globalAlpha = 0.85;
       g.beginPath();
       g.moveTo(ox, oy);
       g.lineTo(ox + dx * dist, oy + dy * dist);
+      g.strokeStyle = col.base;
+      g.globalAlpha = 0.3;
+      g.lineWidth = 14;
       g.stroke();
-      g.shadowBlur = 0;
+      g.strokeStyle = col.light;
+      g.globalAlpha = 0.85;
+      g.lineWidth = 4;
+      g.stroke();
       g.lineWidth = 1.5;
       g.strokeStyle = '#fff';
       g.stroke();
@@ -658,9 +682,8 @@ export class Renderer {
     g.save();
     g.translate(cx, cy);
     g.rotate(a);
-    // Glow in current colour
-    g.shadowColor = cur.base;
-    g.shadowBlur = 22 * this.L.scale * this.L.dpr;
+    // Glow in current colour (cached sprite; shadowBlur is slow on phones)
+    g.drawImage(this.glowSprite(cur.base), -76, -76, 152, 152);
     // Body: rounded frog-ish head
     const body = g.createRadialGradient(-8, -10, 4, 0, 0, 46);
     body.addColorStop(0, '#5ce0b0');
@@ -670,7 +693,6 @@ export class Renderer {
     g.beginPath();
     g.ellipse(-4, 0, 42, 38, 0, 0, Math.PI * 2);
     g.fill();
-    g.shadowBlur = 0;
     // Snout / barrel
     g.fillStyle = '#1a7a5c';
     g.beginPath();
@@ -729,8 +751,9 @@ export class Renderer {
     g.scale(s, s);
     // Glow
     if (v.danger > 0) {
-      g.shadowColor = 'rgba(255,40,40,0.9)';
-      g.shadowBlur = 30 * v.danger;
+      g.globalAlpha = Math.min(1, v.danger * 1.4);
+      g.drawImage(this.glowSprite('#ff2840'), -44, -46, 88, 88);
+      g.globalAlpha = 1;
     }
     g.fillStyle = '#efe3c6';
     g.beginPath();
@@ -739,7 +762,6 @@ export class Renderer {
     g.lineTo(-9, 9);
     g.closePath();
     g.fill();
-    g.shadowBlur = 0;
     // Jaw
     g.beginPath();
     g.roundRect(-9, 9 + jaw, 18, 8, 3);
@@ -784,14 +806,8 @@ export class Renderer {
           break;
         }
         case PK.Glow: {
-          g.globalAlpha = a * 0.5;
-          const gr = g.createRadialGradient(p.x, p.y, 0, p.x, p.y, p.size);
-          gr.addColorStop(0, p.color);
-          gr.addColorStop(1, 'rgba(255,255,255,0)');
-          g.fillStyle = gr;
-          g.beginPath();
-          g.arc(p.x, p.y, p.size, 0, Math.PI * 2);
-          g.fill();
+          g.globalAlpha = a * 0.6;
+          g.drawImage(this.glowSprite(p.color), p.x - p.size, p.y - p.size, p.size * 2, p.size * 2);
           break;
         }
         case PK.Shard:

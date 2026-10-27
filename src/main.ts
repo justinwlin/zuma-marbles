@@ -520,6 +520,10 @@ let last = performance.now();
 let fpsFrames = 0;
 let fpsT = 0;
 let fps = 0;
+let drawMs = 0;
+let simMs = 0;
+let viewMs = 0;
+let hudMs = 0;
 
 function frame(now: number) {
   requestAnimationFrame(frame);
@@ -535,6 +539,7 @@ function frame(now: number) {
   if (document.hidden) return;
   view.time += dt;
 
+  const s0 = performance.now();
   const simulate = attract || mode === 'playing';
   if (simulate) {
     let simDt = dt;
@@ -583,10 +588,17 @@ function frame(now: number) {
     }
   }
 
+  simMs = simMs * 0.95 + (performance.now() - s0) * 0.05;
+  const v0 = performance.now();
   updateView(dt);
+  viewMs = viewMs * 0.95 + (performance.now() - v0) * 0.05;
   fx.update(dt * (slowmo ? slowmo.scale * 1.5 : 1));
+  const d0 = performance.now();
   renderer.draw(st, view, fx);
+  drawMs = drawMs * 0.95 + (performance.now() - d0) * 0.05;
+  const h0 = performance.now();
   if (!attract && (mode === 'playing' || mode === 'paused')) ui.updateHud(st, level);
+  hudMs = hudMs * 0.95 + (performance.now() - h0) * 0.05;
 
   // Autosave every few seconds
   if (!attract && mode === 'playing') {
@@ -718,6 +730,12 @@ window.__zuma = {
   layout: () => layout,
   view: () => ({ aimAngle: view.aimAngle, aimActive: view.aimActive, aimHit: view.aimHit, willPop: view.aimWillPop, trauma: view.trauma, danger: view.danger }),
   fps: () => fps,
+  drawMs: () => drawMs,
+  timings: () => ({ sim: simMs, view: viewMs, draw: drawMs, hud: hudMs }),
+  /** Stress: spray particles everywhere (perf testing). */
+  stress: (n = 300) => {
+    for (let i = 0; i < n / 30; i++) fx.burst(200 + fx.rand() * 880, 100 + fx.rand() * 520, PALETTE[i % 6].base, PALETTE[i % 6].light, 30, 1);
+  },
   events: () => eventLog.slice(),
   feel: () => feelLog.slice(),
   recording: () => recording.slice(),
