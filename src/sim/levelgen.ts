@@ -10,7 +10,7 @@ import { hash32, Rng } from './rng';
 import { buildTrack, chaikin, type Pt, type Track, TRACK_STEP } from './track';
 
 /** Bump when generated levels change; saves made with an older generator drop their mid-level snapshot. */
-export const GEN_VERSION = 7;
+export const GEN_VERSION = 8;
 
 export const WORLD_W = 1280;
 export const WORLD_H = 720;
@@ -335,7 +335,7 @@ export function generateLevel(campaignSeed: string, index: number): Level {
   const tracks = cand.paths.map((p) => buildTrack(p, { w: GW, h: GH }));
   if (cand.crossings) addCrossings(tracks[0], cand.crossings, rng, cand.under ?? 'random');
   // Own rng stream, so adding tunnels leaves every other part of the level unchanged.
-  if (!cand.rail && index >= 2) addTunnels(tracks, new Rng(seed ^ 0x7a11e1), index);
+  if (!cand.rail && index >= 2) addTunnels(tracks, new Rng(seed ^ 0x7a11e1));
   const off = !cand.rail && Math.hypot(cand.launcher.x - GW / 2, cand.launcher.y - GH / 2) > 90 * ks;
   const target = Math.round(diff.target);
   // Boss health ≈ marbles to pop, a bit under a normal bar (direct hits and combos add up).
@@ -884,9 +884,9 @@ export function validateLevel(paths: Pt[][], launcher: Pt, twin: boolean, world?
  * of the track. Kept clear of the entry, the last quarter (the danger zone stays visible),
  * bridges, and each other.
  */
-function addTunnels(tracks: Track[], rng: Rng, index: number) {
+function addTunnels(tracks: Track[], rng: Rng) {
   for (const tr of tracks) {
-    if (!rng.chance(index < 6 ? 0.35 : 0.5)) continue;
+    if (!rng.chance(0.1)) continue;
     const taken = [...(tr.hidden ?? []), ...(tr.bridges ?? [])];
     const lo = tr.visibleFrom + (tr.length - tr.visibleFrom) * 0.15;
     const hi = tr.length * 0.72;
