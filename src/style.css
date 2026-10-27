@@ -305,6 +305,28 @@ details.share .code-form { margin: 8px 0 10px; }
 .tip { margin: 4px 0 16px; padding: 10px 14px; border-radius: 14px; background: rgba(255,207,74,.1); border: 1px solid rgba(255,207,74,.3); font-size: 14px; line-height: 1.4; text-align: center; }
 .tip b { color: #ffcf4a; }
 
+/* Boss fights on touch screens: a big Fire button (drag on the board only moves the frog). */
+.fire-btn {
+  display: none; pointer-events: auto; position: relative; width: 72px; height: 72px; border-radius: 50%;
+  flex-direction: column; align-items: center; justify-content: center; gap: 1px;
+  background: radial-gradient(circle at 50% 35%, #ff8a5c, #e8344e 60%, #8a1028);
+  border: 3px solid rgba(255,255,255,.85); box-shadow: 0 6px 22px rgba(255,60,90,.45), inset 0 -4px 8px rgba(0,0,0,.35);
+  transition: transform .08s; touch-action: none; user-select: none; -webkit-user-select: none;
+}
+.fire-btn:active, .fire-btn.down { transform: scale(0.9); filter: brightness(1.15); }
+.fire-btn .dot { width: 30px; height: 30px; border: 2px solid rgba(255,255,255,.8); }
+.fire-lbl { font-size: 11px; font-weight: 900; letter-spacing: 1.5px; color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,.6); }
+body.rail-touch .fire-btn { display: flex; }
+body.rail-touch .cancel-zone { display: none; }
+@media (orientation: landscape) {
+  body.rail-touch .fire-btn { position: fixed; left: calc(var(--sal) + 18px); bottom: calc(var(--sab) + 16px); width: 84px; height: 84px; }
+}
+@media (orientation: portrait) and (min-aspect-ratio: 20/39) {
+  .fire-btn { width: 50px; height: 50px; }
+  .fire-btn .dot { width: 22px; height: 22px; }
+  .fire-lbl { font-size: 9px; }
+}
+
 /* Left-handed: swap button on the left, cancel target on the right (portrait). */
 @media (orientation: portrait) {
   body.lefty .hud-bottom { flex-direction: row-reverse; }

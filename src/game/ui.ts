@@ -428,7 +428,7 @@ export class UI {
           <b>Chain bonus:</b> 5+ popping shots in a row.<br>
           <b>Bonus coins:</b> shoot a floating coin before it vanishes for +${TUNING.coinValue}.<br>
           <b>Level end:</b> a light runs down the empty track — points for every bit the chain never reached, plus <b>+${TUNING.aceBonus}</b> for beating the ace time.<br>
-          <b>Boss fights</b> (every 10th level): your character slides along a rail and shoots straight across. Every marble you pop hurts the boss; a shot through a gap that hits it does ${TUNING.bossDirectHit}. Watch the hands: the target follows you while one winds up, then locks — step out before the rock lands.<br>
+          <b>Boss fights</b> (every 10th level): your character slides along a rail and shoots straight across${coarse ? ' — <b>drag anywhere</b> to slide, press the <b>FIRE</b> button to shoot (hold it to keep firing), tap your character to swap' : ''}. Every marble you pop hurts the boss; a shot through a gap that hits it does ${TUNING.bossDirectHit}. Watch the hands: the target follows you while one winds up, then locks — step out before the rock lands.<br>
           <b>Mini-bosses</b> (levels 5, 15, 25…): a serpent lives in the skull pit and spits marbles onto the front of the chain. Popped marbles hurt it; slay it to clear the level.<br>
           ${coarse ? '<b>Cancel a shot:</b> slide onto <b>✕</b> (or back onto your character), or touch with a second finger.' : '<b>Swap:</b> right-click or Space.'}
         </div>
@@ -496,6 +496,7 @@ export class UI {
         $(a).setAttribute('style', marbleCss(cur));
         $(b).setAttribute('style', marbleCss(nxt));
       }
+      $('fire-cur').setAttribute('style', marbleCss(cur));
     }
     const pw: [Power, number, number][] = [];
     if (st.slowT > 0) pw.push([2, st.slowT, 8]);

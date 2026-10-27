@@ -120,7 +120,7 @@ On each profile it checks:
 - **A scripted match:** it pops with feedback.
 - **Menus and settings:** the power-ups sheet, settings and accessibility options, pause → continue.
 - **Campaigns and progression:** large-marble campaigns, unlock/skip, endless runs, two-chain levels.
-- **Boss fights:** the HUD shows boss health, and the frog slides to the aimed spot on the rail and fires.
+- **Boss fights:** the HUD shows boss health. On touch, a drag or tap only moves the frog (no shot, no cancel pill) and the Fire button shoots; with a mouse, the frog follows and a click fires.
 - **Health:** frame rate and console errors.
 
 ```bash

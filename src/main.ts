@@ -228,7 +228,7 @@ function levelBanner(): string[] {
   else view.banner = { text: label, sub: `${level.name} · ${ace}`, t: 0, color: '#ffe08a' };
   const notes: string[] = [];
   if (level.bossFight?.kind === 'serpent') notes.push('Mini-boss! A serpent guards the skull — pop marbles to hurt it before it spits more onto the chain');
-  if (level.rail) notes.push(matchMedia('(pointer: coarse)').matches ? 'Boss fight! Slide along your rail · pop marbles to hurt the boss · dodge its rocks' : 'Boss fight! Move along your rail · pop marbles to hurt the boss · dodge its rocks');
+  if (level.rail) notes.push(coarsePointer.matches ? 'Boss fight! Drag anywhere to slide · press FIRE to shoot (hold to keep firing) · dodge the rocks' : 'Boss fight! Move along your rail · click to shoot · pop marbles to hurt the boss · dodge its rocks');
   if (level.tracks.length > 1) notes.push('Two chains — watch both skulls!');
   for (const m of level.mutators) notes.push(`${MUTATOR_INFO[m].name}: ${MUTATOR_INFO[m].desc}`);
   return notes;
@@ -238,8 +238,15 @@ function mmss(sec: number) {
   return `${Math.floor(sec / 60)}:${String(Math.floor(sec % 60)).padStart(2, '0')}`;
 }
 
+/** Boss fights on touch screens use their own controls: drag moves the frog, the Fire button shoots. */
+const coarsePointer = matchMedia('(pointer: coarse)');
+function railTouch() {
+  return !!level?.rail && !attract && coarsePointer.matches;
+}
+
 function beginPlay() {
   mode = 'playing';
+  document.body.classList.toggle('rail-touch', railTouch());
   ui.hide();
   ui.showHud(true);
   const notes = levelBanner();
@@ -268,6 +275,7 @@ function startAttract() {
 
 function toTitle() {
   mode = 'title';
+  document.body.classList.remove('rail-touch');
   ui.showHud(false);
   ui.title(save);
   startAttract();
@@ -686,6 +694,17 @@ stage.addEventListener('pointerdown', (e) => {
     }
     return;
   }
+  // Boss fights: touching the board only moves the frog (the Fire button shoots); tap the frog to swap.
+  if (level.rail) {
+    if (touchStart && touchStart.id !== e.pointerId) return;
+    document.body.classList.add('rail-touch'); // touch laptops: show the Fire button once touch is used
+    stage.setPointerCapture(e.pointerId);
+    const frog = onLauncher(w);
+    touchStart = { id: e.pointerId, sx: e.clientX, sy: e.clientY, onFrog: frog, moved: false, cancelled: false };
+    if (!frog) setRawAim(w);
+    view.aimActive = true;
+    return;
+  }
   // A second finger while aiming cancels the shot.
   if (touchStart && touchStart.id !== e.pointerId) {
     if (hold?.id === touchStart.id) hold = null;
@@ -739,6 +758,11 @@ stage.addEventListener('pointermove', (e) => {
   }
   if (!touchStart || touchStart.id !== e.pointerId || touchStart.cancelled) return;
   if (Math.hypot(e.clientX - touchStart.sx, e.clientY - touchStart.sy) > 10) touchStart.moved = true;
+  if (level.rail) {
+    if (!touchStart.onFrog || touchStart.moved) setRawAim(w);
+    view.aimActive = true;
+    return;
+  }
   // Dragging before the hold kicks in means aiming, not rapid fire.
   if (touchStart.moved && hold && !hold.active && save.settings.touchAim !== 'tap') hold = null;
   if (save.settings.touchAim === 'pad') {
@@ -786,6 +810,12 @@ function endTouch(e: PointerEvent, interrupted: boolean) {
   const w = screenToWorld(layout, e.clientX, e.clientY);
   const t = touchStart;
   touchStart = null;
+  if (level.rail) {
+    // Lifting never shoots in a boss fight; a tap on the frog swaps.
+    if (t.onFrog && !t.moved && !interrupted && mode === 'playing') queueSwap();
+    view.aimActive = true;
+    return;
+  }
   // A hold that already fired ends the stream; lifting doesn't add a shot.
   const held = hold?.id === e.pointerId && hold.shots > 0 && (hold.active || save.settings.touchAim === 'tap');
   if (hold?.id === e.pointerId) hold = null;
@@ -849,6 +879,26 @@ document.getElementById('hud-next')!.addEventListener('pointerdown', (e) => {
   audio.unlock();
   queueSwap();
 });
+// Boss fights (touch): the Fire button shoots from the frog's spot; holding it keeps firing.
+const fireBtn = document.getElementById('btn-fire')!;
+fireBtn.addEventListener('pointerdown', (e) => {
+  e.preventDefault();
+  audio.unlock();
+  if (mode !== 'playing' || !level.rail || st.phase !== 'playing') return;
+  fireBtn.setPointerCapture(e.pointerId);
+  fireBtn.classList.add('down');
+  fireAim();
+  const now = performance.now();
+  hold = { id: e.pointerId, since: now - HOLD_MS, active: true, lastShot: now, shots: 1 };
+});
+const fireUp = (e: PointerEvent) => {
+  fireBtn.classList.remove('down');
+  if (hold?.id === e.pointerId) hold = null;
+};
+fireBtn.addEventListener('pointerup', fireUp);
+fireBtn.addEventListener('pointercancel', fireUp);
+fireBtn.addEventListener('lostpointercapture', fireUp);
+fireBtn.addEventListener('click', (e) => e.stopPropagation());
 document.getElementById('btn-swap')!.addEventListener('pointerdown', (e) => {
   e.preventDefault();
   audio.unlock();

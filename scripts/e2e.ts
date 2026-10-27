@@ -539,9 +539,43 @@ async function runProfile(name: string, opts: BrowserContextOptions) {
     return { u, scr: z.worldToScreen(wx, wy), shots: s.stats.shots };
   });
   if (opts.hasTouch) {
+    // Touch: dragging only moves the frog — no shot, no cancel pill — and the Fire button shoots.
     const end = await touchDrag(page, [{ x: rail.scr.x + 20, y: rail.scr.y + 20 }, { x: rail.scr.x + 10, y: rail.scr.y + 10 }, rail.scr]);
     await page.waitForTimeout(250);
+    const pill = await page.locator('#cancel-zone.show').count();
     await end();
+    await page.waitForTimeout(400);
+    const moved = await page.evaluate(() => {
+      const s = (window as any).__zuma.state();
+      return { u: s.rail.u, shots: s.stats.shots };
+    });
+    check('boss fight (touch): dragging moves the frog without shooting', Math.abs(moved.u - rail.u) < 4 && moved.shots === rail.shots, `u ${moved.u.toFixed(1)} vs ${rail.u.toFixed(1)}, ${moved.shots - rail.shots} shots`);
+    check('boss fight (touch): no cancel pill while moving', pill === 0);
+    // A plain tap elsewhere also just moves.
+    const tapPt = await page.evaluate(() => {
+      const z = (window as any).__zuma;
+      const l = z.level();
+      const u = l.rail.len * 0.75;
+      return { u, scr: z.worldToScreen(l.rail.a.x + l.rail.dir.x * u + l.rail.n.x * 400, l.rail.a.y + l.rail.dir.y * u + l.rail.n.y * 400) };
+    });
+    const endTap = await touchDrag(page, [tapPt.scr]);
+    await endTap();
+    await page.waitForTimeout(500);
+    const tapped = await page.evaluate(() => {
+      const s = (window as any).__zuma.state();
+      return { u: s.rail.u, shots: s.stats.shots };
+    });
+    check('boss fight (touch): a tap moves the frog without shooting', Math.abs(tapped.u - tapPt.u) < 4 && tapped.shots === rail.shots, `u ${tapped.u.toFixed(1)} vs ${tapPt.u.toFixed(1)}, ${tapped.shots - rail.shots} shots`);
+    const fire = await page.locator('#btn-fire').boundingBox();
+    check('boss fight (touch): a big Fire button is on screen', !!fire && fire.width >= 48 && fire.x >= 0 && fire.y + fire.height <= vp.height, fire ? `${fire.width.toFixed(0)}px at ${fire.x.toFixed(0)},${fire.y.toFixed(0)}` : 'hidden');
+    await page.evaluate(() => ((window as any).__zuma.state().gun.cool = 0));
+    if (fire) {
+      const endFire = await touchDrag(page, [{ x: fire.x + fire.width / 2, y: fire.y + fire.height / 2 }]);
+      await endFire();
+    }
+    await page.waitForTimeout(500);
+    rail.u = tapPt.u;
+    await page.screenshot({ path: `${OUT}/${name}-15b-boss-fire.png` });
   } else {
     await page.mouse.move(rail.scr.x, rail.scr.y);
     await page.waitForTimeout(250);
