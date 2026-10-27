@@ -798,9 +798,19 @@ export class Renderer {
     const md = MOUTH_X - rec + load * 2;
     const scale = 0.55 + 0.45 * easeOutBack(load);
     this.drawMarble(st.gun.cur, cx + Math.cos(a) * md, cy + Math.sin(a) * md, a, v.time * 2, scale, rot);
-    // Next ball on the back
-    const nd = -30;
-    this.drawMarble(st.gun.next, cx + Math.cos(a) * nd, cy + Math.sin(a) * nd, a, 0, 0.52, rot);
+    // Next ball on the back: big enough to read at a glance, with a ring so it reads as "next".
+    const nd = -36;
+    const nx = cx + Math.cos(a) * nd;
+    const ny = cy + Math.sin(a) * nd;
+    const g2 = this.ctx;
+    g2.beginPath();
+    g2.arc(nx, ny, BALL_R * 0.86, 0, Math.PI * 2);
+    g2.fillStyle = 'rgba(5,10,18,0.55)';
+    g2.fill();
+    g2.strokeStyle = 'rgba(255,255,255,0.7)';
+    g2.lineWidth = 2;
+    g2.stroke();
+    this.drawMarble(st.gun.next, nx, ny, a, 0, 0.72, rot);
   }
 
   private drawSkull(v: ViewState) {

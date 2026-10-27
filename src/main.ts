@@ -743,6 +743,11 @@ stage.addEventListener('pointerleave', (e) => {
   if (e.pointerType === 'mouse') view.aimActive = false;
 });
 
+document.getElementById('hud-next')!.addEventListener('pointerdown', (e) => {
+  e.preventDefault();
+  audio.unlock();
+  queueSwap();
+});
 document.getElementById('btn-swap')!.addEventListener('pointerdown', (e) => {
   e.preventDefault();
   audio.unlock();

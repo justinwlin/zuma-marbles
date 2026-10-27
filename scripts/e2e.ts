@@ -119,6 +119,21 @@ async function runProfile(name: string, opts: BrowserContextOptions) {
     check('swap button is thumb-sized', !!sw && sw.height >= (tall ? 44 : 38), sw ? `${sw.height.toFixed(0)}px` : '');
   }
 
+  if (!opts.hasTouch && !L.portrait) {
+    // Desktop: the current/next chip in the top bar is visible, readable, and swaps on click.
+    const chip = await page.locator('#hud-next').boundingBox();
+    check('desktop shows the next-marble chip', !!chip && chip.height >= 36, chip ? `${chip.width.toFixed(0)}×${chip.height.toFixed(0)}` : 'hidden');
+    const g0 = await page.evaluate(() => {
+      const s = (window as unknown as { __zuma: Z }).__zuma.state() as unknown as { gun: { cur: number; next: number } };
+      if (s.gun.cur === s.gun.next) s.gun.next = (s.gun.cur + 1) % 4;
+      return { ...s.gun };
+    });
+    await page.locator('#hud-next').click();
+    await page.waitForTimeout(150);
+    const g1 = await page.evaluate(() => ({ ...((window as unknown as { __zuma: Z }).__zuma.state() as unknown as { gun: { cur: number; next: number } }).gun }));
+    check('clicking the chip swaps marbles', g1.cur === g0.next && g1.next === g0.cur, `${JSON.stringify(g0)} → ${JSON.stringify(g1)}`);
+  }
+
   // ---- Scripted match: freeze a known chain, aim with real input, fire.
   await page.evaluate(() => (window as unknown as { __zuma: Z }).__zuma.setup([0, 1, 1, 2, 3, 3, 1, 4], { power: [1, 1] }));
   await page.evaluate(() => {

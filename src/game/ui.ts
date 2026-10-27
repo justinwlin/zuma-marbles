@@ -454,6 +454,7 @@ export class UI {
 
   private lastScore = -1;
   private lastPowers = '';
+  private lastGun = [-1, -1];
   updateHud(st: GameState, level: Level, run: EndlessRun | null = null) {
     $('hud-level').textContent = `${run ? 'Stage' : 'Level'} ${level.index + 1}`;
     $('hud-name').textContent = level.boss === 'boss' ? `BOSS · ${level.name}` : level.boss === 'mini' ? `MINI-BOSS · ${level.name}` : level.name;
@@ -474,8 +475,13 @@ export class UI {
       this.lastScore = score;
     }
     $('hud-streak').textContent = st.streak >= 3 ? `chain ×${st.streak}` : '';
-    $('swap-cur').setAttribute('style', marbleCss(st.gun.cur));
-    $('swap-next').setAttribute('style', marbleCss(st.gun.next));
+    if (st.gun.cur !== this.lastGun[0] || st.gun.next !== this.lastGun[1]) {
+      this.lastGun = [st.gun.cur, st.gun.next];
+      for (const [a, b] of [['swap-cur', 'swap-next'], ['next-cur', 'next-next']]) {
+        $(a).setAttribute('style', marbleCss(st.gun.cur));
+        $(b).setAttribute('style', marbleCss(st.gun.next));
+      }
+    }
     const pw: [Power, number, number][] = [];
     if (st.slowT > 0) pw.push([2, st.slowT, 8]);
     if (st.revT > 0) pw.push([3, st.revT, 3]);
@@ -492,6 +498,7 @@ export class UI {
   }
 
   resetHud() {
+    this.lastGun = [-1, -1];
     this.lastScore = -1;
     this.lastPowers = '';
   }

@@ -79,8 +79,8 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
   box-shadow: 0 6px 20px rgba(0,0,0,.4); transition: transform .12s;
 }
 .swap-btn:active { transform: scale(0.92); }
-.dot { width: 20px; height: 20px; border-radius: 50%; display: inline-block; box-shadow: inset -3px -4px 6px rgba(0,0,0,.35), inset 3px 3px 5px rgba(255,255,255,.35); }
-.dot.big { width: 30px; height: 30px; }
+.dot { width: 26px; height: 26px; border-radius: 50%; display: inline-block; box-shadow: inset -3px -4px 6px rgba(0,0,0,.35), inset 3px 3px 5px rgba(255,255,255,.35); }
+.dot.big { width: 38px; height: 38px; }
 @media (orientation: landscape) and (pointer: fine) {
   .swap-btn { display: none; }
   .hud-bottom { top: calc(var(--sat) + 58px); bottom: auto; justify-content: flex-start; padding-top: 0; }
@@ -311,9 +311,23 @@ details.share .code-form { margin: 8px 0 10px; }
 /* Short portrait phones (< 19.5:9): slim bottom bar with a compact swap button. */
 @media (orientation: portrait) and (min-aspect-ratio: 20/39) {
   .hud-bottom { padding-bottom: calc(var(--sab) + 8px); padding-top: 4px; }
-  .swap-btn { padding: 6px 12px 6px 8px; gap: 6px; }
-  .dot.big { width: 26px; height: 26px; }
-  .dot { width: 17px; height: 17px; }
+  .swap-btn { padding: 5px 12px 5px 6px; gap: 6px; }
+  .swap-btn .dot.big { width: 30px; height: 30px; }
+  .swap-btn .dot { width: 21px; height: 21px; }
   .power { width: 38px; height: 38px; }
   .cancel-zone { bottom: calc(var(--sab) + 8px); padding: 10px 16px; }
+}
+
+/* Desktop: current + next marble chip in the top bar (click or Space / right-click swaps). */
+.next-chip { display: none; }
+@media (orientation: landscape) and (pointer: fine) {
+  .next-chip {
+    pointer-events: auto; display: flex; align-items: center; gap: 8px; padding: 4px 12px 4px 5px; border-radius: 99px;
+    background: var(--glass-2); border: 1px solid var(--line); box-shadow: 0 4px 14px rgba(0,0,0,.35); transition: transform .12s;
+  }
+  .next-chip:active { transform: scale(.93); }
+  .next-chip .dot.big { width: 34px; height: 34px; }
+  .next-chip .dot { width: 24px; height: 24px; }
+  .next-chip .keys { font-size: 13px; color: var(--muted); font-weight: 700; white-space: nowrap; }
+  .next-chip kbd { font: inherit; font-size: 11px; padding: 1px 6px; border-radius: 6px; border: 1px solid var(--line); background: rgba(0,0,0,.3); }
 }
