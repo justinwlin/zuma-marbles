@@ -23,7 +23,7 @@ if (!isMainThread) {
     const meta = newMeta();
     if (job.unlockAll) meta.unlocked = ITEM_IDS.slice();
     const r = runExpedition({ seed, bot: BOT_PRESETS[job.bot], policy: job.policy, meta, maxStages: job.maxStages });
-    out.push({ ...r, log: [] });
+    out.push({ ...r, log: r.log.filter((l) => l.stage === 10 || l.stage === 20) });
   }
   parentPort!.postMessage(out);
 } else {
@@ -70,7 +70,18 @@ if (!isMainThread) {
       console.log('items            ' + ids.map((id) => `${ITEMS[id].icon}${ITEMS[id].name} ${bought[id] ?? 0}b/${picked[id] ?? 0}p`).join('  '));
       const un = count(res.flatMap((r) => r.unlocks));
       if (Object.keys(un).length) console.log('unlocked in run  ' + Object.entries(un).map(([id, n]) => `${ITEMS[id as ItemId].name} ${n}`).join('  '));
-      console.log(`coins left at end avg ${avg(res.map((r) => r.eco.coins)).toFixed(0)}`);
+      for (let k = 0; k < 3; k++) {
+        const xs = res.filter((r) => r.afterShop.length > k).map((r) => r.afterShop[k]);
+        if (xs.length) console.log(`left after shop ${k + 1} avg ${avg(xs).toFixed(0)}  p90 ${pct(xs, 0.9)}  (n=${xs.length})`);
+      }
+      // Item impact: among runs that reached stage 10 (after the first shop), stages cleared with vs without it.
+      const at10 = res.filter((r) => r.log.some((l) => l.stage === 10));
+      const lift = ITEM_IDS.map((id) => {
+        const w = at10.filter((r) => r.log.find((l) => l.stage === 10)!.items.includes(id)).map((r) => r.cleared);
+        const wo = at10.filter((r) => !r.log.find((l) => l.stage === 10)!.items.includes(id)).map((r) => r.cleared);
+        return { id, n: w.length, d: w.length >= 4 && wo.length >= 4 ? avg(w) - avg(wo) : NaN };
+      }).filter((x) => !Number.isNaN(x.d)).sort((a, b) => b.d - a.d);
+      console.log('impact at 10     ' + lift.map((x) => `${ITEMS[x.id].icon}${ITEMS[x.id].name} ${x.d >= 0 ? '+' : ''}${x.d.toFixed(1)} (n${x.n})`).join('  '));
     }
     console.log('');
   }

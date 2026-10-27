@@ -16,6 +16,8 @@ export const SHOP_OFFERS = 3;
 export const REROLL_COST = 50;
 export const REROLL_STEP = 25;
 export const RESERVE_COST = 50;
+/** Shop prices rise 20% per world, tracking income (which grows as stages get longer). */
+export const INFLATION = 0.2;
 
 export interface Owned {
   id: ItemId;
@@ -46,6 +48,11 @@ export function newEco(): RunEco {
 }
 
 export const worldOf = (stage: number) => Math.floor(stage / 10);
+
+/** Price in the shop after winning `stage` (rounded to 25). */
+export function priceAt(id: ItemId, stage: number): number {
+  return Math.round((ITEMS[id].price * (1 + INFLATION * worldOf(stage + 1))) / 25) * 25;
+}
 /** The boss stage that ends a world containing stage `s`. */
 export const bossStageFor = (s: number) => s - (s % 10) + 9;
 
@@ -111,15 +118,21 @@ export function shopOffers(eco: RunEco, seed: string, stage: number, unlocked: r
 export type Fail = 'coins' | 'slots' | 'owned';
 
 /**
- * Gain an item after winning `stage` (bought, or free when `free`). A full charm row needs
- * `replace` (index of the charm to give up; it sells for half of what was paid).
+ * Gain an item after winning `stage` (bought, or free when `free`). A full row needs `replace`:
+ * the index of the charm (sells for half of what was paid) or live boost (no refund) to give up.
  */
 export function gain(eco: RunEco, id: ItemId, seed: string, stage: number, opts: { free?: boolean; replace?: number } = {}): Fail | null {
   const def = ITEMS[id];
-  const price = opts.free ? 0 : def.price;
+  const price = opts.free ? 0 : priceAt(id, stage);
   if (owns(eco, id, stage)) return 'owned';
   if (def.kind === 'boost') {
-    if (eco.boosts.filter((b) => b.until > stage).length >= BOOST_SLOTS) return 'slots';
+    const live = eco.boosts.filter((b) => b.until > stage);
+    if (live.length >= BOOST_SLOTS) {
+      // Full: only a swap (replace = index among the live boosts) makes room. Boosts don't refund.
+      if (opts.replace === undefined || !live[opts.replace]) return 'slots';
+      if (eco.coins < price) return 'coins';
+      eco.boosts.splice(eco.boosts.indexOf(live[opts.replace]), 1);
+    }
     if (eco.coins < price) return 'coins';
     eco.coins -= price;
     eco.boosts.push({ id, paid: price, until: bossStageFor(stage + 1) });

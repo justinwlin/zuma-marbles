@@ -8,6 +8,23 @@ import { PALETTE, powerIconUrl } from './render';
 import { CHARACTERS, characterThumb, type CharacterId } from './characters';
 import { TICK_HZ, TUNING } from '../sim/game';
 import { dailySeed, type EndlessRun, levelCode, type SaveData, type Settings } from './save';
+import { ITEMS, type ItemId, STARTER_ITEMS } from '../sim/items';
+import { activeItems, BOOST_SLOTS, bossStageFor, CHARM_SLOTS, type Fail, priceAt, RESERVE_COST, rerollCost, type RunEco } from '../sim/economy';
+import { type MetaProgress, UNLOCKS } from '../sim/achievements';
+
+/** What the shop screen needs from the game: current state and the player's actions. */
+export interface ShopApi {
+  eco: RunEco;
+  stage: number;
+  offers(): { charms: ItemId[]; boosts: ItemId[]; reserved: ItemId | null };
+  buy(id: ItemId, replace?: number): Fail | null;
+  sell(index: number): void;
+  reroll(): Fail | null;
+  reserve(id: ItemId): Fail | null;
+  done(): void;
+}
+
+const PALETTE_NAMES = ['Red', 'Yellow', 'Green', 'Blue', 'Purple', 'White'];
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -18,6 +35,7 @@ export interface UiActions {
   restart(): void;
   endless(daily: boolean): void;
   continueEndless(): void;
+  collection(): void;
   quit(): void;
   showLevels(): void;
   next(): void;
@@ -32,7 +50,9 @@ export interface UiActions {
   click(): void;
 }
 
+const BOMB = -2;
 const marbleCss = (c: number) => {
+  if (c === BOMB) return 'background: radial-gradient(circle at 35% 30%, #8a8a96, #1b1b22 50%, #000);';
   if (c === WILD) return 'background: radial-gradient(circle at 35% 30%, rgba(255,255,255,.9), transparent 45%), conic-gradient(#ff3b5c, #ffbe1f, #22df8c, #1cb0ff, #9a3cff, #ff3b5c);';
   const p = PALETTE[c];
   return `background: radial-gradient(circle at 35% 30%, ${p.light}, ${p.base} 48%, ${p.dark});`;
@@ -212,15 +232,17 @@ export class UI {
     this.show(
       'endless',
       `<div class="panel"><h2>Endless</h2>
-        <p class="sub">Stages roll straight into each other — one life, the score carries over. Every stage brings a new track and twist, with a mini-boss every 5 and a boss every 10.</p>
+        <p class="sub">Stages roll straight into each other — one life, the score carries over. Pop marbles to earn 🪙 coins. Beat the serpent (every 5 stages) for a free boost, and the boss (every 10) for a free charm and a shop.</p>
         <div class="btns" style="margin:0 auto">
           ${run ? `<button class="btn gold" data-a="cont">Continue run<small>${run.daily ? 'Daily' : 'Random'} · stage ${run.stage + 1} · ${run.runScore.toLocaleString()} pts</small></button>` : ''}
           <button class="btn primary" data-a="random">Random run<small>${fmt(save.endlessBest)}</small></button>
           <button class="btn" data-a="daily">Daily run<small>Same stages for everyone today · ${fmt(daily)}</small></button>
+          <button class="btn" data-a="collection">Collection<small>${save.meta?.unlocked.length ?? STARTER_ITEMS.length} of ${Object.keys(ITEMS).length} items unlocked</small></button>
           <button class="btn ghost" data-a="back">Back</button>
         </div>
         ${run ? '<p class="sub" style="font-size:12px;margin-top:10px">Starting a new run ends the one in progress.</p>' : ''}</div>`,
       {
+        collection: () => this.a.collection(),
         cont: () => this.a.continueEndless(),
         random: () => this.a.endless(false),
         daily: () => this.a.endless(true),
@@ -453,6 +475,154 @@ export class UI {
     );
   }
 
+  /** An item as a card. `price` 0 = free. */
+  private card(id: ItemId, o: { price?: number; action?: string; disabled?: boolean; extra?: string; luckyColor?: number } = {}) {
+    const d = ITEMS[id];
+    const desc = id === 'luckyColor' && o.luckyColor !== undefined ? `${PALETTE_NAMES[o.luckyColor]} pays triple coins` : d.desc;
+    const price = o.price === undefined ? '' : o.price === 0 ? '<span class="price free">FREE</span>' : `<span class="price">🪙 ${o.price.toLocaleString()}</span>`;
+    return `<div class="item-card ${d.kind} ${o.disabled ? 'off' : ''}">
+      <button class="item-main" ${o.action && !o.disabled ? `data-a="${o.action}" data-id="${id}"` : 'disabled'}>
+        <span class="item-ico">${d.icon}</span><b>${d.name}</b><span class="item-kind">${d.kind === 'charm' ? 'Charm · kept' : 'Boost · this world'}</span><span class="item-desc">${desc}</span>${price}
+      </button>${o.extra ?? ''}</div>`;
+  }
+
+  /** Owned charms and live boosts, as rows. */
+  private owned(eco: RunEco, stage: number, mode: 'view' | 'sell' | 'replace-charm' | 'replace-boost') {
+    const live = eco.boosts.filter((b) => b.until > stage);
+    const slot = (inner: string) => `<span class="slot">${inner}</span>`;
+    const charms = Array.from({ length: CHARM_SLOTS }, (_, i) => {
+      const c = eco.charms[i];
+      if (!c) return slot('<span class="empty">empty</span>');
+      const d = ITEMS[c.id];
+      const act = mode === 'sell' ? `<button class="mini-btn" data-a="sell" data-i="${i}">Sell +${Math.floor(c.paid / 2)}</button>` : mode === 'replace-charm' ? `<button class="mini-btn warn" data-a="replace" data-i="${i}">Replace</button>` : '';
+      return slot(`<span title="${d.desc}">${d.icon} ${d.name}</span>${act}`);
+    }).join('');
+    const boosts = Array.from({ length: BOOST_SLOTS }, (_, i) => {
+      const b = live[i];
+      if (!b) return slot('<span class="empty">empty</span>');
+      const d = ITEMS[b.id];
+      const act = mode === 'replace-boost' ? `<button class="mini-btn warn" data-a="replace" data-i="${i}">Replace</button>` : `<small>until stage ${b.until + 1}</small>`;
+      return slot(`<span title="${d.desc}">${d.icon} ${d.name}</span>${act}`);
+    }).join('');
+    return `<div class="owned"><div><h3>Your charms</h3>${charms}</div><div><h3>Your boosts</h3>${boosts}</div></div>`;
+  }
+
+  /** A free pick: choose one of `ids`, or skip. A full row asks which item to replace. */
+  pick(o: { title: string; sub: string; eco: RunEco; stage: number; ids: ItemId[]; onPick: (id: ItemId | null, replace?: number) => void }) {
+    const render = (choosing: ItemId | null) => {
+      const kind = choosing ? ITEMS[choosing].kind : null;
+      const html = choosing
+        ? `<div class="panel wide"><h2>No room</h2><p class="sub">Your ${kind}s are full. Pick one to replace with <b>${ITEMS[choosing].icon} ${ITEMS[choosing].name}</b>${kind === 'charm' ? ' (a bought charm sells for half)' : ''}.</p>
+            ${this.owned(o.eco, o.stage, kind === 'charm' ? 'replace-charm' : 'replace-boost')}
+            <div class="btns" style="margin:14px auto 0"><button class="btn ghost" data-a="cancel">Back</button></div></div>`
+        : `<div class="panel wide"><h2>${o.title}</h2><p class="sub">${o.sub}</p>
+            <div class="cards">${o.ids.map((id) => this.card(id, { price: 0, action: 'take', luckyColor: o.eco.luckyColor })).join('')}</div>
+            ${this.owned(o.eco, o.stage, 'view')}
+            <div class="btns" style="margin:14px auto 0"><button class="btn ghost" data-a="skip">Skip</button></div></div>`;
+      this.show('pick', html, {
+        take: (el) => {
+          const id = el.dataset.id as ItemId;
+          const full = ITEMS[id].kind === 'charm' ? o.eco.charms.length >= CHARM_SLOTS : o.eco.boosts.filter((b) => b.until > o.stage).length >= BOOST_SLOTS;
+          if (full) render(id);
+          else o.onPick(id);
+        },
+        replace: (el) => o.onPick(choosing, Number(el.dataset.i)),
+        cancel: () => render(null),
+        skip: () => o.onPick(null),
+      });
+    };
+    render(null);
+  }
+
+  /** The shop after a boss. Re-renders after every action. */
+  shop(api: ShopApi) {
+    let replacing: ItemId | null = null;
+    let msg = '';
+    const fail = (f: Fail | null) => (f === 'coins' ? 'Not enough coins.' : f === 'slots' ? 'No free slot.' : f === 'owned' ? 'You already have that.' : '');
+    const render = () => {
+      const eco = api.eco;
+      const offers = api.offers();
+      const next = api.stage + 1;
+      const mini = next + 4;
+      const boss = bossStageFor(next);
+      const liveBoosts = eco.boosts.filter((b) => b.until > api.stage).length;
+      const charmCard = (id: ItemId, reserved = false) => {
+        const price = priceAt(id, api.stage);
+        const extra = reserved || eco.reserved ? (reserved ? '<span class="tag">held for you</span>' : '') : `<button class="mini-btn" data-a="hold" data-id="${id}" ${eco.coins < RESERVE_COST ? 'disabled' : ''}>Hold for next shop · 🪙${RESERVE_COST}</button>`;
+        return this.card(id, { price, action: 'buy', disabled: eco.coins + (eco.charms.length >= CHARM_SLOTS ? Math.max(...eco.charms.map((c) => Math.floor(c.paid / 2))) : 0) < price, extra, luckyColor: eco.luckyColor });
+      };
+      const html = replacing
+        ? `<div class="panel wide"><h2>Replace a charm</h2><p class="sub">Your charms are full. Pick one to give up for <b>${ITEMS[replacing].icon} ${ITEMS[replacing].name}</b>. It sells for half of what you paid.</p>
+            ${this.owned(eco, api.stage, 'replace-charm')}
+            <div class="btns" style="margin:14px auto 0"><button class="btn ghost" data-a="cancel">Back to shop</button></div></div>`
+        : `<div class="panel wide shop">
+            <div class="shop-head"><h2>Shop</h2><span class="coins-big">🪙 ${eco.coins.toLocaleString()}</span></div>
+            <p class="sub">Next: stages ${next + 1}–${boss + 1} · serpent at stage ${mini + 1}, boss at stage ${boss + 1}. Boosts last until that boss is beaten.</p>
+            ${msg ? `<p class="shop-msg">${msg}</p>` : ''}
+            <h3>Charms <small>kept until you replace them</small></h3>
+            <div class="cards">${offers.reserved ? charmCard(offers.reserved, true) : ''}${offers.charms.map((id) => charmCard(id)).join('') || '<p class="sub">Nothing left to offer.</p>'}</div>
+            <h3>Boosts <small>strong, for the next world only</small></h3>
+            <div class="cards">${offers.boosts.map((id) => this.card(id, { price: priceAt(id, api.stage), action: 'buy', disabled: eco.coins < priceAt(id, api.stage) || liveBoosts >= BOOST_SLOTS })).join('') || '<p class="sub">Nothing left to offer.</p>'}</div>
+            ${this.owned(eco, api.stage, 'sell')}
+            <div class="row shop-actions"><button class="btn" data-a="reroll" ${eco.coins < rerollCost(eco) ? 'disabled' : ''}>New offers<small>🪙 ${rerollCost(eco)}</small></button><button class="btn primary" data-a="go">Continue ▶</button></div>
+          </div>`;
+      this.show('shop', html, {
+        buy: (el) => {
+          const id = el.dataset.id as ItemId;
+          if (ITEMS[id].kind === 'charm' && eco.charms.length >= CHARM_SLOTS) {
+            replacing = id;
+            return render();
+          }
+          msg = fail(api.buy(id));
+          render();
+        },
+        replace: (el) => {
+          msg = fail(api.buy(replacing!, Number(el.dataset.i)));
+          replacing = null;
+          render();
+        },
+        cancel: () => {
+          replacing = null;
+          render();
+        },
+        sell: (el) => {
+          api.sell(Number(el.dataset.i));
+          msg = '';
+          render();
+        },
+        hold: (el) => {
+          msg = fail(api.reserve(el.dataset.id as ItemId));
+          render();
+        },
+        reroll: () => {
+          msg = fail(api.reroll());
+          render();
+        },
+        go: () => api.done(),
+      });
+    };
+    render();
+  }
+
+  /** Every item: unlocked ones with their effect, locked ones as silhouettes with their unlock hint. */
+  collection(meta: MetaProgress, back: () => void) {
+    const ids = Object.keys(ITEMS) as ItemId[];
+    const tile = (id: ItemId) => {
+      const d = ITEMS[id];
+      if (meta.unlocked.includes(id)) return `<div class="col-tile ${d.kind}"><span class="item-ico">${d.icon}</span><b>${d.name}</b><span class="item-kind">${d.kind === 'charm' ? 'Charm' : 'Boost'}</span><span class="item-desc">${d.desc}</span></div>`;
+      const hint = UNLOCKS.find((u) => u.id === id)?.hint ?? '';
+      return `<div class="col-tile locked"><span class="item-ico">🔒</span><b>???</b><span class="item-desc">${hint}</span></div>`;
+    };
+    const n = ids.filter((id) => meta.unlocked.includes(id)).length;
+    this.show(
+      'collection',
+      `<div class="panel wide"><h2>Collection</h2><p class="sub">${n} of ${ids.length} unlocked. Locked items join the shop when you earn them.</p>
+        <div class="col-grid">${ids.map(tile).join('')}</div>
+        <div class="btns" style="margin:14px auto 0"><button class="btn primary" data-a="back">Back</button></div></div>`,
+      { back },
+    );
+  }
+
   toast(msg: string, ms = 2200) {
     const t = $('toast');
     t.textContent = msg;
@@ -466,6 +636,7 @@ export class UI {
   private lastScore = -1;
   private lastPowers = '';
   private lastAce = '';
+  private lastCoins = '';
   private lastGun = [-1, -1];
   updateHud(st: GameState, level: Level, run: EndlessRun | null = null) {
     $('hud-level').textContent = `${run ? 'Stage' : 'Level'} ${level.index + 1}`;
@@ -489,6 +660,14 @@ export class UI {
       el.className = `ace-chip ${cls}`;
       el.textContent = text;
     }
+    // Expedition: coins (banked + this stage) and the items in effect
+    const eco = run?.eco;
+    const coinKey = eco ? `${eco.coins + st.coinsEarned.total}|${activeItems(eco, level.index).join(',')}` : '';
+    if (coinKey !== this.lastCoins) {
+      this.lastCoins = coinKey;
+      $('hud-coins').textContent = eco ? `🪙 ${(eco.coins + st.coinsEarned.total).toLocaleString()}` : '';
+      $('hud-items').innerHTML = eco ? activeItems(eco, level.index).map((id) => `<span title="${ITEMS[id].name}: ${ITEMS[id].desc}">${ITEMS[id].icon}</span>`).join('') : '';
+    }
     if (score !== this.lastScore) {
       const el = $('hud-score');
       el.textContent = score.toLocaleString();
@@ -500,8 +679,9 @@ export class UI {
       this.lastScore = score;
     }
     $('hud-streak').textContent = st.streak >= 3 ? `chain ×${st.streak}` : '';
-    const cur = st.gun.w & 1 ? WILD : st.gun.cur;
-    const nxt = st.gun.w & 2 ? WILD : st.gun.next;
+    // BOMB (-2) = a Pocket Bomb shot
+    const cur = st.gun.b & 1 ? BOMB : st.gun.w & 1 ? WILD : st.gun.cur;
+    const nxt = st.gun.b & 2 ? BOMB : st.gun.w & 2 ? WILD : st.gun.next;
     if (cur !== this.lastGun[0] || nxt !== this.lastGun[1]) {
       this.lastGun = [cur, nxt];
       for (const [a, b] of [['swap-cur', 'swap-next'], ['next-cur', 'next-next']]) {
@@ -531,6 +711,7 @@ export class UI {
     this.lastScore = -1;
     this.lastPowers = '';
     this.lastAce = '';
+    this.lastCoins = '';
   }
 }
 

@@ -36,6 +36,7 @@ npm run e2e                 # browser checks on 7 device profiles (about 5 min)
 | `npm run pwa-check` | Verifies the build is installable and works offline (run `npm run build` first). |
 | `npm run sim -- <seed> <levels> [preset…]` | Bot playthroughs per level: outcome, time, peak danger, combos. |
 | `npm run balance -- <campaigns> <levels…>` | Win-rate and average-time table per bot skill. |
+| `npm run expedition -- [runs] [bot] [policies] [maxStages]` | Simulated Expedition runs across all CPU cores: stages cleared, coins per world, items bought, item impact. `UNLOCK_ALL=1` starts with every item unlocked. See [economy-architecture.md](economy-architecture.md). |
 | `npm run icons` | Re-renders `public/icons/icon.svg` into the PNG icon sizes. |
 
 Scripts that `npm run` doesn't wrap run with `npx tsx scripts/<name>.ts`; see [Visual checks](#visual-checks-screenshots) and [Balance](#balance-bot-runs).
@@ -98,6 +99,7 @@ Changes to the sim that don't touch the generator (new mechanics, tuning in `TUN
 | `tests/features.test.ts` | Wild and Scorpion, bonus coins, track/ace bonuses, rail boss fights (slide, fire, damage, rocks/stun, defeat cascade, bot can win, exact replays), power-up spawn mix |
 | `tests/aim.test.ts` | Aim assist: capped correction, assisted shots land in the previewed slot, wobble tolerance |
 | `tests/feel.test.ts` | Game feel: every event has feedback, escalation and caps, reduce-motion, shake decay, hit-stop budget over a level |
+| `tests/economy.test.ts` | Expedition economy: coin ledger, every charm and boost, shop rules (slots, prices, rerolls, reserve, boost expiry), unlocks, reproducible simulated runs |
 | `tests/save.test.ts` | Save round-trip, corrupted storage, level codes, stars, per-campaign progress, generator-version migration, daily seed |
 
 To run one file or one test:

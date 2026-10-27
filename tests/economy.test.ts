@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { generateLevel } from '../src/sim/levelgen';
 import { createGame, Power, progress, stateHash, step, TICK_HZ, TUNING } from '../src/sim/game';
-import { NO_MODS } from '../src/sim/items';
-import { activeItems, bossPicks, gain, miniPicks, modsForStage, newEco, reroll, rerollCost, reserve, sellCharm, settleStage, shopOffers } from '../src/sim/economy';
+import { ITEMS, NO_MODS } from '../src/sim/items';
+import { activeItems, bossPicks, priceAt, gain, miniPicks, modsForStage, newEco, reroll, rerollCost, reserve, sellCharm, settleStage, shopOffers } from '../src/sim/economy';
 import { checkUnlocks, LevelTracker, newMeta } from '../src/sim/achievements';
 import { runExpedition } from '../src/sim/expedition';
 import { BOT_PRESETS } from '../src/sim/bot';
@@ -206,19 +206,23 @@ describe('run economy', () => {
   const all = ['shockwave', 'bomber', 'quickDraw', 'rainbow', 'scout', 'slowpoke', 'powerSurge', 'pocketBomb', 'longFuse'] as const;
 
   it('buying charms: coins, slots, replacing sells for half', () => {
+    const P = (id: keyof typeof ITEMS) => priceAt(id, 9);
+    expect(P('shockwave')).toBe(Math.round((ITEMS.shockwave.price * 1.2) / 25) * 25); // world 2 prices
     const eco = newEco();
-    eco.coins = 3000;
+    eco.coins = 5000;
     expect(gain(eco, 'shockwave', seed, 9)).toBeNull();
-    expect(eco.coins).toBe(2400);
+    expect(eco.coins).toBe(5000 - P('shockwave'));
     expect(gain(eco, 'shockwave', seed, 9)).toBe('owned');
     expect(gain(eco, 'bomber', seed, 9)).toBeNull();
     expect(gain(eco, 'scout', seed, 9, { free: true })).toBeNull();
     expect(gain(eco, 'quickDraw', seed, 9)).toBe('slots');
-    expect(gain(eco, 'quickDraw', seed, 9, { replace: 0 })).toBeNull(); // Shockwave out: +300
-    expect(eco.coins).toBe(2400 - 500 + 300 - 500);
+    const before = eco.coins;
+    expect(gain(eco, 'quickDraw', seed, 9, { replace: 0 })).toBeNull(); // Shockwave out for half its price
+    expect(eco.coins).toBe(before + Math.floor(P('shockwave') / 2) - P('quickDraw'));
     expect(eco.charms.map((c) => c.id)).toEqual(['bomber', 'scout', 'quickDraw']);
+    const c0 = eco.coins;
     sellCharm(eco, 1); // free charm sells for nothing
-    expect(eco.coins).toBe(1700);
+    expect(eco.coins).toBe(c0);
     eco.coins = 100;
     expect(gain(eco, 'rainbow', seed, 9)).toBe('coins');
   });
@@ -288,7 +292,8 @@ describe('run economy', () => {
     const offers = shopOffers(eco, seed, 19, [...all]);
     expect(offers.reserved).toBe('rainbow');
     expect(offers.charms).not.toContain('rainbow');
-    gain(eco, 'rainbow', seed, 19);
+    eco.coins = 5000;
+    expect(gain(eco, 'rainbow', seed, 19)).toBeNull();
     expect(eco.reserved).toBeNull();
   });
 });

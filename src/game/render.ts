@@ -509,6 +509,7 @@ export class Renderer {
       }
       const ang = Math.atan2(sh.vy, sh.vx);
       this.drawMarble(sh.w ? WILD : sh.c, sh.x, sh.y, ang, v.time * 30, 1, rot, 1.18, 0.88);
+      if (sh.b) this.drawBombMark(sh.x, sh.y, BALL_R, v);
     }
 
     this.drawLauncher(st, v, rot);
@@ -1325,7 +1326,7 @@ export class Renderer {
     }
     const t = tangentAt(tr, tr.length);
     const ang = Math.atan2(-t.y, -t.x);
-    const wind = b.wind > 0 ? 1 - b.wind / TUNING.serpentWindup : 0;
+    const wind = b.wind > 0 ? 1 - b.wind / (TUNING.serpentWindup + st.mods.serpentWindupAdd) : 0;
     // Rears back while winding up, lunges right after spitting.
     const sinceSpit = b.wind > 0 ? 9 : v.spitAge;
     const lunge = sinceSpit < 0.25 ? Math.sin((sinceSpit / 0.25) * Math.PI) : 0;
@@ -1770,6 +1771,7 @@ export class Renderer {
     const md = MOUTH_X - rec + load * 2;
     const scale = 0.55 + 0.45 * easeOutBack(load);
     this.drawMarble(curC, cx + Math.cos(a) * md, cy + Math.sin(a) * md, a, v.time * 2, scale, rot);
+    if (st.gun.b & 1) this.drawBombMark(cx + Math.cos(a) * md, cy + Math.sin(a) * md, BALL_R * scale, v);
     // Next ball on the back: big enough to read at a glance, with a ring so it reads as "next".
     const nd = -36;
     const nx = cx + Math.cos(a) * nd;
@@ -1783,6 +1785,45 @@ export class Renderer {
     g2.lineWidth = 2;
     g2.stroke();
     this.drawMarble(nextC, nx, ny, a, 0, 0.72, rot);
+    if (st.gun.b & 2) this.drawBombMark(nx, ny, BALL_R * 0.72, v);
+    // Colour Scout: the marble after next, smaller, further back.
+    if (st.mods.scout && st.gun.after >= 0) {
+      const ad = -64;
+      const ax = cx + Math.cos(a) * ad;
+      const ay = cy + Math.sin(a) * ad;
+      g2.beginPath();
+      g2.arc(ax, ay, BALL_R * 0.62, 0, Math.PI * 2);
+      g2.fillStyle = 'rgba(5,10,18,0.55)';
+      g2.fill();
+      g2.strokeStyle = 'rgba(255,255,255,0.45)';
+      g2.lineWidth = 1.5;
+      g2.stroke();
+      this.drawMarble(st.gun.after, ax, ay, a, 0, 0.5, rot);
+    }
+  }
+
+  /** Pocket Bomb: a black bomb with a sparking fuse over a marble. */
+  private drawBombMark(x: number, y: number, r: number, v: ViewState) {
+    const g = this.ctx;
+    g.fillStyle = '#16161c';
+    g.beginPath();
+    g.arc(x, y, r * 0.78, 0, Math.PI * 2);
+    g.fill();
+    g.fillStyle = 'rgba(255,255,255,0.25)';
+    g.beginPath();
+    g.arc(x - r * 0.25, y - r * 0.25, r * 0.22, 0, Math.PI * 2);
+    g.fill();
+    g.strokeStyle = '#c9a36a';
+    g.lineWidth = 2;
+    g.beginPath();
+    g.moveTo(x + r * 0.45, y - r * 0.55);
+    g.quadraticCurveTo(x + r * 0.9, y - r * 1.0, x + r * 0.7, y - r * 1.25);
+    g.stroke();
+    const flick = 0.6 + 0.4 * Math.sin(v.time * 40);
+    g.fillStyle = `rgba(255,${170 + Math.round(60 * flick)},60,1)`;
+    g.beginPath();
+    g.arc(x + r * 0.7, y - r * 1.25, r * 0.22 * (0.8 + flick * 0.4), 0, Math.PI * 2);
+    g.fill();
   }
 
   private drawSkull(v: ViewState, st: GameState) {

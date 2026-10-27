@@ -1,6 +1,8 @@
 // Persistence: campaign progress, settings, and a mid-level snapshot so closing
 // the tab (or the PWA being killed on a phone) resumes exactly where you were.
 
+import type { MetaProgress } from '../sim/achievements';
+import type { RunEco } from '../sim/economy';
 import type { GameState } from '../sim/game';
 import { GEN_VERSION } from '../sim/levelgen';
 import type { CharacterId } from './characters';
@@ -60,6 +62,8 @@ export interface SaveData {
   endlessBest?: { score: number; stage: number };
   /** Best daily run, per day ("YYYYMMDD"). Only today's is kept. */
   dailyBest?: { day: string; score: number; stage: number };
+  /** Expedition unlocks and lifetime progress. */
+  meta?: MetaProgress;
 }
 
 export interface EndlessRun {
@@ -70,6 +74,10 @@ export interface EndlessRun {
   /** Score banked from cleared stages. */
   runScore: number;
   snapshot: GameState | null;
+  /** Coins and items for this run. */
+  eco?: RunEco;
+  /** A free pick or the shop still to show before `stage` starts (survives closing the app). */
+  pending?: 'mini' | 'boss' | 'shop' | null;
 }
 
 /** Endless seeds: a daily one everybody shares, or a random one. */

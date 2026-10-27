@@ -4,7 +4,7 @@
 
 import { checkUnlocks, LevelTracker, type MetaProgress, newMeta } from './achievements';
 import { type BotOptions, playLevel } from './bot';
-import { activeItems, afterStage, bossPicks, closeShop, gain, miniPicks, modsForStage, newEco, rerollCost, reroll, type RunEco, settleStage, shopOffers, worldOf } from './economy';
+import { activeItems, afterStage, priceAt, bossPicks, closeShop, gain, miniPicks, modsForStage, newEco, rerollCost, reroll, type RunEco, settleStage, shopOffers, worldOf } from './economy';
 import { createGame } from './game';
 import { ITEMS, type ItemId } from './items';
 import { generateLevel } from './levelgen';
@@ -36,6 +36,8 @@ export interface ExpeditionResult {
   bought: ItemId[];
   picked: ItemId[];
   unlocks: ItemId[];
+  /** Coins left right after each shop (unspent surplus). */
+  afterShop: number[];
   log: StageLog[];
   eco: RunEco;
 }
@@ -52,7 +54,7 @@ export interface ExpeditionOpts {
 export function runExpedition(o: ExpeditionOpts): ExpeditionResult {
   const meta = o.meta ?? newMeta();
   const eco = newEco();
-  const res: ExpeditionResult = { seed: o.seed, cleared: 0, coinsByWorld: [], bought: [], picked: [], unlocks: [], log: [], eco };
+  const res: ExpeditionResult = { seed: o.seed, cleared: 0, coinsByWorld: [], bought: [], picked: [], unlocks: [], afterShop: [], log: [], eco };
   const max = o.maxStages ?? 60;
   let choice = 0; // deterministic counter for the random policy
   const pickOf = (opts: ItemId[]) => {
@@ -85,6 +87,7 @@ export function runExpedition(o: ExpeditionOpts): ExpeditionResult {
         if (!gain(eco, free, o.seed, stage, { free: true, replace: eco.charms.length >= 3 && rank(free) < rank(eco.charms[replace].id) ? replace : undefined })) res.picked.push(free);
       }
       shop(eco, o, stage, meta.unlocked, res, () => choice++);
+      res.afterShop.push(eco.coins);
     }
   }
   return res;
@@ -108,7 +111,7 @@ function shop(eco: RunEco, o: ExpeditionOpts, stage: number, unlocked: ItemId[],
       list = [...list.slice(k), ...list.slice(0, k)];
     } else list.sort((a, b) => rank(a) - rank(b));
     for (const id of list) {
-      if (eco.coins < ITEMS[id].price) continue;
+      if (eco.coins < priceAt(id, stage)) continue;
       let replace: number | undefined;
       if (ITEMS[id].kind === 'charm' && eco.charms.length >= 3) {
         const k = worstCharm(eco);

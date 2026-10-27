@@ -7,6 +7,7 @@ import {
   ballPos,
   type Command,
   createGame,
+  normalizeState,
   DT,
   type GameEvent,
   type GameState,
@@ -28,6 +29,9 @@ import { BOT_PRESETS, decide } from './sim/bot';
 import { assistAim, type Slot } from './sim/aim';
 import { characterNoun } from './game/characters';
 import { Rng } from './sim/rng';
+import { checkUnlocks, LevelTracker, newMeta } from './sim/achievements';
+import { afterStage, bossPicks, closeShop, gain, miniPicks, modsForStage, newEco, reroll, reserve, sellCharm, settleStage, shopOffers } from './sim/economy';
+import { ITEMS, type Mods, NO_MODS } from './sim/items';
 import { pointAt, type Pt } from './sim/track';
 import { computeLayout, type Layout, screenToWorld } from './game/layout';
 import { BOLT_LIFE, Renderer, PALETTE, type ViewState } from './game/render';
@@ -70,6 +74,8 @@ let acc = 0;
 let hitstop = 0; // ms
 let slowmo: { scale: number; left: number } | null = null;
 let peakDanger = 0;
+/** Expedition: per-level facts for unlocks. */
+let tracker = new LevelTracker();
 let resultTimer = -1;
 /** Endless run being played (null in the campaign). */
 let run: EndlessRun | null = null;
@@ -137,11 +143,12 @@ function applySpeed() {
   level.speed = baseSpeed * (save.settings.relaxed && !attract ? 0.75 : 1);
 }
 
-function loadLevel(seed: string, index: number, state?: GameState) {
+function loadLevel(seed: string, index: number, state?: GameState, mods: Mods = NO_MODS) {
   level = generateLevel(seed, index);
   baseSpeed = level.speed;
   applySpeed();
-  st = state ?? createGame(level);
+  st = state ? normalizeState(state) : createGame(level, mods);
+  tracker = new LevelTracker();
   view.hue = hueFor(level);
   renderer.setLevel(level, view.hue);
   // Board size can differ per campaign (large marbles): re-fit to the screen.
@@ -204,10 +211,10 @@ function startLevel(index: number, fromSnapshot = false) {
 function startEndless(daily: boolean) {
   attract = false;
   const prefix = isLargeCampaign(save.campaignSeed) ? LARGE_PREFIX : '';
-  run = { seed: prefix + (daily ? dailySeed() : endlessSeed()), daily, stage: 0, runScore: 0, snapshot: null };
+  run = { seed: prefix + (daily ? dailySeed() : endlessSeed()), daily, stage: 0, runScore: 0, snapshot: null, eco: newEco(), pending: null };
   save.endless = run;
   writeSave(save);
-  loadLevel(run.seed, 0);
+  loadLevel(run.seed, 0, undefined, modsForStage(run.eco!, 0));
   beginPlay();
 }
 
@@ -215,8 +222,80 @@ function continueEndless() {
   if (!save.endless) return;
   attract = false;
   run = save.endless;
-  loadLevel(run.seed, run.stage, run.snapshot ?? undefined);
+  run.eco ??= newEco();
+  // Closed the app on a pick or shop screen: show it again before the stage starts.
+  if (run.pending) return betweenStages(run);
+  loadLevel(run.seed, run.stage, run.snapshot ?? undefined, modsForStage(run.eco, run.stage));
   beginPlay();
+}
+
+/** Start the run's current stage with its items. */
+function playStage(r: EndlessRun) {
+  r.pending = null;
+  save.endless = r;
+  writeSave(save);
+  loadLevel(r.seed, r.stage, undefined, modsForStage(r.eco!, r.stage));
+  beginPlay();
+}
+
+/** After a mini-boss: a free boost. After a boss: a free charm, then the shop. */
+function betweenStages(r: EndlessRun) {
+  const eco = r.eco!;
+  const won = r.stage - 1;
+  const meta = (save.meta ??= newMeta());
+  mode = 'result';
+  ui.showHud(false);
+  releaseWakeLock();
+  const persist = () => {
+    save.endless = r;
+    writeSave(save);
+  };
+  if (r.pending === 'mini') {
+    ui.pick({
+      title: 'Serpent slain!',
+      sub: 'Pick a free boost. It lasts until you beat this world\'s boss.',
+      eco,
+      stage: won,
+      ids: miniPicks(eco, r.seed, won, meta.unlocked),
+      onPick: (id, replace) => {
+        if (id) gain(eco, id, r.seed, won, { free: true, replace });
+        playStage(r);
+      },
+    });
+  } else if (r.pending === 'boss') {
+    ui.pick({
+      title: 'Boss defeated!',
+      sub: 'Pick a free charm. Charms stay with you for the rest of the run.',
+      eco,
+      stage: won,
+      ids: bossPicks(eco, r.seed, won, meta.unlocked),
+      onPick: (id, replace) => {
+        if (id) gain(eco, id, r.seed, won, { free: true, replace });
+        r.pending = 'shop';
+        persist();
+        betweenStages(r);
+      },
+    });
+  } else if (r.pending === 'shop') {
+    const act = <T,>(f: () => T) => {
+      const out = f();
+      persist();
+      return out;
+    };
+    ui.shop({
+      eco,
+      stage: won,
+      offers: () => shopOffers(eco, r.seed, won, meta.unlocked),
+      buy: (id, replace) => act(() => gain(eco, id, r.seed, won, { replace })),
+      sell: (i) => act(() => sellCharm(eco, i)),
+      reroll: () => act(() => reroll(eco)),
+      reserve: (id) => act(() => reserve(eco, id)),
+      done: () => {
+        closeShop(eco);
+        playStage(r);
+      },
+    });
+  } else playStage(r);
 }
 
 /** Level-start banner: boss / mini-boss / level number, plus a note for twists and two chains. */
@@ -303,14 +382,18 @@ function pause() {
 
 /** Endless: a cleared stage rolls straight into the next; losing ends the run. */
 function endlessStageDone(won: boolean, r: EndlessRun) {
+  const eco = (r.eco ??= newEco());
+  settleStage(eco, st, level.index, won);
+  const fresh = checkUnlocks((save.meta ??= newMeta()), tracker, level, { won, peakDanger });
+  if (fresh.length) ui.toast(`🔓 Unlocked ${fresh.map((id) => `${ITEMS[id].icon} ${ITEMS[id].name}`).join(', ')}! It can now show up in the shop.`, 4200);
   if (won) {
     r.runScore += st.score;
     r.stage = level.index + 1;
     r.snapshot = null;
+    r.pending = afterStage(level.index);
     save.endless = r;
     writeSave(save);
-    loadLevel(r.seed, r.stage);
-    beginPlay();
+    betweenStages(r);
     return;
   }
   mode = 'result';
@@ -388,6 +471,7 @@ const ui = new UI({
   restart: () => (run ? startEndless(run.daily) : startLevel(level.index)),
   endless: (daily) => startEndless(daily),
   continueEndless: () => continueEndless(),
+  collection: () => ui.collection(save.meta ?? newMeta(), () => ui.endless(save)),
   quit: () => {
     saveSnapshot();
     toTitle();
@@ -990,6 +1074,7 @@ function announcePowers() {
 
 function handleEvents(events: GameEvent[]) {
   const head = progress(st, level).head;
+  if (run && !attract) tracker.feed(events);
   for (const e of events) {
     if (!attract) eventLog.push({ t: st.tick, e });
     if (eventLog.length > 400) eventLog.shift();
@@ -1125,6 +1210,11 @@ function handleEvents(events: GameEvent[]) {
           fx.text(p.x, p.y, POWER_NAMES[p.power].toUpperCase(), '#7dffcf', 18, 1.2, -24);
         }
         break;
+      case 'rescue':
+        fx.ring(e.x, e.y, '#ff7a9a', 14, 600, 0.6);
+        fx.text(e.x, e.y, 'EXTRA LIFE!', '#ff9ab3', 34, 1.4, -50);
+        view.banner = { text: 'EXTRA LIFE!', sub: 'The chain was pushed back', t: 0, color: '#ff9ab3' };
+        break;
       case 'swallow':
         fx.burst(e.x, e.y, '#7dffb0', '#fff', fb.particles, 0.6);
         fx.text(e.x, e.y, 'GULP!', '#7dffb0', 24, 0.9, -30);
@@ -1205,7 +1295,7 @@ function handleEvents(events: GameEvent[]) {
           startAttract();
           break;
         }
-        view.banner = { text: run ? 'Stage clear!' : 'Level clear!', sub: run ? `Run score ${(run.runScore + st.score).toLocaleString()}` : undefined, t: 0, color: '#7dffcf' };
+        view.banner = { text: run ? 'Stage clear!' : 'Level clear!', sub: run ? `Run score ${(run.runScore + st.score).toLocaleString()} · +${st.coinsEarned.total} 🪙` : undefined, t: 0, color: '#7dffcf' };
         const lc = launcherAt(st, level);
         fx.confetti(lc.x, lc.y, PALETTE.slice(0, 6).map((p) => p.base), fb.particles);
         resultTimer = 1.8;
@@ -1570,6 +1660,22 @@ window.__zuma = {
     beginPlay();
   },
   run: () => run,
+  /** Test hook: start an Expedition at `stage` with `coins`. */
+  expedition: (stage: number, coins = 0) => {
+    startEndless(false);
+    run!.stage = stage;
+    run!.eco!.coins = coins;
+    playStage(run!);
+  },
+  /** Test hook: win the current stage now (bosses are slain, chains cleared). */
+  winNow: () => {
+    if (st.boss) st.boss.hp = 0;
+    else {
+      st.chains.forEach((c) => (c.balls = []));
+      st.barFull = true;
+      st.spawning = false;
+    }
+  },
   levelSpeed: () => level.speed,
   fireAt: (wx: number, wy: number) => queueFire({ x: wx, y: wy }),
   swap: () => queueSwap(),

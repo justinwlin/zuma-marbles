@@ -1538,8 +1538,11 @@ export function snapshot(st: GameState): string {
 }
 
 export function restore(json: string): GameState {
-  const st = JSON.parse(json) as GameState;
-  // Snapshots saved before Expedition items existed.
+  return normalizeState(JSON.parse(json) as GameState);
+}
+
+/** Fill in fields that snapshots saved before Expedition items existed don't have. */
+export function normalizeState(st: GameState): GameState {
   st.mods = { ...NO_MODS, ...st.mods };
   st.coinsEarned ??= emptyLedger();
   st.lives ??= 0;

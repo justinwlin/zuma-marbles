@@ -172,6 +172,13 @@ export function feedbackFor(e: GameEvent, ctx: FeelContext): Feedback {
       f.sound = 'power';
       f.particles = 20;
       break;
+    case 'rescue':
+      f.sound = 'barfull';
+      f.trauma = 0.4;
+      f.flash = 0.25;
+      f.haptic = [30, 40, 30];
+      f.particles = 30;
+      break;
     case 'swallow':
       f.sound = 'spit';
       f.trauma = 0.06;
