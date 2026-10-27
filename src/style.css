@@ -154,7 +154,8 @@ h2 { font-size: 30px; font-weight: 900; letter-spacing: .5px; }
 .lv .st i { color: rgba(255,255,255,.15); font-style: normal; }
 .lv.next { background: linear-gradient(180deg, #2fd6a8, #12856a); color: #03261c; }
 .lv.next small { color: #064a39; }
-.lv.locked { opacity: .35; pointer-events: none; }
+.lv.locked { opacity: .55; border-style: dashed; }
+.lv.locked .unlock-hint { font-size: 10px; color: var(--muted); letter-spacing: 0; }
 .lv { position: relative; }
 .lv.boss:not(.next) { background: linear-gradient(180deg, rgba(255,90,120,.28), rgba(120,20,40,.35)); border-color: rgba(255,120,140,.45); }
 .lv.mini:not(.next) { background: linear-gradient(180deg, rgba(255,170,90,.22), rgba(120,60,20,.3)); border-color: rgba(255,180,110,.35); }

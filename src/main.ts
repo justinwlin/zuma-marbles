@@ -370,6 +370,17 @@ const ui = new UI({
     ui.levels(save);
     ui.toast(`New campaign “${clean}”`);
   },
+  unlockTo: (index, play) => {
+    const before = save.unlocked;
+    save.unlocked = Math.max(save.unlocked, index);
+    save.snapshot = null;
+    writeSave(save);
+    if (play) startLevel(index);
+    else {
+      ui.levels(save);
+      if (save.unlocked > before) ui.toast(`Unlocked up to level ${save.unlocked + 1}`);
+    }
+  },
   playCode: (code) => {
     const p = parseLevelCode(code);
     if (!p) return ui.toast('Level codes look like  jade-1234/12');

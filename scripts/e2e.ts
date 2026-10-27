@@ -397,6 +397,34 @@ async function runProfile(name: string, opts: BrowserContextOptions) {
   const back = await page.evaluate(() => (window as unknown as { __zuma: Z & { save(): { campaignSeed: string; unlocked: number } } }).__zuma.save());
   check('switching back restores the normal campaign progress', !back.campaignSeed.startsWith('xl-') && back.unlocked === unlockedBefore);
 
+  // ---- Skipping ahead: the locked card unlocks levels; pause can skip the current one.
+  type ZS = Omit<Z, 'level'> & { save(): { unlocked: number }; level(): { index: number } };
+  const unlocked = () => page.evaluate(() => (window as unknown as { __zuma: ZS }).__zuma.save().unlocked);
+  const u0 = await unlocked();
+  await page.locator('[data-a=unlock]').click();
+  await page.waitForTimeout(200);
+  check('tapping the locked level offers to unlock', (await page.locator('[data-screen=unlock]').count()) === 1);
+  await page.locator('[data-a=five]').click();
+  await page.waitForTimeout(300);
+  check('"Unlock next 5" unlocks five levels', (await unlocked()) === u0 + 5 && (await page.locator('[data-screen=levels]').count()) === 1, `${u0} → ${await unlocked()}`);
+  await page.locator('[data-a=unlock]').click();
+  await page.locator('[data-a=one]').click();
+  await page.waitForTimeout(500);
+  const lv1 = await page.evaluate(() => (window as unknown as { __zuma: ZS }).__zuma.level().index);
+  check('"Unlock & play" starts the newly unlocked level', lv1 === u0 + 6 && (await unlocked()) === u0 + 6, `level ${lv1 + 1}`);
+  await page.locator('#btn-pause').click();
+  await page.waitForTimeout(200);
+  await page.locator('[data-a=skip]').click();
+  await page.waitForTimeout(500);
+  const lv2 = await page.evaluate(() => (window as unknown as { __zuma: ZS }).__zuma.level().index);
+  check('pause → skip moves on to the next level', lv2 === lv1 + 1 && (await unlocked()) === lv1 + 1, `level ${lv2 + 1}`);
+  await page.locator('#btn-pause').click();
+  await page.waitForTimeout(200);
+  await page.locator('[data-a=quit]').click();
+  await page.waitForTimeout(200);
+  await page.locator('[data-a=levels]').click();
+  await page.waitForTimeout(200);
+
   // ---- Endless: title → Endless → Daily run; a cleared stage rolls into the next; losing ends the run.
   type ZE = Omit<Z, 'level'> & { run(): { stage: number; runScore: number } | null; load(seed: string, i: number): void; level(): { length: number; chains: number; boss: string | null; seed: string } };
   await page.locator('[data-a=back]').click();

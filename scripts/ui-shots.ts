@@ -18,7 +18,7 @@ for (const [name, opts] of Object.entries(profiles)) {
     localStorage.clear();
     const best: Record<number, unknown> = {};
     for (let i = 0; i < 11; i++) best[i] = { score: 1000 + i * 100, stars: (i % 3) + 1, seconds: 60 };
-    localStorage.setItem('zuma-marbles.save.v1', JSON.stringify({ v: 1, gen: 2, campaignSeed: 'ui-demo', unlocked: 11, best, totalScore: 15000, settings: {}, snapshot: null, tutorialSeen: true, endlessBest: { score: 12345, stage: 7 } }));
+    localStorage.setItem('zuma-marbles.save.v1', JSON.stringify({ v: 1, gen: 3, campaignSeed: 'ui-demo', unlocked: 11, best, totalScore: 15000, settings: {}, snapshot: null, tutorialSeen: true, endlessBest: { score: 12345, stage: 7 } }));
   });
   await page.reload();
   await page.waitForFunction(() => (window as any).__zuma?.mode === 'title');

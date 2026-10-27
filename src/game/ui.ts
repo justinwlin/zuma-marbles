@@ -26,6 +26,8 @@ export interface UiActions {
   newCampaign(seed: string): void;
   setLargeMarbles(large: boolean): void;
   playCode(code: string): void;
+  /** Unlock every level up to `index` (0-based) without clearing them; optionally play it. */
+  unlockTo(index: number, play: boolean): void;
   install(): void;
   click(): void;
 }
@@ -135,7 +137,7 @@ export class UI {
         `<button class="lv ${i === save.unlocked ? 'next' : ''} ${meta.boss ?? ''}" data-a="lv" data-i="${i}" aria-label="${label}"><b>${i + 1}</b><small>${meta.name}</small>${badges(meta)}<span class="st">${st}</span></button>`,
       );
     }
-    cards.push(`<div class="lv locked" aria-hidden="true"><b>🔒</b><small>Level ${count + 1}</small></div>`);
+    cards.push(`<button class="lv locked" data-a="unlock" aria-label="Unlock level ${count + 1}"><b>🔒</b><small>Level ${count + 1}</small><span class="st unlock-hint">tap to unlock</span></button>`);
     this.show(
       'levels',
       `<div class="levels-head"><button class="icon-btn" data-a="back" aria-label="Back">←</button><h2>Levels</h2>
@@ -162,6 +164,7 @@ export class UI {
         back: () => this.title(save),
         size: (el) => this.a.setLargeMarbles(el.dataset.v === '1'),
         lv: (el) => this.a.play(Number(el.dataset.i)),
+        unlock: () => this.unlock(save),
         copy: () => {
           const code = levelCode(save.campaignSeed, save.unlocked);
           void navigator.clipboard?.writeText(code).catch(() => {});
@@ -177,6 +180,27 @@ export class UI {
     );
     // Bring the current level into view.
     this.root.querySelector('.lv.next')?.scrollIntoView({ block: 'nearest' });
+  }
+
+  /** Skip ahead: unlock levels without clearing them. */
+  unlock(save: SaveData) {
+    const n = save.unlocked + 1; // 0-based index of the first locked level
+    this.show(
+      'unlock',
+      `<div class="panel"><h2>Unlock levels</h2>
+        <p class="sub">Skip ahead without clearing levels. Skipped levels keep 0 stars, and you can go back and play them any time.</p>
+        <div class="btns" style="margin:0 auto">
+          <button class="btn primary" data-a="one">Unlock & play level ${n + 1}</button>
+          <div class="row"><button class="btn" data-a="five">Unlock next 5</button><button class="btn" data-a="ten">Unlock next 10</button></div>
+          <button class="btn ghost" data-a="back">Cancel</button>
+        </div></div>`,
+      {
+        one: () => this.a.unlockTo(n, true),
+        five: () => this.a.unlockTo(n + 4, false),
+        ten: () => this.a.unlockTo(n + 9, false),
+        back: () => this.levels(save),
+      },
+    );
   }
 
   endless(save: SaveData) {
@@ -240,8 +264,10 @@ export class UI {
         <button class="btn primary" data-a="resume">Resume</button>
         <div class="row"><button class="btn" data-a="restart">${run ? 'New run' : 'Restart'}</button><button class="btn" data-a="settings">Settings</button></div>
         <button class="btn ghost" data-a="quit">Save & quit to menu</button>
+        ${run ? '' : `<button class="btn ghost" data-a="skip">Skip to level ${level.index + 2} →</button>`}
       </div></div>`,
       {
+        skip: () => this.a.unlockTo(level.index + 1, true),
         resume: () => this.a.resume(),
         restart: () => this.a.restart(),
         settings: () => this.settings(save, () => this.pause(save, level, run)),
@@ -271,9 +297,11 @@ export class UI {
         <div class="btns" style="margin:0 auto">
           ${won ? '<button class="btn primary" data-a="next">Next level</button>' : '<button class="btn primary" data-a="restart">Try again</button>'}
           <div class="row"><button class="btn" data-a="${won ? 'restart' : 'quit'}">${won ? 'Replay' : 'Menu'}</button><button class="btn" data-a="levels">Levels</button></div>
+          ${won ? '' : `<button class="btn ghost" data-a="skip">Skip to level ${level.index + 2} →</button>`}
         </div>
       </div>`,
       {
+        skip: () => this.a.unlockTo(level.index + 1, true),
         next: () => this.a.next(),
         restart: () => this.a.restart(),
         quit: () => this.a.quit(),
