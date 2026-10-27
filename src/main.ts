@@ -227,7 +227,7 @@ function levelBanner(): string[] {
   else if (level.boss === 'mini') view.banner = { text: 'MINI-BOSS', sub: `${label} · ${level.name} · ${ace}`, t: 0, color: '#ffb36b' };
   else view.banner = { text: label, sub: `${level.name} · ${ace}`, t: 0, color: '#ffe08a' };
   const notes: string[] = [];
-  if (level.bossFight?.kind === 'serpent') notes.push('Mini-boss! A serpent guards the skull — pop marbles to hurt it before it spits more onto the chain');
+  if (level.bossFight?.kind === 'serpent') notes.push('Mini-boss! A serpent guards the skull — pop marbles to hurt it, or hit it while it rears up to spit');
   if (level.rail) notes.push(coarsePointer.matches ? 'Boss fight! Drag anywhere to slide · press FIRE to shoot (hold to keep firing) · dodge the rocks' : 'Boss fight! Move along your rail · click to shoot · pop marbles to hurt the boss · dodge its rocks');
   if (level.tracks.length > 1) notes.push('Two chains — watch both skulls!');
   for (const m of level.mutators) notes.push(`${MUTATOR_INFO[m].name}: ${MUTATOR_INFO[m].desc}`);
@@ -343,7 +343,7 @@ function lossTip(): string {
   const noun = characterNoun(save.settings.character);
   if ((lossStreak.get(level.index) ?? 0) >= 2 && !save.settings.relaxed) return 'Stuck? Turn on <b>Relaxed speed</b> in Settings — chains roll 25% slower.';
   if (level.rail && stuns >= 2) return 'The yellow target follows you while the idol winds up, then turns <b>red and locks</b> — slide away before the rock lands.';
-  if (level.bossFight?.kind === 'serpent') return 'Every marble you pop hurts the serpent — <b>combos</b> hurt it more. Kill it fast and it spits less.';
+  if (level.bossFight?.kind === 'serpent') return 'Every marble you pop hurts the serpent — <b>combos</b> hurt it more. It swallows shots, but hit it <b>while it rears up</b> to choke the spit.';
   if (level.rail && s.bossHits === 0) return 'Shoot through <b>gaps in the chain</b> to hit the boss directly — and every marble you pop hurts it.';
   if (level.tracks.length > 1) return 'Two chains: deal with whichever is <b>closer to its skull</b> first.';
   if (s.shots >= 8 && s.misses / s.shots > 0.3) return 'Missed shots fly off the board. The <b>ghost marble</b> shows exactly where a shot will land.';
@@ -1116,6 +1116,10 @@ function handleEvents(events: GameEvent[]) {
         break;
       case 'dodge':
         fx.burst(e.x, e.y, '#7a5a50', '#c9a089', fb.particles, 0.8);
+        break;
+      case 'swallow':
+        fx.burst(e.x, e.y, '#7dffb0', '#fff', fb.particles, 0.6);
+        fx.text(e.x, e.y, 'GULP!', '#7dffb0', 24, 0.9, -30);
         break;
       case 'spit': {
         view.spitAge = 0;

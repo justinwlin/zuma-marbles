@@ -33,9 +33,9 @@ interface Choice {
 function evalShot(st: GameState, level: Level, c: number, dx: number, dy: number, wild = false, from: Pt = level.launcher): { value: number; x: number; y: number } | null {
   const hit = raycast(st, level, dx, dy, from);
   if (!hit) {
-    // Rail fights: a clear line to the boss is a direct hit.
+    // A clear line to the boss is a direct hit (the serpent only while it rears up to spit).
     const B = level.bossFight;
-    if (B && st.boss && !st.boss.dead) {
+    if (B && st.boss && !st.boss.dead && (B.kind !== 'serpent' || st.boss.wind > 0)) {
       const t = (B.x - from.x) * dx + (B.y - from.y) * dy;
       const perp = Math.abs((B.x - from.x) * dy - (B.y - from.y) * dx);
       if (t > 0 && perp < B.r) return { value: 8, x: from.x + dx * 400, y: from.y + dy * 400 };

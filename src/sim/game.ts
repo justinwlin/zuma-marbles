@@ -264,6 +264,7 @@ export type GameEvent =
   | { type: 'bossHit'; x: number; y: number; dmg: number }
   | { type: 'bossWindup' }
   | { type: 'bossAttack'; x: number; y: number; tx: number; ty: number }
+  | { type: 'swallow'; x: number; y: number }
   | { type: 'spit'; x: number; y: number; tx: number; ty: number; c: number }
   | { type: 'stun'; x: number; y: number }
   | { type: 'dodge'; x: number; y: number }
@@ -663,18 +664,25 @@ function stepSerpent(st: GameState, level: Level, b: BossState, ev: GameEvent[])
 }
 
 function serpentSpit(st: GameState, level: Level, b: BossState, ev: GameEvent[]) {
+  // A burst: 2 marbles, 3 once it's below half health (the first is the one shown in its mouth).
+  const count = b.hp * 2 <= b.max ? 3 : 2;
+  const colors = [b.spitC];
+  for (let k = 1; k < count; k++) colors.push(Math.floor(rand(st, 'bonus') * level.colors));
+  if (serpentPush(st, level, colors, ev)) b.n++;
+}
+
+/** Push marbles out of the serpent's mouth onto the front of chain 0. False if it holds back. */
+function serpentPush(st: GameState, level: Level, colors: number[], ev: GameEvent[]): boolean {
   const ch = st.chains[0];
   const tr = level.tracks[0];
   const B = level.bossFight!;
   const n = ch.balls.length;
-  if (!n) return;
+  if (!n) return false;
   const head = ch.balls[n - 1];
   // It holds back when the chain is already close (no cheap losses) or mid-pop.
-  if (head.clr >= 0 || head.ins < 1 || head.s < tr.visibleFrom || head.s > tr.length * TUNING.serpentMercy) return;
-  // A burst: 2 marbles, 3 once it's below half health (the first is the one shown in its mouth).
-  const count = b.hp * 2 <= b.max ? 3 : 2;
-  for (let k = 0; k < count; k++) {
-    const nb = newBall(st, k === 0 ? b.spitC : Math.floor(rand(st, 'bonus') * level.colors), head.s);
+  if (head.clr >= 0 || head.ins < 1 || head.s < tr.visibleFrom || head.s > tr.length * TUNING.serpentMercy) return false;
+  for (const c of colors) {
+    const nb = newBall(st, c, head.s);
     nb.g = 0;
     nb.ins = 0;
     nb.ix = B.x;
@@ -682,9 +690,9 @@ function serpentSpit(st: GameState, level: Level, b: BossState, ev: GameEvent[])
     nb.sp = 1;
     ch.balls.push(nb);
   }
-  b.n++;
   pointAt(tr, head.s + BALL_D, tmpL);
-  ev.push({ type: 'spit', x: B.x, y: B.y, tx: tmpL.x, ty: tmpL.y, c: b.spitC });
+  ev.push({ type: 'spit', x: B.x, y: B.y, tx: tmpL.x, ty: tmpL.y, c: colors[0] });
+  return true;
 }
 
 function damageBoss(st: GameState, dmg: number) {
@@ -927,7 +935,17 @@ function stepShots(st: GameState, level: Level, ev: GameEvent[]) {
         insertShot(st, level, sh, bestC, best, ev);
         st.shots.splice(si, 1);
         done = true;
+      } else if (bossHit && B!.kind === 'serpent' && st.boss!.wind <= 0) {
+        // The serpent swallows marbles shot into its closed mouth and spits them back onto the chain.
+        st.shots.splice(si, 1);
+        st.streak = 0;
+        st.stats.misses++;
+        ev.push({ type: 'swallow', x: sh.x, y: sh.y });
+        serpentPush(st, level, [sh.w ? Math.floor(rand(st, 'bonus') * level.colors) : sh.c], ev);
+        done = true;
       } else if (bossHit) {
+        // Serpent: only hittable while it rears up to spit. The hit chokes off the spit.
+        if (B!.kind === 'serpent') st.boss!.wind = 0;
         damageBoss(st, TUNING.bossDirectHit);
         st.stats.bossHits++;
         ev.push({ type: 'bossHit', x: sh.x, y: sh.y, dmg: TUNING.bossDirectHit });

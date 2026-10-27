@@ -168,6 +168,12 @@ export function feedbackFor(e: GameEvent, ctx: FeelContext): Feedback {
     case 'bossWindup':
       f.sound = 'windup';
       break;
+    case 'swallow':
+      f.sound = 'spit';
+      f.trauma = 0.06;
+      f.haptic = [8];
+      f.particles = 8;
+      break;
     case 'spit':
       f.sound = 'spit';
       f.trauma = 0.12;

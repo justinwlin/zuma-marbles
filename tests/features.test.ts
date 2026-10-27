@@ -322,6 +322,36 @@ describe('mini-boss serpent', () => {
     expect(st.phase).toBe('won');
   });
 
+  /** Frozen mini-boss level with a short chain halfway along, and a shot fired straight at the serpent. */
+  const atSerpent = (wind: number) => {
+    const level = generateLevel('snake', 4);
+    const { st } = frozenGame([0, 1, 2], { campaign: 'snake', index: 4, headGap: level.tracks[0].length / 2 });
+    st.boss!.t = 100;
+    st.boss!.wind = wind;
+    st.gun.cur = 3;
+    const B = level.bossFight!;
+    return { level, st, ev: run(st, level, 1.5, [{ type: 'fire', x: B.x, y: B.y }]) };
+  };
+
+  it('swallows shots into its closed mouth and spits them back onto the chain', () => {
+    const { st, ev } = atSerpent(0);
+    expect(ev.some((e) => e.type === 'swallow')).toBe(true);
+    expect(ev.some((e) => e.type === 'bossHit')).toBe(false);
+    expect(st.boss!.hp).toBe(st.boss!.max);
+    const balls = st.chains[0].balls;
+    expect(balls.length).toBe(4);
+    expect(balls[balls.length - 1].c).toBe(3);
+  });
+
+  it('takes a direct hit while rearing up, which chokes off the spit', () => {
+    const { st, ev } = atSerpent(TUNING.serpentWindup);
+    expect(ev.some((e) => e.type === 'bossHit')).toBe(true);
+    expect(ev.some((e) => e.type === 'spit' || e.type === 'swallow')).toBe(false);
+    expect(st.boss!.hp).toBe(st.boss!.max - TUNING.bossDirectHit);
+    expect(st.boss!.wind).toBe(0);
+    expect(st.chains[0].balls.length).toBe(3);
+  });
+
   it('the bot can beat mini-bosses, and replays are exact', () => {
     let wins = 0;
     for (const seed of ['m1', 'm2', 'm3', 'm4']) {
