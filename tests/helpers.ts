@@ -6,13 +6,14 @@ export function frozenGame(colors: number[], opts: { campaign?: string; index?: 
   const level = generateLevel(opts.campaign ?? 'test', opts.index ?? 0);
   const st = createGame(level);
   st.spawning = false;
-  st.rolling = false;
-  st.speed = 0;
-  st.stopT = 1e6; // freeze the pusher
+  const ch = st.chains[0];
+  ch.rolling = false;
+  ch.speed = 0;
+  ch.stopT = 1e6; // freeze the pusher
   st.gun.cool = 0;
   // Place the chain on the inner end of the track (closest to the launcher, unobstructed).
-  const headS = level.track.length - (opts.headGap ?? 500);
-  st.balls = colors.map((c, i) => mkBall(st, c, headS - (colors.length - 1 - i) * BALL_D));
+  const headS = level.tracks[0].length - (opts.headGap ?? 500);
+  ch.balls = colors.map((c, i) => mkBall(st, c, headS - (colors.length - 1 - i) * BALL_D));
   return { level, st };
 }
 
@@ -29,7 +30,7 @@ export function run(st: GameState, level: Level, seconds: number, cmds: Command[
 
 /** Fire command aimed straight at ball i (optionally offset along the track). */
 export function aimAt(level: Level, st: GameState, i: number, alongTrack = 0): Command {
-  const p = pointAt(level.track, st.balls[i].s + alongTrack);
+  const p = pointAt(level.tracks[0], st.chains[0].balls[i].s + alongTrack);
   return { type: 'fire', x: p.x, y: p.y };
 }
 

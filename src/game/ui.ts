@@ -1,13 +1,13 @@
 // DOM screens (menus, results, settings) and the HUD. Kept separate from the
 // canvas so text is crisp, accessible and laid out by CSS on every screen size.
 
-import { generateLevel, isLargeCampaign } from '../sim/levelgen';
+import { type BossKind, generateLevel, isLargeCampaign, type Mutator, MUTATOR_INFO } from '../sim/levelgen';
 import { POWER_NAMES, type GameState, progress, type Power } from '../sim/game';
 import type { Level } from '../sim/levelgen';
 import { PALETTE, powerIconUrl } from './render';
 import { CHARACTERS, characterThumb, type CharacterId } from './characters';
 import { TUNING } from '../sim/game';
-import { levelCode, type SaveData, type Settings } from './save';
+import { dailySeed, type EndlessRun, levelCode, type SaveData, type Settings } from './save';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -16,6 +16,8 @@ export interface UiActions {
   continueSnapshot(): void;
   resume(): void;
   restart(): void;
+  endless(daily: boolean): void;
+  continueEndless(): void;
   quit(): void;
   showLevels(): void;
   next(): void;
@@ -83,8 +85,9 @@ export class UI {
         <button class="btn primary" data-a="play">${save.unlocked > 0 || snap ? 'Play' : 'Start'}<small>Level ${save.unlocked + 1}</small></button>
         <div class="row">
           <button class="btn" data-a="levels">Levels</button>
-          <button class="btn" data-a="settings">Settings</button>
+          <button class="btn endless-btn" data-a="endless">Endless${save.endless ? '<small>run in progress</small>' : save.endlessBest ? `<small>best ${save.endlessBest.score.toLocaleString()}</small>` : ''}</button>
         </div>
+        <button class="btn" data-a="settings">Settings</button>
         <button class="btn ghost" data-a="help">How to play</button>
         ${this.canInstall ? `<button class="btn ghost" data-a="install">⬇ Install app</button>` : ''}
       </div>
@@ -93,6 +96,7 @@ export class UI {
         continue: () => this.a.continueSnapshot(),
         play: () => this.a.play(save.unlocked),
         levels: () => this.levels(save),
+        endless: () => this.endless(save),
         settings: () => this.settings(save, () => this.title(save)),
         help: () => this.help(() => this.title(save)),
         install: () => this.a.install(),
@@ -106,9 +110,11 @@ export class UI {
     const cards: string[] = [];
     for (let i = count - 1; i >= 0; i--) {
       const rec = save.best[i];
-      const name = levelName(save.campaignSeed, i);
+      const meta = levelMeta(save.campaignSeed, i);
       const st = rec ? '★'.repeat(rec.stars) + `<i>${'★'.repeat(3 - rec.stars)}</i>` : '<i>★★★</i>';
-      cards.push(`<button class="lv ${i === save.unlocked ? 'next' : ''}" data-a="lv" data-i="${i}"><b>${i + 1}</b><small>${name}</small><span class="st">${st}</span></button>`);
+      cards.push(
+        `<button class="lv ${i === save.unlocked ? 'next' : ''} ${meta.boss ?? ''}" data-a="lv" data-i="${i}"><b>${i + 1}</b><small>${meta.name}</small>${badges(meta)}<span class="st">${st}</span></button>`,
+      );
     }
     for (let i = count; i < count + 3; i++) cards.unshift(`<div class="lv locked"><b>${i + 1}</b><small>locked</small></div>`);
     // Highest level first: with infinite levels the current one stays near the top.
@@ -146,19 +152,67 @@ export class UI {
     );
   }
 
-  pause(save: SaveData, level: Level) {
+  endless(save: SaveData) {
+    const run = save.endless;
+    const today = dailySeed().slice(6);
+    const daily = save.dailyBest?.day === today ? save.dailyBest : undefined;
+    const fmt = (b?: { score: number; stage: number }) => (b ? `best ${b.score.toLocaleString()} · stage ${b.stage}` : 'no run yet');
+    this.show(
+      'endless',
+      `<div class="panel"><h2>Endless</h2>
+        <p class="sub">Stages roll straight into each other — one life, the score carries over. Every stage brings a new track and twist, with a mini-boss every 5 and a boss every 10.</p>
+        <div class="btns" style="margin:0 auto">
+          ${run ? `<button class="btn gold" data-a="cont">Continue run<small>${run.daily ? 'Daily' : 'Random'} · stage ${run.stage + 1} · ${run.runScore.toLocaleString()} pts</small></button>` : ''}
+          <button class="btn primary" data-a="random">Random run<small>${fmt(save.endlessBest)}</small></button>
+          <button class="btn" data-a="daily">Daily run<small>Same stages for everyone today · ${fmt(daily)}</small></button>
+          <button class="btn ghost" data-a="back">Back</button>
+        </div>
+        ${run ? '<p class="sub" style="font-size:12px;margin-top:10px">Starting a new run ends the one in progress.</p>' : ''}</div>`,
+      {
+        cont: () => this.a.continueEndless(),
+        random: () => this.a.endless(false),
+        daily: () => this.a.endless(true),
+        back: () => this.title(save),
+      },
+    );
+  }
+
+  endlessOver(r: { daily: boolean; total: number; stage: number; newBest: boolean; best: number }) {
+    this.show(
+      'result',
+      `<div class="panel">
+        <h2>Run over</h2>
+        <p class="sub">${r.daily ? 'Daily run' : 'Endless run'} · reached stage ${r.stage}</p>
+        <div class="big-score">${r.total.toLocaleString()}</div>
+        <p class="sub">${r.newBest ? '🏆 New best!' : `Best ${r.best.toLocaleString()}`}</p>
+        <div class="btns" style="margin:0 auto">
+          <button class="btn primary" data-a="again">${r.daily ? 'Retry daily' : 'New run'}</button>
+          <button class="btn" data-a="quit">Menu</button>
+        </div>
+      </div>`,
+      {
+        again: () => this.a.endless(r.daily),
+        quit: () => this.a.quit(),
+      },
+    );
+  }
+
+  pause(save: SaveData, level: Level, run: EndlessRun | null = null) {
+    const where = run
+      ? `Stage ${level.index + 1} · ${level.name}<br><span style="font-size:12px">${run.daily ? 'Daily' : 'Endless'} run · ${(run.runScore).toLocaleString()} banked</span>`
+      : `Level ${level.index + 1} · ${level.name}<br><span style="font-size:12px">code ${levelCode(level.campaignSeed, level.index)}</span>`;
     this.show(
       'pause',
-      `<div class="panel"><h2>Paused</h2><p class="sub">Level ${level.index + 1} · ${level.name}<br><span style="font-size:12px">code ${levelCode(level.campaignSeed, level.index)}</span></p>
+      `<div class="panel"><h2>Paused</h2><p class="sub">${where}</p>
       <div class="btns" style="margin:0 auto">
         <button class="btn primary" data-a="resume">Resume</button>
-        <div class="row"><button class="btn" data-a="restart">Restart</button><button class="btn" data-a="settings">Settings</button></div>
+        <div class="row"><button class="btn" data-a="restart">${run ? 'New run' : 'Restart'}</button><button class="btn" data-a="settings">Settings</button></div>
         <button class="btn ghost" data-a="quit">Save & quit to menu</button>
       </div></div>`,
       {
         resume: () => this.a.resume(),
         restart: () => this.a.restart(),
-        settings: () => this.settings(save, () => this.pause(save, level)),
+        settings: () => this.settings(save, () => this.pause(save, level, run)),
         quit: () => this.a.quit(),
       },
     );
@@ -323,23 +377,24 @@ export class UI {
 
   private lastScore = -1;
   private lastPowers = '';
-  updateHud(st: GameState, level: Level) {
-    $('hud-level').textContent = `Level ${level.index + 1}`;
-    $('hud-name').textContent = level.name;
+  updateHud(st: GameState, level: Level, run: EndlessRun | null = null) {
+    $('hud-level').textContent = `${run ? 'Stage' : 'Level'} ${level.index + 1}`;
+    $('hud-name').textContent = level.boss === 'boss' ? `BOSS · ${level.name}` : level.boss === 'mini' ? `MINI-BOSS · ${level.name}` : level.name;
+    const score = st.score + (run?.runScore ?? 0);
     const pr = progress(st, level);
     $('hud-bar').style.transform = `scaleX(${pr.bar})`;
     const bar = $('hud-bar').parentElement!;
     bar.classList.toggle('full', st.barFull);
     $('hud-bar-label').textContent = st.barFull ? 'CLEAR!' : 'ZUMA';
-    if (st.score !== this.lastScore) {
+    if (score !== this.lastScore) {
       const el = $('hud-score');
-      el.textContent = st.score.toLocaleString();
-      if (this.lastScore >= 0 && st.score > this.lastScore) {
+      el.textContent = score.toLocaleString();
+      if (this.lastScore >= 0 && score > this.lastScore) {
         el.classList.remove('bump');
         void el.offsetWidth;
         el.classList.add('bump');
       }
-      this.lastScore = st.score;
+      this.lastScore = score;
     }
     $('hud-streak').textContent = st.streak >= 3 ? `chain ×${st.streak}` : '';
     $('swap-cur').setAttribute('style', marbleCss(st.gun.cur));
@@ -386,13 +441,30 @@ const AIM_HINTS = {
   tap: 'Tap where you want to shoot · hold and slide to keep shooting',
 } as const;
 
-const nameCache = new Map<string, string>();
-export function levelName(seed: string, i: number): string {
+interface LevelMeta {
+  name: string;
+  boss: BossKind;
+  mutators: Mutator[];
+  twin: boolean;
+}
+const metaCache = new Map<string, LevelMeta>();
+export function levelMeta(seed: string, i: number): LevelMeta {
   const k = `${seed}#${i}`;
-  let n = nameCache.get(k);
-  if (!n) {
-    n = generateLevel(seed, i).name;
-    nameCache.set(k, n);
+  let m = metaCache.get(k);
+  if (!m) {
+    const l = generateLevel(seed, i);
+    m = { name: l.name, boss: l.boss, mutators: l.mutators, twin: l.tracks.length > 1 };
+    metaCache.set(k, m);
   }
-  return n;
+  return m;
+}
+
+const MUTATOR_ICON: Record<Mutator, string> = { surge: '⚡', streaky: '🌈' };
+function badges(m: LevelMeta): string {
+  const b: string[] = [];
+  if (m.boss === 'boss') b.push('<span class="bd boss" title="Boss">BOSS</span>');
+  else if (m.boss === 'mini') b.push('<span class="bd mini" title="Mini-boss">MINI</span>');
+  if (m.twin) b.push('<span class="bd" title="Two chains">2×</span>');
+  for (const x of m.mutators) b.push(`<span class="bd" title="${MUTATOR_INFO[x].name}: ${MUTATOR_INFO[x].desc}">${MUTATOR_ICON[x]}</span>`);
+  return b.length ? `<span class="bds">${b.join('')}</span>` : '';
 }

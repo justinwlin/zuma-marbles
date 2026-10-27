@@ -2,6 +2,7 @@
 // the tab (or the PWA being killed on a phone) resumes exactly where you were.
 
 import type { GameState } from '../sim/game';
+import { GEN_VERSION } from '../sim/levelgen';
 import type { CharacterId } from './characters';
 
 export interface Settings {
@@ -45,6 +46,31 @@ export interface SaveData {
   seenPowers?: number;
   /** Progress of campaigns you switched away from, keyed by campaign seed. */
   archive?: Record<string, CampaignProgress>;
+  /** Level generator version the snapshots were made with. */
+  gen?: number;
+  /** Endless run in progress (one life; score carries across stages). */
+  endless?: EndlessRun | null;
+  endlessBest?: { score: number; stage: number };
+  /** Best daily run, per day ("YYYYMMDD"). Only today's is kept. */
+  dailyBest?: { day: string; score: number; stage: number };
+}
+
+export interface EndlessRun {
+  seed: string;
+  daily: boolean;
+  /** Stage index (0-based) currently being played. */
+  stage: number;
+  /** Score banked from cleared stages. */
+  runScore: number;
+  snapshot: GameState | null;
+}
+
+/** Endless seeds: a daily one everybody shares, or a random one. */
+export function dailySeed(d = new Date()): string {
+  return `daily-${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+}
+export function endlessSeed(): string {
+  return `endless-${Math.floor(Math.random() * 1e8).toString(36)}`;
 }
 
 export interface CampaignProgress {
@@ -86,7 +112,7 @@ export function randomSeed(): string {
 }
 
 export function freshSave(seed = randomSeed()): SaveData {
-  return { v: 1, campaignSeed: seed, unlocked: 0, best: {}, totalScore: 0, settings: { ...DEFAULT_SETTINGS }, snapshot: null, tutorialSeen: false };
+  return { v: 1, campaignSeed: seed, unlocked: 0, best: {}, totalScore: 0, settings: { ...DEFAULT_SETTINGS }, snapshot: null, tutorialSeen: false, gen: GEN_VERSION };
 }
 
 export function loadSave(storage: Storage = localStorage): SaveData {
@@ -97,6 +123,7 @@ export function loadSave(storage: Storage = localStorage): SaveData {
       if (d && d.v === 1 && typeof d.campaignSeed === 'string') {
         d.settings = { ...DEFAULT_SETTINGS, ...d.settings };
         d.best ??= {};
+        migrateGen(d);
         return d;
       }
     }
@@ -104,6 +131,22 @@ export function loadSave(storage: Storage = localStorage): SaveData {
     /* corrupted save → start fresh */
   }
   return freshSave();
+}
+
+/** Set when loading a save made with an older level generator (show a one-time notice). */
+export let levelsUpdated = false;
+
+/**
+ * New generator → the same level numbers now have different tracks. Progress (unlocked
+ * level, stars) is kept; mid-level snapshots belong to the old tracks, so they are dropped.
+ */
+export function migrateGen(d: SaveData) {
+  if ((d.gen ?? 1) >= GEN_VERSION) return;
+  d.snapshot = null;
+  for (const k of Object.keys(d.archive ?? {})) d.archive![k].snapshot = null;
+  d.endless = null;
+  d.gen = GEN_VERSION;
+  levelsUpdated = true;
 }
 
 export function writeSave(d: SaveData, storage: Storage = localStorage) {

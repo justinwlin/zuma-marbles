@@ -11,7 +11,7 @@ const presets = process.argv.slice(4).length ? process.argv.slice(4) : Object.ke
 console.log(`campaign=${seed}`);
 for (let i = 0; i < levels; i++) {
   const lvl = generateLevel(seed, i);
-  const len = Math.round(lvl.track.length - lvl.track.visibleFrom);
+  const len = Math.round(lvl.tracks[0].length - lvl.tracks[0].visibleFrom);
   const row = [`L${String(i + 1).padStart(2)} ${lvl.family.padEnd(10)} len=${len} col=${lvl.colors} v=${lvl.speed.toFixed(0)} tries=${lvl.attempts}`];
   for (const p of presets) {
     const t0 = performance.now();

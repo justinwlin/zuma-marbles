@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { freshSave, levelCode, loadSave, parseLevelCode, starsFor, writeSave } from '../src/game/save';
+import { dailySeed, freshSave, levelCode, loadSave, parseLevelCode, starsFor, writeSave } from '../src/game/save';
+import { GEN_VERSION } from '../src/sim/levelgen';
 import { generateLevel } from '../src/sim/levelgen';
 import { createGame, restore, snapshot, step, stateHash } from '../src/sim/game';
 
@@ -45,7 +46,7 @@ describe('save data', () => {
     expect(parseLevelCode('nonsense')).toBeNull();
     // Same code → same level for anyone.
     const p = parseLevelCode(code)!;
-    expect(generateLevel(p.seed, p.index).points).toEqual(generateLevel('ember-42', 11).points);
+    expect(generateLevel(p.seed, p.index).paths).toEqual(generateLevel('ember-42', 11).paths);
   });
 
   it('stars reward keeping the chain away from the skull', () => {
@@ -72,5 +73,35 @@ describe('campaign switching', () => {
     d = switchCampaign(d, 'xl-jade-1');
     expect(d.unlocked).toBe(2);
     expect(Object.keys(d.archive ?? {})).toEqual(['jade-1']);
+  });
+
+  it('a save from the old level generator keeps progress but drops stale mid-level snapshots', () => {
+    const mem = new MemStorage() as unknown as Storage;
+    const old = freshSave('jade-1234') as ReturnType<typeof freshSave>;
+    delete old.gen; // saves before v2 had no generator version
+    old.unlocked = 12;
+    old.best[11] = { score: 900, stars: 3, seconds: 60 };
+    old.totalScore = 5000;
+    old.snapshot = { levelIndex: 12, state: {} as never, savedAt: 1 };
+    old.archive = { 'xl-jade-1234': { unlocked: 3, best: {}, totalScore: 10, snapshot: { levelIndex: 3, state: {} as never, savedAt: 1 } } };
+    writeSave(old, mem);
+    const back = loadSave(mem);
+    expect(back.unlocked).toBe(12);
+    expect(back.best[11].stars).toBe(3);
+    expect(back.totalScore).toBe(5000);
+    expect(back.snapshot).toBeNull();
+    expect(back.archive!['xl-jade-1234'].snapshot).toBeNull();
+    expect(back.archive!['xl-jade-1234'].unlocked).toBe(3);
+    expect(back.gen).toBe(GEN_VERSION);
+    // Current saves are left alone.
+    const cur = freshSave('a');
+    cur.snapshot = { levelIndex: 0, state: {} as never, savedAt: 1 };
+    writeSave(cur, mem);
+    expect(loadSave(mem).snapshot).not.toBeNull();
+  });
+
+  it('daily seed is the same all day', () => {
+    expect(dailySeed(new Date(2026, 9, 27, 1))).toBe('daily-20261027');
+    expect(dailySeed(new Date(2026, 9, 27, 23))).toBe('daily-20261027');
   });
 });

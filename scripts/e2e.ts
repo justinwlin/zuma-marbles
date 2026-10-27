@@ -85,6 +85,8 @@ async function runProfile(name: string, opts: BrowserContextOptions) {
   }, process.env.E2E_SEED ?? 'e2e-fixed');
   await page.reload();
   await page.waitForFunction(() => (window as unknown as { __zuma?: Z }).__zuma?.mode === 'title');
+  // The seeded save has no generator version (like every save before levels v2).
+  check('old saves get a one-time "levels updated" notice', ((await page.locator('#toast.show').textContent()) ?? '').includes('Levels got an update'));
   await page.waitForTimeout(1800);
   await page.screenshot({ path: `${OUT}/${name}-1-title.png` });
   const startBtn = page.locator('[data-a=play]');
@@ -367,6 +369,92 @@ async function runProfile(name: string, opts: BrowserContextOptions) {
   await page.waitForTimeout(300);
   const back = await page.evaluate(() => (window as unknown as { __zuma: Z & { save(): { campaignSeed: string; unlocked: number } } }).__zuma.save());
   check('switching back restores the normal campaign progress', !back.campaignSeed.startsWith('xl-') && back.unlocked === unlockedBefore);
+
+  // ---- Endless: title → Endless → Daily run; a cleared stage rolls into the next; losing ends the run.
+  type ZE = Omit<Z, 'level'> & { run(): { stage: number; runScore: number } | null; load(seed: string, i: number): void; level(): { length: number; chains: number; boss: string | null; seed: string } };
+  await page.locator('[data-a=back]').click();
+  await page.waitForTimeout(200);
+  await page.locator('[data-a=endless]').click();
+  await page.waitForTimeout(200);
+  check('endless screen offers random and daily runs', (await page.locator('[data-a=random]').isVisible()) && (await page.locator('[data-a=daily]').isVisible()));
+  await page.screenshot({ path: `${OUT}/${name}-12-endless.png` });
+  await page.locator('[data-a=daily]').click();
+  await page.waitForTimeout(800);
+  const e1 = await page.evaluate(() => ({ hud: document.getElementById('hud-level')!.textContent, seed: (window as unknown as { __zuma: ZE }).__zuma.level().seed }));
+  check('daily run starts at stage 1 with the daily seed', e1.hud === 'Stage 1' && /^daily-\d{8}$/.test(e1.seed), JSON.stringify(e1));
+  await page.waitForTimeout(1500);
+  await page.evaluate(() => {
+    const s = (window as unknown as { __zuma: ZE }).__zuma.state() as unknown as { score: number };
+    s.score = 5000;
+  });
+  await page.waitForTimeout(150);
+  await page.evaluate(() => {
+    const s = (window as unknown as { __zuma: ZE }).__zuma.state() as unknown as { chains: { balls: unknown[] }[]; shots: unknown[] };
+    s.chains.forEach((c) => (c.balls = []));
+    s.shots = [];
+  });
+  await page.waitForTimeout(2600);
+  const e2 = await page.evaluate(() => ({ hud: document.getElementById('hud-level')!.textContent, score: Number(document.getElementById('hud-score')!.textContent!.replace(/\D/g, '')), mode: (window as unknown as { __zuma: ZE }).__zuma.mode }));
+  check('a cleared stage rolls straight into the next, score carried', e2.hud === 'Stage 2' && e2.score >= 5000 && e2.mode === 'playing', JSON.stringify(e2));
+  await page.waitForTimeout(1500);
+  await page.evaluate(() => {
+    const z = (window as unknown as { __zuma: ZE }).__zuma;
+    const L = z.level().length;
+    const c = (z.state() as unknown as { chains: { balls: { s: number }[] }[] }).chains[0];
+    c.balls.forEach((b, i, a) => (b.s = L + 2 - (a.length - 1 - i) * 36));
+  });
+  await page.waitForFunction(() => (window as unknown as { __zuma: ZE }).__zuma.mode === 'result', null, { timeout: 8000 }).catch(() => {});
+  const over = await page.locator('[data-screen=result] h2').textContent().catch(() => '');
+  check('losing ends the run with a run-over screen', over === 'Run over', String(over));
+  await page.screenshot({ path: `${OUT}/${name}-13-runover.png` });
+  await page.locator('[data-a=quit]').click();
+  await page.waitForTimeout(300);
+  check('no run left in progress after it ends', (await page.evaluate(() => (window as unknown as { __zuma: ZE & { save(): { endless?: unknown } } }).__zuma.save().endless)) == null);
+
+  // ---- Two chains: both roll in, shots can land in the second chain.
+  await page.evaluate(() => (window as unknown as { __zuma: ZE }).__zuma.load('e2e-fixed', 13));
+  await page.waitForTimeout(3500);
+  const tc = await page.evaluate(() => {
+    const z = (window as unknown as { __zuma: ZE }).__zuma;
+    const s = z.state() as unknown as { chains: { balls: unknown[] }[] };
+    return { chains: z.level().chains, n0: s.chains[0].balls.length, n1: s.chains[1]?.balls.length ?? 0 };
+  });
+  check('two-chain level: both chains roll in', tc.chains === 2 && tc.n0 > 5 && tc.n1 > 5, JSON.stringify(tc));
+  await page.screenshot({ path: `${OUT}/${name}-14-twin.png` });
+  const before1 = tc.n1;
+  const tgt1 = await page.evaluate(() => {
+    const z = (window as unknown as { __zuma: ZE }).__zuma;
+    const s = z.state() as unknown as { chains: { balls: unknown[] }[] };
+    (s as unknown as { gun: { cool: number } }).gun.cool = 0;
+    for (const ch of s.chains) (ch as unknown as { stopT: number }).stopT = 1e6;
+    // The second-chain marble closest to the launcher (clear line of fire, away from HUD buttons).
+    const zz = z as unknown as { ballScreen(i: number, c: number): { x: number; y: number } | null };
+    const L = (z as unknown as { level(): { launcher: { x: number; y: number } } }).level().launcher;
+    const lp = z.worldToScreen(L.x, L.y);
+    let best: { x: number; y: number } | null = null;
+    for (let i = 0; i < s.chains[1].balls.length; i++) {
+      const p = zz.ballScreen(i, 1);
+      if (p && (!best || Math.hypot(p.x - lp.x, p.y - lp.y) < Math.hypot(best.x - lp.x, best.y - lp.y))) best = p;
+    }
+    return best;
+  });
+  if (tgt1) {
+    if (opts.hasTouch) {
+      const up = await touchDrag(page, [tgt1, tgt1]);
+      await up();
+    } else await page.mouse.click(tgt1.x, tgt1.y);
+  }
+  await page.waitForTimeout(700);
+  const after1 = await page.evaluate(() => {
+    const s = (window as unknown as { __zuma: ZE }).__zuma.state() as unknown as { chains: { balls: { clr: number }[] }[]; stats: { shots: number; matches: number } };
+    return { n1: s.chains[1].balls.length, matches: s.stats.matches };
+  });
+  check('a shot at the second chain lands in it', after1.n1 !== before1 || after1.matches > 0, `${before1} → ${after1.n1} marbles`);
+  // Boss banner
+  await page.evaluate(() => (window as unknown as { __zuma: ZE }).__zuma.load('e2e-fixed', 9));
+  await page.waitForTimeout(450);
+  check('boss level announces itself', (await page.evaluate(() => (window as unknown as { __zuma: ZE }).__zuma.level().boss)) === 'boss' && (await page.locator('#hud-name').textContent())!.startsWith('BOSS'));
+  await page.screenshot({ path: `${OUT}/${name}-15-boss.png` });
 
   check('no console errors', errors.length === 0, errors.slice(0, 3).join(' | '));
   await browser.close();

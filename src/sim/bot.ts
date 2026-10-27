@@ -2,7 +2,7 @@
 // same Command interface as a human, so whatever it can do, a person can.
 
 import type { Level } from './levelgen';
-import { type Command, type GameState, raycast, runIfInserted, step, TICK_HZ, TUNING, type GameEvent } from './game';
+import { type Command, type GameState, isRolling, progress, raycast, runIfInserted, step, TICK_HZ, TUNING, type GameEvent } from './game';
 import { pointAt } from './track';
 import { Rng } from './rng';
 
@@ -33,14 +33,15 @@ interface Choice {
 function evalShot(st: GameState, level: Level, c: number, dx: number, dy: number): { value: number; x: number; y: number } | null {
   const hit = raycast(st, level, dx, dy);
   if (!hit) return null;
-  const balls = st.balls;
+  const balls = st.chains[hit.chain].balls;
+  const track = level.tracks[hit.chain];
   // How centred the hit is: 0 = dead centre, 1 = grazing edge.
-  const hb = pointAt(level.track, balls[hit.index].s);
+  const hb = pointAt(track, balls[hit.index].s);
   const ox = level.launcher.x;
   const oy = level.launcher.y;
   const perp = Math.abs((hb.x - ox) * dy - (hb.y - oy) * dx) / TUNING.hitDist;
   const run = runIfInserted(st, hit, c);
-  const L = level.track.length;
+  const L = track.length;
   const urgency = balls[hit.index].s / L;
   let value: number;
   if (run >= 2) value = 10 + run * 2 + urgency * 12 + (balls[hit.index].p ? 4 : 0);
@@ -59,7 +60,7 @@ export interface BotMemory {
 export function decide(st: GameState, level: Level, opts: BotOptions, rng: Rng, mem: BotMemory = { idleSince: -1 }): Command[] {
   if (st.phase !== 'playing' || st.gun.cool > 0) return [];
   // Wait for earlier shots and pops to resolve, like a careful player.
-  if (st.shots.length || st.balls.some((b) => b.ins < 1 || b.clr >= 0)) return [];
+  if (st.shots.length || st.chains.some((ch) => ch.balls.some((b) => b.ins < 1 || b.clr >= 0))) return [];
   let best: Choice | null = null;
   for (const swap of [false, true]) {
     const c = swap ? st.gun.next : st.gun.cur;
@@ -118,13 +119,12 @@ export function playLevel(
   let peak = 0;
   while (st.phase !== 'won' && st.phase !== 'lost' && st.tick < maxSeconds * TICK_HZ) {
     let cmds: Command[] = [];
-    if (st.tick % thinkTicks === 0 && !st.rolling) cmds = decide(st, level, opts, rng, mem);
+    if (st.tick % thinkTicks === 0 && !isRolling(st)) cmds = decide(st, level, opts, rng, mem);
     for (const c of cmds) inputs.push([st.tick + 1, c]);
     const ev = step(st, level, cmds);
     for (const e of ev) counts[e.type] = (counts[e.type] ?? 0) + 1;
     if (onEvents) onEvents(ev, st);
-    const n = st.balls.length;
-    if (n) peak = Math.max(peak, st.balls[n - 1].s / level.track.length);
+    peak = Math.max(peak, progress(st, level).head);
   }
   return {
     outcome: st.phase === 'won' ? 'won' : st.phase === 'lost' ? 'lost' : 'timeout',

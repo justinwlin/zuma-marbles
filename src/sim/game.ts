@@ -9,7 +9,7 @@
 
 import { BALL_D, BALL_R, type Level } from './levelgen';
 import { next as rngNext } from './rng';
-import { pointAt, type Pt, tangentAt } from './track';
+import { pointAt, type Pt, tangentAt, type Track } from './track';
 
 export const TICK_HZ = 120;
 export const DT = 1 / TICK_HZ;
@@ -56,8 +56,6 @@ export const TUNING = {
   reverseTime: 3,
   reverseSpeed: 100 * K,
   aimTime: 16,
-  /** Chain colours: chance a new ball repeats the previous colour (Zuma: 41%). */
-  repeatChance: 0.41,
   /** When the bar fills with the chain past halfway: free reverse + slow. */
   barBackTime: 3,
   barSlowTime: 11,
@@ -107,8 +105,18 @@ export interface Shot {
 
 export type Phase = 'playing' | 'losing' | 'lost' | 'won';
 
+/** One chain of marbles on one track (levels can have several). */
+export interface Chain {
+  balls: Ball[]; // ordered by s ascending: [0] = rear (pusher), [n-1] = head
+  pending: number[]; // colours of balls pushed back off the start (re-enter first)
+  speed: number; // current pusher speed px/s
+  rolling: boolean; // level-start roll-in phase
+  stopT: number;
+  lastColor: number;
+}
+
 export interface GameState {
-  v: 1;
+  v: 2;
   campaignSeed: string;
   levelIndex: number;
   tick: number;
@@ -116,16 +124,12 @@ export interface GameState {
   rngChain: number;
   rngGun: number;
   nextId: number;
-  balls: Ball[]; // ordered by s ascending: [0] = rear (pusher), [n-1] = head
-  pending: number[]; // colours of balls pushed back off the start (re-enter first)
+  /** One per track; chains[i] runs on level.tracks[i]. */
+  chains: Chain[];
   shots: Shot[];
-  speed: number; // current pusher speed px/s
-  rolling: boolean; // level-start roll-in phase
-  stopT: number;
   slowT: number;
   revT: number;
   aimT: number;
-  lastColor: number;
   spawning: boolean;
   barFull: boolean;
   score: number;
@@ -166,7 +170,7 @@ export type GameEvent =
 
 export function createGame(level: Level): GameState {
   const st: GameState = {
-    v: 1,
+    v: 2,
     campaignSeed: level.campaignSeed,
     levelIndex: level.index,
     tick: 0,
@@ -174,16 +178,11 @@ export function createGame(level: Level): GameState {
     rngChain: level.seed ^ 0xa5a5a5a5,
     rngGun: level.seed ^ 0x5a5a5a5a,
     nextId: 1,
-    balls: [],
-    pending: [],
+    chains: [],
     shots: [],
-    speed: 0,
-    rolling: true,
-    stopT: 0,
     slowT: 0,
     revT: 0,
     aimT: 0,
-    lastColor: -1,
     spawning: true,
     barFull: false,
     score: 0,
@@ -194,8 +193,10 @@ export function createGame(level: Level): GameState {
   };
   // Roll-in: choose an initial speed that decelerates to cruise after covering rollIn × length.
   const v = level.speed;
-  const dist = level.track.visibleFrom + (level.track.length - level.track.visibleFrom) * TUNING.rollIn;
-  st.speed = Math.sqrt(v * v + 2 * TUNING.decel * dist);
+  for (const tr of level.tracks) {
+    const dist = tr.visibleFrom + (tr.length - tr.visibleFrom) * TUNING.rollIn;
+    st.chains.push({ balls: [], pending: [], speed: Math.sqrt(v * v + 2 * TUNING.decel * dist), rolling: true, stopT: 0, lastColor: -1 });
+  }
   st.gun.cur = randColor(st, level, 'gun');
   st.gun.next = randColor(st, level, 'gun');
   return st;
@@ -212,15 +213,29 @@ function rand(st: GameState, stream: 'chain' | 'gun'): number {
   return v;
 }
 
-/** Colours currently on the track (bitmask). */
+/** Colours currently on the board (bitmask). */
 function presentMask(st: GameState): number {
   let m = 0;
-  for (const b of st.balls) if (b.clr < 0) m |= 1 << b.c;
-  for (const c of st.pending) m |= 1 << c;
+  for (const ch of st.chains) {
+    for (const b of ch.balls) if (b.clr < 0) m |= 1 << b.c;
+    for (const c of ch.pending) m |= 1 << c;
+  }
   return m;
 }
 
-function randColor(st: GameState, level: Level, stream: 'chain' | 'gun'): number {
+/** Total marbles on the board. */
+export function ballCount(st: GameState): number {
+  let n = 0;
+  for (const ch of st.chains) n += ch.balls.length;
+  return n;
+}
+
+/** Any chain still in its level-start roll-in. */
+export function isRolling(st: GameState): boolean {
+  return st.chains.some((ch) => ch.rolling);
+}
+
+function randColor(st: GameState, level: Level, stream: 'chain' | 'gun', ch?: Chain): number {
   if (stream === 'gun') {
     const mask = presentMask(st);
     const opts: number[] = [];
@@ -228,10 +243,11 @@ function randColor(st: GameState, level: Level, stream: 'chain' | 'gun'): number
     if (opts.length === 0) for (let c = 0; c < level.colors; c++) opts.push(c);
     return opts[Math.floor(rand(st, 'gun') * opts.length)];
   }
-  // Chain: repeat previous colour with Zuma's probability, else a different colour.
-  if (st.lastColor >= 0 && rand(st, 'chain') < TUNING.repeatChance) return st.lastColor;
-  let c = Math.floor(rand(st, 'chain') * (level.colors - (st.lastColor >= 0 ? 1 : 0)));
-  if (st.lastColor >= 0 && c >= st.lastColor) c++;
+  // Chain: repeat previous colour with the level's probability (Zuma: 41%), else a different colour.
+  const last = ch!.lastColor;
+  if (last >= 0 && rand(st, 'chain') < level.repeatChance) return last;
+  let c = Math.floor(rand(st, 'chain') * (level.colors - (last >= 0 ? 1 : 0)));
+  if (last >= 0 && c >= last) c++;
   return c;
 }
 
@@ -261,17 +277,20 @@ export function step(st: GameState, level: Level, cmds: readonly Command[] = [])
   st.slowT = Math.max(0, st.slowT - DT);
   st.revT = Math.max(0, st.revT - DT);
   st.aimT = Math.max(0, st.aimT - DT);
-  st.stopT = Math.max(0, st.stopT - DT);
-  for (const b of st.balls) {
-    if (b.p !== Power.None && b.s > level.track.visibleFrom) {
-      b.pt -= DT;
-      if (b.pt <= 0) b.p = Power.None;
+  st.chains.forEach((ch, ci) => {
+    ch.stopT = Math.max(0, ch.stopT - DT);
+    const vis = level.tracks[ci].visibleFrom;
+    for (const b of ch.balls) {
+      if (b.p !== Power.None && b.s > vis) {
+        b.pt -= DT;
+        if (b.pt <= 0) b.p = Power.None;
+      }
     }
-  }
+  });
 
   stepShots(st, level, ev);
-  stepChain(st, level, ev);
-  stepClearing(st, level, ev);
+  for (let ci = 0; ci < st.chains.length; ci++) stepChain(st, level, ci, ev);
+  for (let ci = 0; ci < st.chains.length; ci++) stepClearing(st, level, ci, ev);
   maybeSpawnPower(st, level);
   rerollGun(st, level);
 
@@ -279,28 +298,33 @@ export function step(st: GameState, level: Level, cmds: readonly Command[] = [])
   if (!st.barFull && st.score >= barTarget(level)) {
     st.barFull = true;
     st.spawning = false;
-    st.pending.length = 0;
-    // Drop queued balls that are still off-screen in the entry tunnel.
-    st.balls = st.balls.filter((b) => b.s >= level.track.visibleFrom - BALL_D || b.clr >= 0);
-    const head = st.balls.length ? st.balls[st.balls.length - 1].s : 0;
-    if (head > level.track.length * 0.5) {
+    let past = false;
+    st.chains.forEach((ch, ci) => {
+      const tr = level.tracks[ci];
+      ch.pending.length = 0;
+      // Drop queued balls that are still off-screen in the entry tunnel.
+      ch.balls = ch.balls.filter((b) => b.s >= tr.visibleFrom - BALL_D || b.clr >= 0);
+      const head = ch.balls.length ? ch.balls[ch.balls.length - 1].s : 0;
+      if (head > tr.length * 0.5) past = true;
+    });
+    if (past) {
       st.revT = Math.max(st.revT, TUNING.barBackTime);
       st.slowT = Math.max(st.slowT, TUNING.barSlowTime);
     }
     ev.push({ type: 'barFull' });
   }
 
-  // Lose / win
-  const n = st.balls.length;
-  if (n && st.balls[n - 1].s >= level.track.length) {
-    const busy = st.balls.some((b) => b.clr >= 0 || b.suck > 0 || b.ins < 1);
-    if (!busy) {
-      st.phase = 'losing';
-      st.loseV = Math.max(st.speed, 200);
-      st.shots.length = 0;
-      ev.push({ type: 'lose' });
-    }
-  } else if (st.barFull && n === 0 && st.shots.length === 0) {
+  // Lose (any chain reaches its skull) / win (bar full and every chain cleared)
+  const lostChain = st.chains.find((ch, ci) => {
+    const n = ch.balls.length;
+    return n > 0 && ch.balls[n - 1].s >= level.tracks[ci].length && !ch.balls.some((b) => b.clr >= 0 || b.suck > 0 || b.ins < 1);
+  });
+  if (lostChain) {
+    st.phase = 'losing';
+    st.loseV = Math.max(lostChain.speed, 200);
+    st.shots.length = 0;
+    ev.push({ type: 'lose' });
+  } else if (st.barFull && ballCount(st) === 0 && st.shots.length === 0) {
     st.phase = 'won';
     ev.push({ type: 'won' });
   }
@@ -348,7 +372,7 @@ function applyCommand(st: GameState, level: Level, cmd: Command, ev: GameEvent[]
 }
 
 function rerollGun(st: GameState, level: Level) {
-  if (st.balls.length === 0) return;
+  if (ballCount(st) === 0) return;
   const mask = presentMask(st);
   if (!(mask & (1 << st.gun.cur))) st.gun.cur = randColor(st, level, 'gun');
   if (!(mask & (1 << st.gun.next))) st.gun.next = randColor(st, level, 'gun');
@@ -359,8 +383,8 @@ function rerollGun(st: GameState, level: Level) {
 const tmp: Pt = { x: 0, y: 0 };
 const tmp2: Pt = { x: 0, y: 0 };
 
-function hittable(b: Ball, level: Level) {
-  return b.clr < 0 && b.ins >= 1 && b.s > level.track.visibleFrom + BALL_R * 0.5;
+function hittable(b: Ball, track: Track) {
+  return b.clr < 0 && b.ins >= 1 && b.s > track.visibleFrom + BALL_R * 0.5;
 }
 
 function stepShots(st: GameState, level: Level, ev: GameEvent[]) {
@@ -374,13 +398,16 @@ function stepShots(st: GameState, level: Level, ev: GameEvent[]) {
       sh.x += (sh.vx * DT) / sub;
       sh.y += (sh.vy * DT) / sub;
       // Gap detection: flying between two balls separated by a gap.
-      for (let i = 1; i < st.balls.length; i++) {
-        const a = st.balls[i - 1];
-        const b = st.balls[i];
+      for (let ci = 0; ci < st.chains.length; ci++) {
+       const balls = st.chains[ci].balls;
+       const tr = level.tracks[ci];
+       for (let i = 1; i < balls.length; i++) {
+        const a = balls[i - 1];
+        const b = balls[i];
         const gap = b.s - a.s - BALL_D;
-        if (gap < 4 || !hittable(a, level) || !hittable(b, level)) continue;
-        pointAt(level.track, a.s, tmp);
-        pointAt(level.track, b.s, tmp2);
+        if (gap < 4 || !hittable(a, tr) || !hittable(b, tr)) continue;
+        pointAt(tr, a.s, tmp);
+        pointAt(tr, b.s, tmp2);
         const ex = tmp2.x - tmp.x;
         const ey = tmp2.y - tmp.y;
         const el2 = ex * ex + ey * ey;
@@ -392,6 +419,7 @@ function stepShots(st: GameState, level: Level, ev: GameEvent[]) {
           sh.gaps.push(b.id);
           sh.minGap = Math.min(sh.minGap, gap);
         }
+       }
       }
       // Collision with chain: swept circle test over this substep, earliest contact wins.
       // Same maths as raycast(), so the aim preview and the real shot always agree.
@@ -403,11 +431,15 @@ function stepShots(st: GameState, level: Level, ev: GameEvent[]) {
       const ox = sh.x - segX;
       const oy = sh.y - segY;
       let best = -1;
+      let bestC = 0;
       let bestT = Infinity;
-      for (let i = 0; i < st.balls.length; i++) {
-        const b = st.balls[i];
-        if (!hittable(b, level)) continue;
-        pointAt(level.track, b.s, tmp);
+      for (let ci = 0; ci < st.chains.length; ci++) {
+       const balls = st.chains[ci].balls;
+       const tr = level.tracks[ci];
+       for (let i = 0; i < balls.length; i++) {
+        const b = balls[i];
+        if (!hittable(b, tr)) continue;
+        pointAt(tr, b.s, tmp);
         const fx = ox - tmp.x;
         const fy = oy - tmp.y;
         const c = fx * fx + fy * fy - hd2;
@@ -423,14 +455,16 @@ function stepShots(st: GameState, level: Level, ev: GameEvent[]) {
         if (t < bestT) {
           bestT = t;
           best = i;
+          bestC = ci;
         }
+       }
       }
       if (best >= 0) {
         sh.x = ox + ux * bestT;
         sh.y = oy + uy * bestT;
       }
       if (best >= 0) {
-        insertShot(st, level, sh, best, ev);
+        insertShot(st, level, sh, bestC, best, ev);
         st.shots.splice(si, 1);
         done = true;
       } else if (sh.x < -60 || sh.x > level.worldW + 60 || sh.y < -60 || sh.y > level.worldH + 60) {
@@ -445,15 +479,16 @@ function stepShots(st: GameState, level: Level, ev: GameEvent[]) {
 }
 
 /** Shared by the simulation and the aim preview: is the impact in front (toward the skull)? */
-export function insertInFront(level: Level, ball: Ball, x: number, y: number): boolean {
-  pointAt(level.track, ball.s, tmp);
-  const t = tangentAt(level.track, ball.s);
+export function insertInFront(track: Track, ball: Ball, x: number, y: number): boolean {
+  pointAt(track, ball.s, tmp);
+  const t = tangentAt(track, ball.s);
   return (x - tmp.x) * t.x + (y - tmp.y) * t.y > 0;
 }
 
-function insertShot(st: GameState, level: Level, sh: Shot, hitIdx: number, ev: GameEvent[]) {
-  const hit = st.balls[hitIdx];
-  const front = insertInFront(level, hit, sh.x, sh.y);
+function insertShot(st: GameState, level: Level, sh: Shot, ci: number, hitIdx: number, ev: GameEvent[]) {
+  const balls = st.chains[ci].balls;
+  const hit = balls[hitIdx];
+  const front = insertInFront(level.tracks[ci], hit, sh.x, sh.y);
   const nb = newBall(st, sh.c, hit.s);
   nb.ins = 0;
   nb.ix = sh.x;
@@ -462,11 +497,11 @@ function insertShot(st: GameState, level: Level, sh: Shot, hitIdx: number, ev: G
   nb.gb = sh.gaps.length ? gapBonus(sh) : 0;
   if (front) {
     nb.g = 0; // gap to the hit ball grows from 0 → D
-    st.balls.splice(hitIdx + 1, 0, nb);
+    balls.splice(hitIdx + 1, 0, nb);
   } else {
     nb.g = 1;
     hit.g = 0; // the hit ball's gap to the new ball grows
-    st.balls.splice(hitIdx, 0, nb);
+    balls.splice(hitIdx, 0, nb);
   }
   ev.push({ type: 'hit', x: sh.x, y: sh.y, c: sh.c, front });
 }
@@ -481,14 +516,21 @@ function gapBonus(sh: Shot): number {
 
 // ------------------------------------------------------------------ chain
 
+/** How far the most advanced chain head is along its track (0..1). */
 function headProgress(st: GameState, level: Level): number {
-  const n = st.balls.length;
-  return n ? st.balls[n - 1].s / level.track.length : 0;
+  let m = 0;
+  st.chains.forEach((ch, ci) => {
+    const n = ch.balls.length;
+    if (n) m = Math.max(m, ch.balls[n - 1].s / level.tracks[ci].length);
+  });
+  return m;
 }
 
-function stepChain(st: GameState, level: Level, ev: GameEvent[]) {
-  const balls = st.balls;
-  const L = level.track.length;
+function stepChain(st: GameState, level: Level, ci: number, ev: GameEvent[]) {
+  const ch = st.chains[ci];
+  const balls = ch.balls;
+  const track = level.tracks[ci];
+  const L = track.length;
 
   // Target pusher speed: cruise, slowed by danger zone and the Slow power-up.
   let target = level.speed;
@@ -507,15 +549,15 @@ function stepChain(st: GameState, level: Level, ev: GameEvent[]) {
   }
   if (st.slowT > 0) target /= TUNING.slowFactor;
 
-  if (st.rolling) {
-    if (st.speed <= target + 0.5 || st.tick > TUNING.rollInMax * TICK_HZ) {
-      st.rolling = false;
-      ev.push({ type: 'rollInDone' });
+  if (ch.rolling) {
+    if (ch.speed <= target + 0.5 || st.tick > TUNING.rollInMax * TICK_HZ) {
+      ch.rolling = false;
+      if (!isRolling(st)) ev.push({ type: 'rollInDone' });
     }
   }
-  if (st.stopT > 0) st.speed = 0;
-  else if (st.speed > target) st.speed = Math.max(target, st.speed - TUNING.decel * DT);
-  else st.speed = Math.min(target, st.speed + (st.rolling ? TUNING.decel : TUNING.accel) * DT);
+  if (ch.stopT > 0) ch.speed = 0;
+  else if (ch.speed > target) ch.speed = Math.max(target, ch.speed - TUNING.decel * DT);
+  else ch.speed = Math.min(target, ch.speed + (ch.rolling ? TUNING.decel : TUNING.accel) * DT);
 
   // Insertion growth.
   for (const b of balls) {
@@ -523,7 +565,7 @@ function stepChain(st: GameState, level: Level, ev: GameEvent[]) {
   }
 
   // 1) Pusher moves the rear ball forward (unless reversing).
-  if (balls.length && st.revT <= 0) balls[0].s += st.speed * DT;
+  if (balls.length && st.revT <= 0) balls[0].s += ch.speed * DT;
   // Forward constraint pass.
   for (let i = 1; i < balls.length; i++) {
     const min = balls[i - 1].s + gapOf(balls[i]);
@@ -545,14 +587,14 @@ function stepChain(st: GameState, level: Level, ev: GameEvent[]) {
         moveGroupBack(balls, i, -fix);
         b.suck = 0;
         const combo = b.combo;
-        const matched = checkMatch(st, level, i, combo, ev, 0);
-        pointAt(level.track, b.s, tmp);
+        const matched = checkMatch(st, level, ci, i, combo, ev, 0);
+        pointAt(track, b.s, tmp);
         ev.push({ type: 'contact', x: tmp.x, y: tmp.y, combo, matched });
         if (matched) {
           // Knock the chain backwards — the Zuma combo shove.
           prev.rt = TUNING.recoilTime;
           prev.rv = Math.max(TUNING.recoilBase, combo * TUNING.recoilPerCombo);
-          st.stopT = Math.max(st.stopT, TUNING.stopAfterRecoil);
+          ch.stopT = Math.max(ch.stopT, TUNING.stopAfterRecoil);
         }
       }
     }
@@ -573,7 +615,7 @@ function stepChain(st: GameState, level: Level, ev: GameEvent[]) {
   // Balls pushed back off the start return to the queue (re-enter in order).
   while (balls.length && balls[0].s < -BALL_D && balls[0].clr < 0) {
     const b = balls.shift()!;
-    if (st.spawning) st.pending.push(b.c);
+    if (st.spawning) ch.pending.push(b.c);
   }
 
   // 3) Spawn new balls at the start.
@@ -581,10 +623,10 @@ function stepChain(st: GameState, level: Level, ev: GameEvent[]) {
     while (balls.length === 0 || balls[0].s >= BALL_D) {
       const s = balls.length ? balls[0].s - BALL_D : 0;
       let c: number;
-      if (st.pending.length) c = st.pending.pop()!;
+      if (ch.pending.length) c = ch.pending.pop()!;
       else {
-        c = randColor(st, level, 'chain');
-        st.lastColor = c;
+        c = randColor(st, level, 'chain', ch);
+        ch.lastColor = c;
       }
       balls.unshift(newBall(st, c, s));
       if (balls.length > 400) break;
@@ -597,16 +639,16 @@ function stepChain(st: GameState, level: Level, ev: GameEvent[]) {
     if (b.ins < 1) {
       b.ins = Math.min(1, b.ins + DT / TUNING.insertTime);
       if (b.ins >= 1) {
-        pointAt(level.track, b.s, tmp);
+        pointAt(track, b.s, tmp);
         ev.push({ type: 'settle', x: tmp.x, y: tmp.y, c: b.c });
         const gb = b.gb;
         b.gb = 0;
-        const matched = checkMatch(st, level, i, 0, ev, gb);
+        const matched = checkMatch(st, level, ci, i, 0, ev, gb);
         if (matched) {
           st.streak++;
           st.stats.maxStreak = Math.max(st.stats.maxStreak, st.streak);
           if (gb) st.stats.gapShots++;
-        } else if (!balls.some((x) => x.suck > 0)) {
+        } else if (!st.chains.some((o) => o.balls.some((x) => x.suck > 0))) {
           st.streak = 0;
         }
       }
@@ -626,8 +668,9 @@ function touching(a: Ball, b: Ball) {
 }
 
 /** Find the colour run through index i; if ≥3 start clearing. */
-function checkMatch(st: GameState, level: Level, i: number, combo: number, ev: GameEvent[], gb: number): boolean {
-  const balls = st.balls;
+function checkMatch(st: GameState, level: Level, ci: number, i: number, combo: number, ev: GameEvent[], gb: number): boolean {
+  const balls = st.chains[ci].balls;
+  const track = level.tracks[ci];
   const b = balls[i];
   if (!b || b.clr >= 0 || b.ins < 1) return false;
   let lo = i;
@@ -646,8 +689,8 @@ function checkMatch(st: GameState, level: Level, i: number, combo: number, ev: G
   let sx = 0;
   let sy = 0;
   for (let k = lo; k <= hi; k++) {
-    startClear(st, level, balls[k], combo, ev);
-    pointAt(level.track, balls[k].s, tmp);
+    startClear(st, level, ci, balls[k], combo, ev);
+    pointAt(track, balls[k].s, tmp);
     popped.push({ x: tmp.x, y: tmp.y, c: balls[k].c, p: balls[k].p });
     sx += tmp.x;
     sy += tmp.y;
@@ -656,20 +699,20 @@ function checkMatch(st: GameState, level: Level, i: number, combo: number, ev: G
   return true;
 }
 
-function startClear(st: GameState, level: Level, b: Ball, combo: number, ev: GameEvent[]) {
+function startClear(st: GameState, level: Level, ci: number, b: Ball, combo: number, ev: GameEvent[]) {
   if (b.clr >= 0) return;
   b.clr = 0;
   b.combo = combo;
   b.suck = 0;
   st.stats.popped++;
-  if (b.p !== Power.None) activatePower(st, level, b, ev);
+  if (b.p !== Power.None) activatePower(st, level, ci, b, ev);
 }
 
-function activatePower(st: GameState, level: Level, b: Ball, ev: GameEvent[]) {
+function activatePower(st: GameState, level: Level, ci: number, b: Ball, ev: GameEvent[]) {
   const p = b.p;
   b.p = Power.None;
   st.stats.powers++;
-  pointAt(level.track, b.s, tmp);
+  pointAt(level.tracks[ci], b.s, tmp);
   const bx = tmp.x;
   const by = tmp.y;
   ev.push({ type: 'power', power: p, x: bx, y: by });
@@ -679,22 +722,27 @@ function activatePower(st: GameState, level: Level, b: Ball, ev: GameEvent[]) {
   else if (p === Power.Bomb) {
     const r2 = TUNING.bombRadius * TUNING.bombRadius;
     let n = 0;
-    for (const o of st.balls) {
-      if (o.clr >= 0 || o.s < level.track.visibleFrom) continue;
-      pointAt(level.track, o.s, tmp);
-      const dx = tmp.x - bx;
-      const dy = tmp.y - by;
-      if (dx * dx + dy * dy < r2) {
-        startClear(st, level, o, b.combo, ev);
-        n++;
+    // The blast hits marbles on every track in range.
+    for (let oc = 0; oc < st.chains.length; oc++) {
+      const tr = level.tracks[oc];
+      for (const o of st.chains[oc].balls) {
+        if (o.clr >= 0 || o.s < tr.visibleFrom) continue;
+        pointAt(tr, o.s, tmp);
+        const dx = tmp.x - bx;
+        const dy = tmp.y - by;
+        if (dx * dx + dy * dy < r2) {
+          startClear(st, level, oc, o, b.combo, ev);
+          n++;
+        }
       }
     }
     st.score += 10 * n;
   }
 }
 
-function stepClearing(st: GameState, level: Level, ev: GameEvent[]) {
-  const balls = st.balls;
+function stepClearing(st: GameState, level: Level, ci: number, ev: GameEvent[]) {
+  const ch = st.chains[ci];
+  const balls = ch.balls;
   for (const b of balls) if (b.clr >= 0) b.clr += DT;
   for (let i = 0; i < balls.length; ) {
     if (balls[i].clr >= TUNING.clearTime) {
@@ -703,13 +751,13 @@ function stepClearing(st: GameState, level: Level, ev: GameEvent[]) {
       const combo = balls[i].combo;
       const wasRear = i === 0;
       balls.splice(i, j - i);
-      if (wasRear) st.stopT = Math.max(st.stopT, TUNING.stopAfterRearClear);
+      if (wasRear) ch.stopT = Math.max(ch.stopT, TUNING.stopAfterRearClear);
       const prev = balls[i - 1];
       const nxt = balls[i];
       if (prev && nxt && prev.c === nxt.c && prev.clr < 0 && nxt.clr < 0) {
         nxt.suck = TUNING.suckV0;
         nxt.combo = combo + 1;
-        pointAt(level.track, nxt.s, tmp);
+        pointAt(level.tracks[ci], nxt.s, tmp);
         ev.push({ type: 'suck', x: tmp.x, y: tmp.y });
       }
     } else i++;
@@ -717,27 +765,32 @@ function stepClearing(st: GameState, level: Level, ev: GameEvent[]) {
 }
 
 function maybeSpawnPower(st: GameState, level: Level) {
-  if (!st.spawning || st.balls.length < 8) return;
+  if (!st.spawning || ballCount(st) < 8) return;
   // Expected one power-up every ~(1/powerChance) seconds.
   if (rand(st, 'chain') >= level.powerChance * DT * 2) return;
-  const cands: number[] = [];
-  for (let i = 1; i < st.balls.length - 1; i++) {
-    const b = st.balls[i];
-    if (b.p || b.clr >= 0 || b.s < level.track.visibleFrom) continue;
-    if (st.balls[i - 1].p || st.balls[i + 1].p) continue;
-    cands.push(i);
-  }
+  const cands: Ball[] = [];
+  st.chains.forEach((ch, ci) => {
+    const balls = ch.balls;
+    for (let i = 1; i < balls.length - 1; i++) {
+      const b = balls[i];
+      if (b.p || b.clr >= 0 || b.s < level.tracks[ci].visibleFrom) continue;
+      if (balls[i - 1].p || balls[i + 1].p) continue;
+      cands.push(b);
+    }
+  });
   if (!cands.length) return;
-  const b = st.balls[cands[Math.floor(rand(st, 'chain') * cands.length)]];
+  const b = cands[Math.floor(rand(st, 'chain') * cands.length)];
   b.p = (1 + Math.floor(rand(st, 'chain') * 4)) as Power;
   b.pt = TUNING.powerLife;
 }
 
 function stepLosing(st: GameState, level: Level, ev: GameEvent[]) {
   st.loseV += 900 * DT;
-  for (const b of st.balls) b.s += st.loseV * DT;
-  st.balls = st.balls.filter((b) => b.s < level.track.length);
-  if (st.balls.length === 0) {
+  st.chains.forEach((ch, ci) => {
+    for (const b of ch.balls) b.s += st.loseV * DT;
+    ch.balls = ch.balls.filter((b) => b.s < level.tracks[ci].length);
+  });
+  if (ballCount(st) === 0) {
     st.phase = 'lost';
     ev.push({ type: 'lost' });
   }
@@ -746,6 +799,8 @@ function stepLosing(st: GameState, level: Level, ev: GameEvent[]) {
 // ------------------------------------------------------------------ queries (used by UI, bot, tests)
 
 export interface RayHit {
+  /** Chain (track) index and ball index within that chain. */
+  chain: number;
   index: number;
   ballId: number;
   x: number; // impact projectile centre
@@ -763,10 +818,13 @@ export function raycast(st: GameState, level: Level, dx: number, dy: number): Ra
   const oy = level.launcher.y + dy * TUNING.muzzle;
   const r = TUNING.hitDist;
   let best: RayHit | null = null;
-  for (let i = 0; i < st.balls.length; i++) {
-    const b = st.balls[i];
-    if (!hittable(b, level)) continue;
-    pointAt(level.track, b.s, tmp);
+  for (let ci = 0; ci < st.chains.length; ci++) {
+   const balls = st.chains[ci].balls;
+   const tr = level.tracks[ci];
+   for (let i = 0; i < balls.length; i++) {
+    const b = balls[i];
+    if (!hittable(b, tr)) continue;
+    pointAt(tr, b.s, tmp);
     const fx = ox - tmp.x;
     const fy = oy - tmp.y;
     const bq = fx * dx + fy * dy;
@@ -778,14 +836,16 @@ export function raycast(st: GameState, level: Level, dx: number, dy: number): Ra
     if (!best || t < best.dist) {
       const x = ox + dx * t;
       const y = oy + dy * t;
-      best = { index: i, ballId: b.id, x, y, front: insertInFront(level, b, x, y), dist: t };
+      best = { chain: ci, index: i, ballId: b.id, x, y, front: insertInFront(tr, b, x, y), dist: t };
     }
+   }
   }
   return best;
 }
 
-export function ballPos(level: Level, b: Ball, out: Pt = { x: 0, y: 0 }): Pt {
-  pointAt(level.track, b.s, out);
+/** Ball centre on screen (track position, blended from the impact point while inserting). */
+export function ballPos(track: Track, b: Ball, out: Pt = { x: 0, y: 0 }): Pt {
+  pointAt(track, b.s, out);
   if (b.ins < 1) {
     const e = easeOut(b.ins);
     out.x = b.ix + (out.x - b.ix) * e;
@@ -822,7 +882,7 @@ export function stateHash(st: GameState): string {
 
 /** Length of the same-colour run the new ball would join if inserted at this hit (excluding itself). */
 export function runIfInserted(st: GameState, hit: RayHit, c: number): number {
-  const balls = st.balls;
+  const balls = st.chains[hit.chain].balls;
   const behind = hit.front ? hit.index : hit.index - 1;
   const ahead = behind + 1;
   let run = 0;

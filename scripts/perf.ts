@@ -16,7 +16,7 @@ const ev = (js: string) => page.evaluate(`(() => { const z = window.__zuma; ${js
 await ev('z.start(5)');
 await page.waitForTimeout(500);
 // Long chain with power-ups, plus heavy particles.
-await ev(`z.setup(Array.from({length: 110}, (_, i) => (i * 7) % 5), { headGap: 300, power: [50, 2] }); z.state().stopT = 0;`);
+await ev(`z.setup(Array.from({length: 110}, (_, i) => (i * 7) % 5), { headGap: 300, power: [50, 2] }); z.state().chains[0].stopT = 0;`);
 const results: Record<string, { fps: number; draw: number }> = {};
 for (const [name, js] of [
   ['idle chain', ''],

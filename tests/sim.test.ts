@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BALL_D, generateLevel, validate, WORLD_H, WORLD_W } from '../src/sim/levelgen';
+import { BALL_D, bossKind, difficulty, effDifficulty, FAMILY_LEN, generateLevel, isEndlessSeed, TWIN_FAMILIES, validateLevel, WORLD_H, WORLD_W } from '../src/sim/levelgen';
 import { createGame, Power, raycast, restore, snapshot, stateHash, step, TICK_HZ, TUNING } from '../src/sim/game';
 import { BOT_PRESETS, playLevel, replay } from '../src/sim/bot';
 import { TRACK_STEP } from '../src/sim/track';
@@ -9,9 +9,10 @@ describe('level generation', () => {
   it('is deterministic for (campaign, index)', () => {
     const a = generateLevel('seed-x', 7);
     const b = generateLevel('seed-x', 7);
-    expect(a.points).toEqual(b.points);
+    expect(a.paths).toEqual(b.paths);
     expect(a.launcher).toEqual(b.launcher);
-    expect(generateLevel('seed-y', 7).points).not.toEqual(a.points);
+    expect(a.mutators).toEqual(b.mutators);
+    expect(generateLevel('seed-y', 7).paths).not.toEqual(a.paths);
   });
 
   it('produces valid, non-overlapping tracks for many levels', () => {
@@ -19,17 +20,18 @@ describe('level generation', () => {
     for (let i = 0; i < 120; i++) {
       const lvl = generateLevel('bulk', i);
       fams.add(lvl.family);
-      expect(validate(lvl.points, lvl.launcher)).toBe(true);
-      expect(lvl.track.length - lvl.track.visibleFrom).toBeGreaterThan(2000);
+      expect(validateLevel(lvl.paths, lvl.launcher, lvl.paths.length > 1)).not.toBeNull();
+      expect(lvl.tracks.length).toBe(lvl.paths.length);
+      for (const t of lvl.tracks) expect(t.length - t.visibleFrom).toBeGreaterThan(lvl.tracks.length > 1 ? 1100 : 2000);
       expect(lvl.launcher.x).toBeGreaterThan(0);
       expect(lvl.launcher.x).toBeLessThan(WORLD_W);
       expect(lvl.launcher.y).toBeLessThan(WORLD_H);
     }
-    expect(fams.size).toBeGreaterThanOrEqual(4);
+    expect(fams.size).toBeGreaterThanOrEqual(10);
   });
 
   it('track lookup is uniform in arc length', () => {
-    const { track } = generateLevel('uniform', 3);
+    const track = generateLevel('uniform', 3).tracks[0];
     for (let i = 1; i < track.xs.length; i += 7) {
       const d = Math.hypot(track.xs[i] - track.xs[i - 1], track.ys[i] - track.ys[i - 1]);
       expect(d).toBeLessThanOrEqual(TRACK_STEP + 1e-3);
@@ -45,6 +47,167 @@ describe('level generation', () => {
   });
 });
 
+describe('difficulty shape (sawtooth, bosses, twists, two chains)', () => {
+  it('runs in a sawtooth: each block of 5 climbs, the next starts lower than the peak but higher than before', () => {
+    for (let b = 0; b < 6; b++) {
+      const s0 = effDifficulty(b * 5);
+      for (let k = 1; k < 5; k++) expect(effDifficulty(b * 5 + k)).toBeGreaterThan(effDifficulty(b * 5 + k - 1));
+      const next = effDifficulty(b * 5 + 5);
+      expect(next).toBeLessThan(effDifficulty(b * 5 + 4));
+      expect(next).toBeGreaterThan(s0);
+    }
+  });
+
+  it('mini-boss every 5th level, boss every 10th, and they are tougher than the level before', () => {
+    expect([4, 9, 14, 19, 24, 29].map(bossKind)).toEqual(['mini', 'boss', 'mini', 'boss', 'mini', 'boss']);
+    expect(bossKind(0)).toBeNull();
+    expect(bossKind(7)).toBeNull();
+    for (const i of [4, 9, 14, 19, 29]) {
+      // Base tuning (two-chain levels then trade speed/length for the second chain).
+      const a = difficulty(i - 1);
+      const b = difficulty(i);
+      expect(generateLevel('boss', i).boss).toBe(bossKind(i));
+      expect(b.target).toBeGreaterThan(a.target);
+      expect(b.speed).toBeGreaterThan(a.speed);
+      expect(b.colors).toBeGreaterThanOrEqual(a.colors);
+    }
+  });
+
+  it('twists change the tuning they promise', () => {
+    let surge = 0;
+    let streaky = 0;
+    for (let i = 0; i < 80; i++) {
+      const l = generateLevel('twists', i);
+      if (i < 5) expect(l.mutators).toEqual([]);
+      if (l.boss) expect(l.mutators).toEqual([]);
+      if (l.mutators.includes('streaky')) {
+        streaky++;
+        expect(l.repeatChance).toBeCloseTo(0.62);
+      } else expect(l.repeatChance).toBeCloseTo(0.41);
+      if (l.mutators.includes('surge')) {
+        surge++;
+        expect(l.powerChance).toBeGreaterThanOrEqual(0.15 - 1e-9);
+      }
+    }
+    expect(surge).toBeGreaterThan(3);
+    expect(streaky).toBeGreaterThan(3);
+  });
+
+  it('two-chain levels appear (not only on bosses), with tracks kept apart', () => {
+    let twins = 0;
+    let twinNormal = 0;
+    const fams = new Set<string>();
+    for (let i = 0; i < 100; i++) {
+      const l = generateLevel('twin', i);
+      if (i < 7) expect(l.tracks.length).toBe(1);
+      if (l.tracks.length === 2) {
+        twins++;
+        if (!l.boss) twinNormal++;
+        fams.add(l.family);
+        expect(TWIN_FAMILIES).toContain(l.family);
+        expect(validateLevel(l.paths, l.launcher, true)).not.toBeNull();
+      }
+    }
+    expect(twins).toBeGreaterThan(12);
+    expect(twinNormal).toBeGreaterThan(6);
+    expect(fams.size).toBe(3);
+  });
+
+  it('later levels get shorter tracks for their shape (harder)', () => {
+    const avg = (from: number) => {
+      let sum = 0;
+      let n = 0;
+      for (let c = 0; c < 12; c++)
+        for (let i = from; i < from + 4; i++) {
+          const l = generateLevel(`len-${c}`, i);
+          for (const t of l.tracks) sum += (t.length - t.visibleFrom) / FAMILY_LEN[l.family];
+          n += l.tracks.length;
+        }
+      return sum / n;
+    };
+    expect(avg(40)).toBeLessThan(avg(5) - 0.05);
+  });
+
+  it('some levels move the launcher off-centre', () => {
+    let off = 0;
+    for (let i = 3; i < 60; i++) if (generateLevel('off', i).offCentre) off++;
+    expect(off).toBeGreaterThan(8);
+  });
+
+  it('endless runs are seeded, deterministic, and twist most stages', () => {
+    expect(isEndlessSeed('endless-abc')).toBe(true);
+    expect(isEndlessSeed('daily-20261027')).toBe(true);
+    expect(isEndlessSeed('xl-daily-20261027')).toBe(true);
+    expect(isEndlessSeed('jade-1234')).toBe(false);
+    expect(generateLevel('daily-20261027', 6).paths).toEqual(generateLevel('daily-20261027', 6).paths);
+    let tw = 0;
+    let stacked = 0;
+    for (let i = 1; i < 40; i++) {
+      const l = generateLevel('endless-abc', i);
+      expect(l.endless).toBe(true);
+      if (l.mutators.length) tw++;
+      if (l.mutators.length === 2) stacked++;
+    }
+    expect(tw).toBeGreaterThan(15);
+    expect(stacked).toBeGreaterThan(0);
+    // Endless difficulty never dips.
+    for (let i = 1; i < 30; i++) expect(effDifficulty(i, true)).toBeGreaterThan(effDifficulty(i - 1, true));
+  });
+});
+
+describe('two chains', () => {
+  const twinLevel = () => {
+    for (let i = 7; i < 200; i++) {
+      const l = generateLevel('twin-sim', i);
+      if (l.tracks.length === 2) return l;
+    }
+    throw new Error('no twin level');
+  };
+
+  it('both chains roll in and either reaching its skull loses', () => {
+    const level = twinLevel();
+    const st = createGame(level);
+    for (let t = 0; t < 3 * TICK_HZ; t++) step(st, level);
+    expect(st.chains.length).toBe(2);
+    expect(st.chains[0].balls.length).toBeGreaterThan(5);
+    expect(st.chains[1].balls.length).toBeGreaterThan(5);
+    // Freeze chain 0, push chain 1's head to its end.
+    st.chains[0].stopT = 1e6;
+    const c1 = st.chains[1];
+    const L = level.tracks[1].length;
+    c1.balls.forEach((b, i) => (b.s = L + 2 - (c1.balls.length - 1 - i) * BALL_D));
+    let lost = false;
+    for (let t = 0; t < 5 * TICK_HZ && !lost; t++) lost = step(st, level).some((e) => e.type === 'lose');
+    expect(lost).toBe(true);
+  });
+
+  it('winning needs every chain cleared, and shots can hit either chain', () => {
+    const level = twinLevel();
+    const st = createGame(level);
+    for (let t = 0; t < 3 * TICK_HZ; t++) step(st, level);
+    // Some ray hits chain 1.
+    let hit1 = false;
+    for (let k = 0; k < 360 && !hit1; k++) hit1 = raycast(st, level, Math.cos((k * Math.PI) / 180), Math.sin((k * Math.PI) / 180))?.chain === 1;
+    expect(hit1).toBe(true);
+    st.score = 1e9; // fill the bar
+    step(st, level);
+    expect(st.barFull).toBe(true);
+    st.chains[0].balls = [];
+    for (let t = 0; t < 10; t++) step(st, level);
+    expect(st.phase).toBe('playing'); // chain 1 still has marbles
+    st.chains[1].balls = [];
+    step(st, level);
+    expect(st.phase).toBe('won');
+  });
+
+  it('bot plays a two-chain level deterministically (replay matches)', () => {
+    const level = twinLevel();
+    const a = playLevel(createGame(level), level, BOT_PRESETS.good, 60);
+    const st = replay(createGame(level), level, a.inputs, Math.round(a.seconds * TICK_HZ));
+    expect(st.score).toBe(a.score);
+  });
+});
+
 describe('shooting and matching', () => {
   it('inserting a third ball pops the run after the clear animation', () => {
     const { level, st } = frozenGame([0, 1, 1, 2, 3]);
@@ -53,7 +216,7 @@ describe('shooting and matching', () => {
     expect(ev.some((e) => e.type === 'hit')).toBe(true);
     const pop = ev.find((e) => e.type === 'pop');
     expect(pop && pop.type === 'pop' && pop.balls.length).toBe(3);
-    expect(st.balls.map((b) => b.c)).toEqual([0, 2, 3]);
+    expect(st.chains[0].balls.map((b) => b.c)).toEqual([0, 2, 3]);
     expect(st.score).toBe(30);
   });
 
@@ -61,7 +224,7 @@ describe('shooting and matching', () => {
     const { level, st } = frozenGame([0, 1, 2, 3]);
     st.gun.cur = 1;
     run(st, level, 1, [aimAt(level, st, 1)]);
-    expect(st.balls.length).toBe(5);
+    expect(st.chains[0].balls.length).toBe(5);
     expect(st.streak).toBe(0);
   });
 
@@ -73,8 +236,8 @@ describe('shooting and matching', () => {
       const cmd = aimAt(level, st, 2, (k / 8) * BALL_D * 0.6);
       const hit = raycast(st, level, cmd.type === 'fire' ? cmd.x - level.launcher.x : 0, cmd.type === 'fire' ? cmd.y - level.launcher.y : 0)!;
       untilHit(st, level, cmd);
-      const idx = st.balls.findIndex((b) => b.id === hit.ballId);
-      const newIdx = st.balls.findIndex((b) => b.c === 3);
+      const idx = st.chains[0].balls.findIndex((b) => b.id === hit.ballId);
+      const newIdx = st.chains[0].balls.findIndex((b) => b.c === 3);
       expect(newIdx).toBe(hit.front ? idx + 1 : idx - 1);
       sides.add(hit.front);
     }
@@ -85,8 +248,8 @@ describe('shooting and matching', () => {
     const { level, st } = frozenGame([0, 1, 2, 3, 0, 1]);
     st.gun.cur = 2;
     run(st, level, 0.8, [aimAt(level, st, 3)]);
-    for (let i = 1; i < st.balls.length; i++) {
-      expect(st.balls[i].s - st.balls[i - 1].s).toBeCloseTo(BALL_D, 3);
+    for (let i = 1; i < st.chains[0].balls.length; i++) {
+      expect(st.chains[0].balls[i].s - st.chains[0].balls[i - 1].s).toBeCloseTo(BALL_D, 3);
     }
   });
 });
@@ -104,34 +267,34 @@ describe('gaps, magnet pull and combos', () => {
     expect(contact && contact.type === 'contact' && contact.matched).toBe(true);
     expect(st.stats.maxCombo).toBe(1);
     // GG remain (combo 2 would need a third G)
-    expect(st.balls.map((b) => b.c)).toEqual([3, 3]);
+    expect(st.chains[0].balls.map((b) => b.c)).toEqual([3, 3]);
     // 30 (BBB) + 100*1 + 30 (RRR)
     expect(st.score).toBe(160);
   });
 
   it('non-matching gap: the front part stops while the rear keeps moving', () => {
     const { level, st } = frozenGame([0, 1, 1, 2, 3]);
-    st.stopT = 0;
+    st.chains[0].stopT = 0;
     level.speed = 60;
     st.gun.cur = 1;
     run(st, level, 0.8, [aimAt(level, st, 2)]);
-    const frontS = st.balls[st.balls.length - 1].s;
+    const frontS = st.chains[0].balls[st.chains[0].balls.length - 1].s;
     run(st, level, 1);
-    expect(st.balls[st.balls.length - 1].s).toBeCloseTo(frontS, 5);
-    expect(st.balls[0].s).toBeGreaterThan(0);
+    expect(st.chains[0].balls[st.chains[0].balls.length - 1].s).toBeCloseTo(frontS, 5);
+    expect(st.chains[0].balls[0].s).toBeGreaterThan(0);
   });
 
   it('magnet pull accelerates (Zuma suck curve)', () => {
     const { level, st } = frozenGame([1, 1, 2, 1]);
-    st.balls.splice(2, 1); // hole between the 1-1 and the lone 1
-    st.balls[2].s += 200;
-    st.balls[2].suck = TUNING.suckV0;
-    const s0 = st.balls[2].s;
+    st.chains[0].balls.splice(2, 1); // hole between the 1-1 and the lone 1
+    st.chains[0].balls[2].s += 200;
+    st.chains[0].balls[2].suck = TUNING.suckV0;
+    const s0 = st.chains[0].balls[2].s;
     run(st, level, 0.1);
-    const d1 = s0 - st.balls[2].s;
-    const s1 = st.balls[2].s;
+    const d1 = s0 - st.chains[0].balls[2].s;
+    const s1 = st.chains[0].balls[2].s;
     run(st, level, 0.1);
-    const d2 = s1 - st.balls[2].s;
+    const d2 = s1 - st.chains[0].balls[2].s;
     expect(d2).toBeGreaterThan(d1 * 1.5);
   });
 });
@@ -139,12 +302,12 @@ describe('gaps, magnet pull and combos', () => {
 describe('power-ups', () => {
   it('bomb clears everything in radius when matched', () => {
     const { level, st } = frozenGame([0, 2, 3, 1, 1, 0, 2, 3, 0]);
-    st.balls[4].p = Power.Bomb;
-    st.balls[4].pt = 99;
+    st.chains[0].balls[4].p = Power.Bomb;
+    st.chains[0].balls[4].pt = 99;
     st.gun.cur = 1;
     const ev = run(st, level, 1.2, [aimAt(level, st, 3)]);
     expect(ev.some((e) => e.type === 'power' && e.power === Power.Bomb)).toBe(true);
-    expect(st.balls.length).toBeLessThan(5);
+    expect(st.chains[0].balls.length).toBeLessThan(5);
   });
 
   it('slow, reverse and laser set their timers', () => {
@@ -154,8 +317,8 @@ describe('power-ups', () => {
       [Power.Aim, 'aimT'],
     ] as const) {
       const { level, st } = frozenGame([0, 1, 1, 2]);
-      st.balls[1].p = p;
-      st.balls[1].pt = 99;
+      st.chains[0].balls[1].p = p;
+      st.chains[0].balls[1].pt = 99;
       st.gun.cur = 1;
       run(st, level, 0.6, [aimAt(level, st, 2)]);
       expect(st[key]).toBeGreaterThan(0);
@@ -165,9 +328,9 @@ describe('power-ups', () => {
   it('reverse moves the head backwards', () => {
     const { level, st } = frozenGame([0, 1, 2, 3, 0, 1]);
     st.revT = 1;
-    const s0 = st.balls[5].s;
+    const s0 = st.chains[0].balls[5].s;
     run(st, level, 0.5);
-    expect(st.balls[5].s).toBeLessThan(s0 - 40);
+    expect(st.chains[0].balls[5].s).toBeLessThan(s0 - 40);
   });
 });
 
@@ -199,10 +362,13 @@ describe('win, lose and determinism', () => {
     expect(st.phase).toBe('lost');
   });
 
-  it('a decent player can win the first level', () => {
-    const level = generateLevel('alpha', 0);
-    const r = playLevel(createGame(level), level, BOT_PRESETS.good);
-    expect(r.outcome).toBe('won');
+  it('a decent player wins most first levels', () => {
+    let wins = 0;
+    for (const seed of ['alpha', 'beta', 'gamma', 'delta', 'eps', 'zeta', 'eta', 'theta', 'iota', 'kappa']) {
+      const level = generateLevel(seed, 0);
+      if (playLevel(createGame(level), level, BOT_PRESETS.good).outcome === 'won') wins++;
+    }
+    expect(wins).toBeGreaterThanOrEqual(7);
   });
 
   it('same seed + same inputs = identical state', () => {
@@ -244,13 +410,13 @@ describe('aim preview honesty (targeting feel)', () => {
       const hit = raycast(st, level, dx, dy);
       if (!hit) continue;
       const trial = restore(snapshot(st));
-      trial.stopT = 1e6; // freeze so the chain doesn't move while the shot flies
+      trial.chains[0].stopT = 1e6; // freeze so the chain doesn't move while the shot flies
       trial.gun.cool = 0;
       const h = untilHit(trial, level, { type: 'fire', x: level.launcher.x + dx * 300, y: level.launcher.y + dy * 300 });
       if (!h) continue;
       checked++;
-      const nb = trial.balls.findIndex((b) => b.c === st.gun.cur && !st.balls.some((o) => o.id === b.id));
-      const neighbours = [trial.balls[nb - 1]?.id, trial.balls[nb + 1]?.id];
+      const nb = trial.chains[0].balls.findIndex((b) => b.c === st.gun.cur && !st.chains[0].balls.some((o) => o.id === b.id));
+      const neighbours = [trial.chains[0].balls[nb - 1]?.id, trial.chains[0].balls[nb + 1]?.id];
       if (neighbours.includes(hit.ballId) && h.front === hit.front) agree++;
     }
     expect(checked).toBeGreaterThan(20);
@@ -267,9 +433,13 @@ describe('generator stability (golden)', () => {
   it('existing campaigns keep producing identical levels', async () => {
     const { createHash } = await import('node:crypto');
     const h = createHash('sha1');
-    for (let i = 0; i < 40; i++) h.update(JSON.stringify(generateLevel('jade-1234', i).points));
-    // If this changes, every saved campaign and shared level code changes too.
-    expect(h.digest('hex').slice(0, 12)).toBe('56cb51413cd3');
+    for (let i = 0; i < 40; i++) {
+      const l = generateLevel('jade-1234', i);
+      h.update(JSON.stringify([l.paths, l.colors, l.speed, l.target, l.mutators, l.repeatChance]));
+    }
+    // If this changes, every saved campaign and shared level code changes too:
+    // bump GEN_VERSION (saves then drop stale mid-level snapshots) and update the hash.
+    expect(h.digest('hex').slice(0, 12)).toBe('7a8a1992c843');
   });
 
   it('large-marble campaigns use a smaller board with valid, varied tracks', () => {
@@ -278,10 +448,10 @@ describe('generator stability (golden)', () => {
       const l = generateLevel('xl-jade-1234', i);
       expect(l.worldW).toBe(1024);
       expect(l.worldH).toBe(576);
-      expect(validate(l.points, l.launcher, { w: l.worldW, h: l.worldH })).toBe(true);
+      expect(validateLevel(l.paths, l.launcher, l.paths.length > 1, { w: l.worldW, h: l.worldH })).not.toBeNull();
       fams.add(l.family);
     }
-    expect(fams.size).toBe(4);
+    expect(fams.size).toBeGreaterThanOrEqual(8);
     expect(generateLevel('jade-1234', 0).worldW).toBe(1280);
   });
 });

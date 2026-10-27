@@ -3,7 +3,7 @@
 
 import { BALL_D, BALL_R, type Level } from '../sim/levelgen';
 import { type Ball, ballPos, type GameState, Power, type RayHit, TUNING } from '../sim/game';
-import { pointAt, type Pt, tangentAt } from '../sim/track';
+import { pointAt, type Pt, tangentAt, type Track } from '../sim/track';
 import { applyWorld, type Layout, worldToScreen } from './layout';
 import { type Particles, PK } from './fx';
 import { FEEL } from './feel';
@@ -39,7 +39,7 @@ export interface ViewState {
   danger: number; // 0..1
   /** Per-ball ripple pulses: id → {t0, strength}. */
   ripples: Map<number, number>;
-  ripple0: { s: number; t: number } | null;
+  ripple0: { s: number; t: number; c: number } | null;
   shotTrails: Map<number, Pt[]>;
   colorblind: boolean;
   showGuide: boolean;
@@ -241,49 +241,51 @@ export class Renderer {
       g.arc(lc.x, lc.y, r, 0, Math.PI * 2);
       g.stroke();
     }
-    // Track
-    const tr = lvl.track;
-    const path = new Path2D();
-    path.moveTo(tr.xs[0], tr.ys[0]);
-    for (let i = 1; i < tr.xs.length; i += 2) path.lineTo(tr.xs[i], tr.ys[i]);
-    path.lineTo(tr.xs[tr.xs.length - 1], tr.ys[tr.ys.length - 1]);
-    g.lineCap = 'round';
-    g.lineJoin = 'round';
-    g.shadowColor = `hsla(${hue}, 90%, 60%, 0.55)`;
-    g.shadowBlur = 26 * L.scale * k;
-    g.strokeStyle = `hsla(${hue}, 80%, 55%, 0.16)`;
-    g.lineWidth = BALL_D + 22;
-    g.stroke(path);
-    g.shadowBlur = 0;
-    g.strokeStyle = '#04070e';
-    g.lineWidth = BALL_D + 12;
-    g.stroke(path);
-    g.strokeStyle = `hsla(${hue}, 60%, 75%, 0.22)`;
-    g.lineWidth = BALL_D + 8;
-    g.stroke(path);
-    g.strokeStyle = `hsl(${hue}, 45%, 9%)`;
-    g.lineWidth = BALL_D + 3;
-    g.stroke(path);
-    g.setLineDash([2, 14]);
-    g.strokeStyle = `hsla(${hue}, 80%, 75%, 0.25)`;
-    g.lineWidth = 2;
-    g.stroke(path);
-    g.setLineDash([]);
-    // End pit
-    const end = pointAt(tr, tr.length);
-    const pit = g.createRadialGradient(end.x, end.y, 0, end.x, end.y, BALL_R * 2.1);
-    pit.addColorStop(0, '#000');
-    pit.addColorStop(0.7, '#05030a');
-    pit.addColorStop(1, 'rgba(0,0,0,0)');
-    g.fillStyle = pit;
-    g.beginPath();
-    g.arc(end.x, end.y, BALL_R * 2.1, 0, Math.PI * 2);
-    g.fill();
-    g.strokeStyle = 'rgba(255,190,90,0.55)';
-    g.lineWidth = 3;
-    g.beginPath();
-    g.arc(end.x, end.y, BALL_R * 1.6, 0, Math.PI * 2);
-    g.stroke();
+    // Tracks (a second chain's track glows in a shifted hue so the two read apart)
+    lvl.tracks.forEach((tr, ti) => {
+      const th = hue + ti * 70;
+      const path = new Path2D();
+      path.moveTo(tr.xs[0], tr.ys[0]);
+      for (let i = 1; i < tr.xs.length; i += 2) path.lineTo(tr.xs[i], tr.ys[i]);
+      path.lineTo(tr.xs[tr.xs.length - 1], tr.ys[tr.ys.length - 1]);
+      g.lineCap = 'round';
+      g.lineJoin = 'round';
+      g.shadowColor = `hsla(${th}, 90%, 60%, 0.55)`;
+      g.shadowBlur = 26 * L.scale * k;
+      g.strokeStyle = `hsla(${th}, 80%, 55%, ${lvl.tracks.length > 1 ? 0.22 : 0.16})`;
+      g.lineWidth = BALL_D + 22;
+      g.stroke(path);
+      g.shadowBlur = 0;
+      g.strokeStyle = '#04070e';
+      g.lineWidth = BALL_D + 12;
+      g.stroke(path);
+      g.strokeStyle = `hsla(${th}, 60%, 75%, 0.22)`;
+      g.lineWidth = BALL_D + 8;
+      g.stroke(path);
+      g.strokeStyle = `hsl(${th}, 45%, 9%)`;
+      g.lineWidth = BALL_D + 3;
+      g.stroke(path);
+      g.setLineDash([2, 14]);
+      g.strokeStyle = `hsla(${th}, 80%, 75%, 0.25)`;
+      g.lineWidth = 2;
+      g.stroke(path);
+      g.setLineDash([]);
+      // End pit
+      const end = pointAt(tr, tr.length);
+      const pit = g.createRadialGradient(end.x, end.y, 0, end.x, end.y, BALL_R * 2.1);
+      pit.addColorStop(0, '#000');
+      pit.addColorStop(0.7, '#05030a');
+      pit.addColorStop(1, 'rgba(0,0,0,0)');
+      g.fillStyle = pit;
+      g.beginPath();
+      g.arc(end.x, end.y, BALL_R * 2.1, 0, Math.PI * 2);
+      g.fill();
+      g.strokeStyle = 'rgba(255,190,90,0.55)';
+      g.lineWidth = 3;
+      g.beginPath();
+      g.arc(end.x, end.y, BALL_R * 1.6, 0, Math.PI * 2);
+      g.stroke();
+    });
     // Launcher pad
     const pad = g.createRadialGradient(lc.x, lc.y, 10, lc.x, lc.y, 64);
     pad.addColorStop(0, `hsla(${hue}, 30%, 30%, 0.9)`);
@@ -333,21 +335,26 @@ export class Renderer {
 
     // Balls
     const pos: Pt = { x: 0, y: 0 };
-    const vis = lvl.track.visibleFrom - BALL_R;
     const rot = L.portrait ? -Math.PI / 2 : 0;
     // Shadows pass
-    for (const b of st.balls) {
-      if (b.s < vis) continue;
-      ballPos(lvl, b, pos);
-      const sc = this.ballScale(b, v);
-      this.blit(this.shadow, pos.x + 3, pos.y + 5, 0, sc * 1.05);
-    }
+    st.chains.forEach((ch, ci) => {
+      const tr = lvl.tracks[ci];
+      const vis = tr.visibleFrom - BALL_R;
+      for (const b of ch.balls) {
+        if (b.s < vis) continue;
+        ballPos(tr, b, pos);
+        const sc = this.ballScale(b, v);
+        this.blit(this.shadow, pos.x + 3, pos.y + 5, 0, sc * 1.05);
+      }
+    });
     // Magnet arcs between attracting ends
-    for (let i = 1; i < st.balls.length; i++) {
-      const b = st.balls[i];
+    st.chains.forEach((ch, ci) => {
+     const tr = lvl.tracks[ci];
+     for (let i = 1; i < ch.balls.length; i++) {
+      const b = ch.balls[i];
       if (b.suck <= 0) continue;
-      const a = pointAt(lvl.track, st.balls[i - 1].s);
-      const p = pointAt(lvl.track, b.s);
+      const a = pointAt(tr, ch.balls[i - 1].s);
+      const p = pointAt(tr, b.s);
       const col = PALETTE[b.c];
       const flick = 0.5 + 0.5 * Math.sin(v.time * 40);
       g.beginPath();
@@ -365,12 +372,17 @@ export class Renderer {
       g.lineWidth = 3;
       g.stroke();
       g.globalAlpha = 1;
-    }
-    for (const b of st.balls) {
-      if (b.s < vis) continue;
-      ballPos(lvl, b, pos);
-      this.drawBall(b, pos, v, rot);
-    }
+     }
+    });
+    st.chains.forEach((ch, ci) => {
+      const tr = lvl.tracks[ci];
+      const vis = tr.visibleFrom - BALL_R;
+      for (const b of ch.balls) {
+        if (b.s < vis) continue;
+        ballPos(tr, b, pos);
+        this.drawBall(b, pos, v, rot, tr);
+      }
+    });
 
     // Projectiles with trails
     for (const sh of st.shots) {
@@ -432,10 +444,9 @@ export class Renderer {
     return Math.max(0.05, sc);
   }
 
-  private drawBall(b: Ball, pos: Pt, v: ViewState, rot: number) {
-    const lvl = this.level;
+  private drawBall(b: Ball, pos: Pt, v: ViewState, rot: number, track: Track) {
     const g = this.ctx;
-    const tan = tangentAt(lvl.track, b.s);
+    const tan = tangentAt(track, b.s);
     const ang = Math.atan2(tan.y, tan.x);
     const sc = this.ballScale(b, v);
     let alpha = 1;
@@ -669,9 +680,10 @@ export class Renderer {
       g.globalAlpha = 1;
     }
     if (!hit) return;
-    const target = st.balls[hit.index];
+    const target = st.chains[hit.chain]?.balls[hit.index];
     if (!target) return;
-    const tp = pointAt(this.level.track, target.s);
+    const htr = this.level.tracks[hit.chain];
+    const tp = pointAt(htr, target.s);
     const pulse = 0.5 + 0.5 * Math.sin(v.time * 12);
     // Target ring
     g.strokeStyle = v.aimWillPop ? col.light : 'rgba(255,255,255,0.75)';
@@ -682,8 +694,8 @@ export class Renderer {
     g.stroke();
     // Ghost marble in the slot it would take
     const gs = target.s + (hit.front ? BALL_D * 0.5 : -BALL_D * 0.5);
-    const gp = pointAt(this.level.track, gs);
-    const n = tangentAt(this.level.track, gs);
+    const gp = pointAt(htr, gs);
+    const n = tangentAt(htr, gs);
     // Push the ghost out of the track slightly toward the shooter so it reads as "incoming".
     const side = (lc.x - gp.x) * -n.y + (lc.y - gp.y) * n.x > 0 ? 1 : -1;
     const gx = gp.x - n.y * side * BALL_R * 0.55;
@@ -729,9 +741,11 @@ export class Renderer {
   }
 
   private drawSkull(v: ViewState) {
+    for (const tr of this.level.tracks) this.drawSkullAt(v, worldToScreen(this.L, pointAt(tr, tr.length)));
+  }
+
+  private drawSkullAt(v: ViewState, end: Pt) {
     const g = this.ctx;
-    const tr = this.level.track;
-    const end = worldToScreen(this.L, pointAt(tr, tr.length));
     const s = this.L.scale * 1.15;
     const jaw = v.danger * 7;
     g.save();

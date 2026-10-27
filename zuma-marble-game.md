@@ -318,3 +318,10 @@ Built in this folder. See `README.md`.
   - Mechanics are ported from the Zuma Deluxe decompilation ([alula/CircleShootApp](https://github.com/alula/CircleShootApp)) rather than guessed.
   - Levels are infinite and seed-generated rather than hand-authored.
 - **Reference survey**: alula/CircleShootApp (decompilation, the most authoritative), 9933fa/Zuma-Deluxe-TAS (a JS port of it), jamiely/tsuma, madebyaris/zuma-js-game, GalaxyShad/Zuma-Deluxe-HD (C).
+- **Levels v2 (generator version 2)**:
+  - 12 shape families: spiral, lobes, wave, square, heart, serpentine, columns, comb and horseshoe, plus twin spiral, twin serpentine and twin columns for **two-chain** levels (two entrances, two skulls). Some levels push the launcher off-centre.
+  - **Sawtooth difficulty** in blocks of 5: a mini-boss every 5th level and a boss every 10th, then a dip. The generator keeps a few valid tracks per level and picks the one whose length (relative to its shape) fits the difficulty, so later tracks are shorter.
+  - **Twists**: Power surge (3× power-ups) and Streaky (repeat chance 0.62 instead of 0.41).
+  - **Endless mode**: random or daily seed (`endless-…`, `daily-YYYYMMDD`), one life, score carries over, steady climb, a twist most stages.
+  - Tuned with bot win rates (`scripts/balance.ts`). Bosses land around 45–70% at level 10 and 20–45% at levels 20–40. Two-chain levels are slower with a shorter bar, so they run about 15 points below single-chain ones.
+  - Saves store the generator version: an update keeps unlocked levels and stars and drops only an in-progress level snapshot.

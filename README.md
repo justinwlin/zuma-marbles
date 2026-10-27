@@ -22,6 +22,13 @@ A Zuma-style marble shooter for phone (portrait) and desktop. It installs as a P
   - Reverse: rolls the chain back.
   - Laser: aim beam and rapid fire.
 - **Levels** come from `(campaignSeed, levelIndex)`, so the same seed gives the same levels on any device. Level codes look like `jade-1234/12` and can be shared from the Levels screen.
+  - **Shapes**: 9 single-chain families (spiral, lobes, wave, square, heart, serpentine, columns, comb, horseshoe) and 3 two-chain families (twin spiral, twin serpentine, twin columns). Some levels move the launcher off-centre.
+  - **Difficulty** runs in a sawtooth: each block of 5 levels climbs to a **mini-boss** (every 5th) or **boss** (every 10th), and the next block starts lower than that peak but higher than the last. Later levels also pick shorter tracks for their shape.
+  - **Two chains** show up from level 8 on (more often on bosses): two entrances, two skulls, and losing either chain loses the level.
+  - **Twists** on about a third of levels from level 6: **Power surge** (3× power-ups) and **Streaky** (long same-colour runs).
+  - Difficulty was tuned with `scripts/balance.ts` (bot win rates per level); `scripts/gen-report.ts` and `scripts/gen-sheet.ts` show the family mix and a contact sheet of generated tracks.
+- **Endless mode** (title → Endless): stages roll straight into each other with one life, and the score carries over. Pick a **random run** or today's **daily run** (seed `daily-YYYYMMDD`, the same stages for everyone). Every stage gets a new track; most get a twist, and from stage 10 two can stack. A run in progress survives closing the app; best scores are kept.
+- **Level updates**: saves record the generator version (`GEN_VERSION`). When the generator changes, unlocked levels and stars are kept and a one-time notice shows; a level you were in the middle of restarts, because its track changed.
 - **Saving**: progress, settings and a snapshot of the level you're in are saved to `localStorage`. The snapshot is written every 4 s, when you pause, and when the tab is hidden. "Continue" resumes on the exact tick you left.
 
 Research and design notes: [`zuma-marble-game.md`](./zuma-marble-game.md).
@@ -47,8 +54,8 @@ npm run preview      # serve dist/ (needed to test the PWA / offline)
 src/sim/      pure, deterministic simulation (no DOM): unit-testable and replayable
   rng.ts        mulberry32 PRNG + string hash; state is one uint32
   track.ts      arc-length lookup table; a ball's position is distance s along the track
-  levelgen.ts   infinite level generator (spiral / lobes / wave / serpentine) + validator + difficulty curve
-  game.ts       fixed-tick (120 Hz) step(state, level, commands) → events
+  levelgen.ts   infinite level generator (12 shape families, 1–2 chains) + validator + sawtooth difficulty, bosses, twists
+  game.ts       fixed-tick (120 Hz) step(state, level, commands) → events; one chain per track
   bot.ts        scripted player used by tests and the balance report
 src/game/     presentation
   feel.ts       pure event → feedback map (hit-stop, shake, flash, haptics, sound pitch, particles, slow-mo)

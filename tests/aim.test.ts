@@ -8,7 +8,7 @@ function settledGame(seed: string, idx: number) {
   const level = generateLevel(seed, idx);
   const st = createGame(level);
   for (let t = 0; t < 6 * TICK_HZ; t++) step(st, level);
-  st.stopT = 1e6; // freeze for geometric checks
+  st.chains[0].stopT = 1e6; // freeze for geometric checks
   return { level, st };
 }
 
@@ -18,11 +18,11 @@ function landsIn(st: ReturnType<typeof createGame>, level: ReturnType<typeof gen
   trial.gun.cool = 0;
   const lx = level.launcher.x;
   const ly = level.launcher.y;
-  const before = new Set(trial.balls.map((b) => b.id));
+  const before = new Set(trial.chains[0].balls.map((b) => b.id));
   const h = untilHit(trial, level, { type: 'fire', x: lx + Math.cos(a) * 300, y: ly + Math.sin(a) * 300 });
   if (!h) return false;
-  const i = trial.balls.findIndex((b) => !before.has(b.id));
-  const nb = [trial.balls[i - 1]?.id, trial.balls[i + 1]?.id];
+  const i = trial.chains[0].balls.findIndex((b) => !before.has(b.id));
+  const nb = [trial.chains[0].balls[i - 1]?.id, trial.chains[0].balls[i + 1]?.id];
   return nb.includes(s.ballId) && h.front === s.front;
 }
 

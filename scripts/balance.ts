@@ -5,10 +5,10 @@ import { BOT_PRESETS, playLevel } from '../src/sim/bot';
 
 const N = Number(process.argv[2] ?? 8);
 const levels = process.argv.slice(3).length ? process.argv.slice(3).map(Number) : [0, 1, 2, 4, 7, 10, 15, 20, 30, 50];
-console.log('level | ' + Object.keys(BOT_PRESETS).map((p) => `${p} win% / avg s`).join(' | '));
+console.log('level | ' + Object.keys(BOT_PRESETS).filter((n) => !process.env.BOTS || process.env.BOTS.split(',').includes(n)).map((p) => `${p} win% / avg s`).join(' | '));
 for (const L of levels) {
   const cells: string[] = [];
-  for (const [name, opts] of Object.entries(BOT_PRESETS)) {
+  for (const [name, opts] of Object.entries(BOT_PRESETS).filter(([n]) => !process.env.BOTS || process.env.BOTS.split(',').includes(n))) {
     let wins = 0;
     let secs = 0;
     for (let c = 0; c < N; c++) {

@@ -1,8 +1,16 @@
 // Infinite, deterministic level generation. A level is fully described by
-// (campaignSeed, index): same inputs → identical track, colors and tuning on every device.
+// (campaignSeed, index): same inputs → identical tracks, colors and tuning on every device.
+//
+// Difficulty runs in a sawtooth: blocks of 5 levels ramp up to a mini-boss (every 5th)
+// or boss (every 10th), then the next block starts a little lower than that peak.
+// Levels can have one or two chains, an off-centre launcher, and a twist (mutator).
+// Endless runs (seed "endless-…" / "daily-…") ramp steadily and get a twist most stages.
 
 import { hash32, Rng } from './rng';
 import { buildTrack, chaikin, type Pt, type Track, TRACK_STEP } from './track';
+
+/** Bump when generated levels change; saves made with an older generator drop their mid-level snapshot. */
+export const GEN_VERSION = 2;
 
 export const WORLD_W = 1280;
 export const WORLD_H = 720;
@@ -20,13 +28,58 @@ export function isLargeCampaign(seed: string) {
 export function worldFor(seed: string): { w: number; h: number } {
   return isLargeCampaign(seed) ? { w: Math.round(WORLD_W / LARGE_SCALE), h: Math.round(WORLD_H / LARGE_SCALE) } : { w: WORLD_W, h: WORLD_H };
 }
+/** Endless runs: "endless-<seed>" (random run) or "daily-YYYYMMDD" (same for everyone that day). */
+export function isEndlessSeed(seed: string) {
+  const s = isLargeCampaign(seed) ? seed.slice(LARGE_PREFIX.length) : seed;
+  return s.startsWith('endless-') || s.startsWith('daily-');
+}
+
 // Board size for the level currently being generated (generation is synchronous).
 let GW = WORLD_W;
 let GH = WORLD_H;
 export const BALL_R = 18;
 export const BALL_D = BALL_R * 2;
 
-export type TrackFamily = 'spiral' | 'lobes' | 'serpentine' | 'wave';
+export type TrackFamily =
+  | 'spiral'
+  | 'lobes'
+  | 'wave'
+  | 'square'
+  | 'heart'
+  | 'serpentine'
+  | 'columns'
+  | 'comb'
+  | 'horseshoe'
+  | 'twinSpiral'
+  | 'twinSerpentine'
+  | 'twinColumns';
+
+/** Typical visible length per chain (px, normal board), measured with scripts/gen-report.ts. */
+export const FAMILY_LEN: Record<TrackFamily, number> = {
+  spiral: 3200,
+  lobes: 3000,
+  wave: 3100,
+  square: 3300,
+  heart: 2300,
+  serpentine: 3800,
+  columns: 3500,
+  comb: 4350,
+  horseshoe: 5350,
+  twinSpiral: 2000,
+  twinSerpentine: 2300,
+  twinColumns: 1700,
+};
+
+export const SINGLE_FAMILIES: TrackFamily[] = ['spiral', 'lobes', 'wave', 'square', 'heart', 'serpentine', 'columns', 'comb', 'horseshoe'];
+export const TWIN_FAMILIES: TrackFamily[] = ['twinSpiral', 'twinSerpentine', 'twinColumns'];
+
+/** Level twists. surge = 3× power-ups; streaky = long same-colour runs. */
+export type Mutator = 'surge' | 'streaky';
+export const MUTATOR_INFO: Record<Mutator, { name: string; desc: string; color: string }> = {
+  surge: { name: 'Power surge', desc: '3× power-ups', color: '#7fe3ff' },
+  streaky: { name: 'Streaky', desc: 'Long runs of one colour — combo time', color: '#ffb36b' },
+};
+export type BossKind = 'mini' | 'boss' | null;
 
 export interface LevelDef {
   campaignSeed: string;
@@ -34,15 +87,22 @@ export interface LevelDef {
   seed: number;
   family: TrackFamily;
   name: string;
-  /** Dense smoothed polyline (world coords). Entry starts off-screen. */
-  points: Pt[];
+  /** One dense smoothed polyline per chain (world coords). Entries start off-screen. */
+  paths: Pt[][];
   launcher: Pt;
+  /** Launcher pushed away from the board centre. */
+  offCentre: boolean;
   colors: number; // number of distinct colors (≤ 6)
   /** Cruise speed in px/s. */
   speed: number;
   /** Balls that must be popped to fill the progress bar and stop spawning. */
   target: number;
   powerChance: number;
+  /** Chance a new chain ball repeats the previous colour (Zuma: 0.41). */
+  repeatChance: number;
+  mutators: Mutator[];
+  boss: BossKind;
+  endless: boolean;
   /** Attempts the generator needed (debug/telemetry). */
   attempts: number;
   /** Board size in px (smaller for large-marble campaigns). */
@@ -51,81 +111,188 @@ export interface LevelDef {
 }
 
 export interface Level extends LevelDef {
-  track: Track;
+  /** tracks[i] carries chain i. */
+  tracks: Track[];
 }
 
 const NAMES_A = ['Azure', 'Ember', 'Jade', 'Violet', 'Golden', 'Crimson', 'Silver', 'Neon', 'Lunar', 'Solar', 'Coral', 'Frost'];
-const NAMES_B = ['Spiral', 'Orbit', 'Coil', 'Bloom', 'Serpent', 'Cascade', 'Vortex', 'Loop', 'Halo', 'Drift', 'Ripple', 'Helix'];
+const NAMES_B: Record<TrackFamily, string[]> = {
+  spiral: ['Spiral', 'Vortex', 'Coil', 'Helix'],
+  lobes: ['Bloom', 'Clover', 'Blossom', 'Petal'],
+  wave: ['Ripple', 'Halo', 'Drift', 'Tide'],
+  square: ['Temple', 'Maze', 'Ziggurat', 'Vault'],
+  heart: ['Heart', 'Valentine', 'Locket', 'Sweetheart'],
+  serpentine: ['Serpent', 'Cascade', 'Switchback', 'River'],
+  columns: ['Pillars', 'Colonnade', 'Organ', 'Falls'],
+  comb: ['Comb', 'Teeth', 'Fringe', 'Crown'],
+  horseshoe: ['Horseshoe', 'Rainbow', 'Arch', 'Fan'],
+  twinSpiral: ['Twin Vortex', 'Galaxy', 'Yin-Yang', 'Double Helix'],
+  twinSerpentine: ['Twin Rivers', 'Mirror', 'Crossroads', 'Gemini'],
+  twinColumns: ['Twin Pillars', 'Gateway', 'Twin Falls', 'Canyon'],
+};
 
 export function levelSeed(campaignSeed: string, index: number): number {
   return hash32(`${campaignSeed}#${index}`);
 }
 
-/** Difficulty curve as a function of level index (0-based). */
-export function difficulty(index: number) {
-  const d = Math.max(0, index);
-  return {
-    colors: d < 3 ? 4 : d < 14 ? 5 : 6,
+export function bossKind(index: number): BossKind {
+  return index % 10 === 9 ? 'boss' : index % 5 === 4 ? 'mini' : null;
+}
+
+/**
+ * Effective difficulty for a level index (0-based). Campaign: sawtooth in blocks of 5
+ * (each block starts 4 higher and climbs 1.6 per level, so a block's peak is above the
+ * next block's start). Endless: a steady climb.
+ */
+export function effDifficulty(index: number, endless = false): number {
+  const i = Math.max(0, index);
+  if (endless) return i * 0.9;
+  return Math.floor(i / 5) * 4 + (i % 5) * 1.6;
+}
+
+/** Tuning for a level index (0-based). */
+export function difficulty(index: number, endless = false) {
+  const i = Math.max(0, index);
+  const d = effDifficulty(i, endless);
+  const boss = bossKind(i);
+  const t = {
+    colors: d < 3.5 ? 4 : d < 13 ? 5 : 6,
     // Rises quickly at first, then flattens so endless play stays fair.
     speed: 27 + 35 * (1 - Math.exp(-d / 14)),
     target: Math.min(70 + d * 6, 200),
-    powerChance: d === 0 ? 0.03 : 0.05,
+    powerChance: i === 0 ? 0.03 : 0.05,
+    /** Desired track length relative to the family's typical length: shorter = harder. */
+    lenRatio: 1.1 - 0.25 * (1 - Math.exp(-d / 16)),
   };
+  // Tuned with scripts/balance.ts: bosses are clearly harder than their neighbours but beatable.
+  if (boss === 'mini') {
+    t.speed *= 1.05;
+    t.target *= 1.2;
+  } else if (boss === 'boss') {
+    t.speed *= 1.06;
+    t.target *= 1.3;
+    t.colors = Math.max(t.colors, 5);
+    t.powerChance *= 1.6;
+  }
+  // First levels: mid-length tracks (long spirals wind extra rings that block shots).
+  if (i < 3) t.lenRatio = 1;
+  return t;
 }
 
 export function generateLevel(campaignSeed: string, index: number): Level {
   const world = worldFor(campaignSeed);
   GW = world.w;
   GH = world.h;
+  const ks = GH / WORLD_H;
+  const endless = isEndlessSeed(campaignSeed);
   const seed = levelSeed(campaignSeed, index);
   const rng = new Rng(seed);
-  const diff = difficulty(index);
+  const diff = difficulty(index, endless);
+  const boss = bossKind(index);
   if (isLargeCampaign(campaignSeed)) {
     // Fewer marbles fit on the smaller board, so levels end sooner: ask for more score.
     // Tuned with scripts/balance.ts (PREFIX=xl-) to match normal win rates/durations.
-    diff.target = Math.round(diff.target * 1.5);
+    diff.target = diff.target * 1.5;
   }
-  const families: TrackFamily[] =
-    index === 0 ? ['spiral'] : index < 3 ? ['spiral', 'lobes', 'wave'] : ['spiral', 'lobes', 'serpentine', 'wave'];
 
+  // Two chains: from level 8 on (stage 4 in endless), more often on bosses.
+  const twinChance = index < (endless ? 3 : 7) ? 0 : boss === 'boss' ? 0.4 : boss === 'mini' ? 0.25 : endless ? 0.3 : 0.22;
+  const twin = rng.chance(twinChance);
+
+  // Twists.
+  const mutators: Mutator[] = [];
+  const pool: Mutator[] = ['surge', 'streaky'];
+  if (endless) {
+    if (index >= 1 && rng.chance(0.6)) mutators.push(rng.pick(pool));
+    if (index >= 9 && mutators.length && rng.chance(0.3)) mutators.push(mutators[0] === 'surge' ? 'streaky' : 'surge');
+  } else if (index >= 5 && !boss && rng.chance(0.35)) mutators.push(rng.pick(pool));
+  let repeatChance = 0.41;
+  if (mutators.includes('surge')) diff.powerChance *= 3;
+  if (mutators.includes('streaky')) repeatChance = 0.62;
+  if (twin) {
+    // Two chains bring twice the marbles on shorter tracks: each rolls slower and the
+    // bar fills sooner (tuned with the bot to land near single-chain win rates).
+    diff.speed *= 0.68;
+    diff.target *= 0.75;
+  }
+
+  const families: TrackFamily[] = twin
+    ? TWIN_FAMILIES
+    : index === 0
+      ? ['spiral']
+      : index < 3
+        ? ['spiral', 'lobes', 'wave', 'square']
+        : index < 6
+          ? ['spiral', 'lobes', 'wave', 'square', 'serpentine', 'columns', 'horseshoe']
+          : SINGLE_FAMILIES;
+  const offChance = index < 3 ? 0 : 0.35;
+
+  // Pick a family, then generate a few valid candidates of it and keep the one whose
+  // length best fits the difficulty (shorter tracks later). Families stay evenly mixed.
   let attempts = 0;
-  let result: { points: Pt[]; launcher: Pt; family: TrackFamily } | null = null;
-  while (attempts < 60 && !result) {
-    attempts++;
+  let best: { cand: Cand; family: TrackFamily; err: number } | null = null;
+  while (attempts < 90 && !best) {
     const family = rng.pick(families);
-    const cand = GENERATORS[family](rng, index);
-    if (validate(cand.points, cand.launcher)) result = { ...cand, family };
+    const off = rng.chance(offChance);
+    let found = 0;
+    for (let k = 0; k < 12 && found < 3 && attempts < 90; k++) {
+      attempts++;
+      const cand = GENERATORS[family](rng, { index, off });
+      const lens = validateLevel(cand.paths, cand.launcher, twin);
+      if (!lens) continue;
+      found++;
+      const avg = lens.reduce((a, b) => a + b, 0) / lens.length;
+      const err = Math.abs(avg / (FAMILY_LEN[family] * ks) - diff.lenRatio);
+      if (!best || err < best.err) best = { cand, family, err };
+    }
   }
-  if (!result) {
+  if (!best) {
     // Fallback that is always valid.
-    const cand = GENERATORS.spiral(new Rng(seed ^ 0x9e3779b9), 0, true);
-    result = { ...cand, family: 'spiral' };
+    const cand = GENERATORS.spiral(new Rng(seed ^ 0x9e3779b9), { index: 0, off: false, safe: true });
+    best = { cand, family: 'spiral', err: 0 };
   }
 
-  const name = `${rng.pick(NAMES_A)} ${rng.pick(NAMES_B)}`;
-  const track = buildTrack(result.points, { w: GW, h: GH });
+  const { cand, family } = best;
+  const name = `${rng.pick(NAMES_A)} ${rng.pick(NAMES_B[family])}`;
+  const tracks = cand.paths.map((p) => buildTrack(p, { w: GW, h: GH }));
+  const off = Math.hypot(cand.launcher.x - GW / 2, cand.launcher.y - GH / 2) > 90 * ks;
   return {
     campaignSeed,
     index,
     seed,
-    family: result.family,
+    family,
     name,
-    points: result.points,
-    launcher: result.launcher,
+    paths: cand.paths,
+    launcher: cand.launcher,
+    offCentre: off,
     colors: diff.colors,
     speed: diff.speed,
-    target: diff.target,
+    target: Math.round(diff.target),
     powerChance: diff.powerChance,
+    repeatChance,
+    mutators,
+    boss,
+    endless,
     attempts,
     worldW: GW,
     worldH: GH,
-    track,
+    tracks,
   };
 }
 
 // ---------------------------------------------------------------- generators
 
-type Gen = (rng: Rng, index: number, safe?: boolean) => { points: Pt[]; launcher: Pt };
+interface Cand {
+  paths: Pt[][];
+  launcher: Pt;
+}
+interface GenOpts {
+  index: number;
+  /** Push the launcher off-centre. */
+  off: boolean;
+  safe?: boolean;
+}
+type Gen = (rng: Rng, o: GenOpts) => Cand;
 
 const q = (v: number) => Math.round(v * 16) / 16;
 
@@ -148,57 +315,165 @@ function withEntry(raw: Pt[], len = 260): Pt[] {
   return [e, ...pts];
 }
 
-function spiralLike(rng: Rng, opts: { lobes: number; lobeAmp: number; turns: number; safe?: boolean }) {
-  const cx = GW / 2 + (opts.safe ? 0 : rng.range(-60, 60));
-  const cy = GH / 2 + (opts.safe ? 0 : rng.range(-25, 25));
-  const dir = rng.chance(0.5) ? 1 : -1;
-  const th0 = rng.range(0, Math.PI * 2);
-  const axOut = Math.min(cx, GW - cx) - 46;
-  const ayOut = Math.min(cy, GH - cy) - 40;
-  const ayIn = rng.range(118, 140);
-  const axIn = ayIn * rng.range(1.15, 1.45);
-  // Small (large-marble) boards: never wind more turns than fit at ≥ 2.5 marbles apart.
-  // (Normal boards are left untouched so existing campaigns/level codes stay identical.)
-  if (GH < WORLD_H) {
-    const maxTurns = (ayOut - ayIn) / (BALL_D * 2.5 * (1 + opts.lobeAmp * 2));
-    opts = { ...opts, turns: Math.max(1.05, Math.min(opts.turns, maxTurns)) };
-  }
-  const wobK = rng.int(2, 5);
-  const wobA = opts.safe ? 0 : rng.range(0, 0.05);
-  const wobP = rng.range(0, Math.PI * 2);
-  const pts: Pt[] = [];
-  const steps = Math.ceil(opts.turns * 180);
-  for (let i = 0; i <= steps; i++) {
-    const u = i / steps;
-    const th = th0 + dir * u * opts.turns * Math.PI * 2;
-    // Ease the radius so outer rings are spaced more like the inner ones.
-    const k = Math.pow(u, 0.92);
-    const lobe = 1 + opts.lobeAmp * Math.cos(opts.lobes * th) * (1 - u * 0.6);
-    const wob = 1 + wobA * Math.sin(wobK * th + wobP);
-    const ax = (axOut + (axIn - axOut) * k) * lobe * wob;
-    const ay = (ayOut + (ayIn - ayOut) * k) * lobe * wob;
-    pts.push({ x: cx + ax * Math.cos(th), y: cy + ay * Math.sin(th) });
-  }
-  // Outer-most point may touch the edge; clamp inside the board.
+const clampIn = (pts: Pt[]) => {
   for (const p of pts) {
     p.x = Math.min(GW - 30, Math.max(30, p.x));
     p.y = Math.min(GH - 30, Math.max(30, p.y));
   }
-  return { points: chaikin(withEntry(pts), 2), launcher: { x: cx, y: cy } };
+  return pts;
+};
+
+type Shape = 'ellipse' | 'square' | 'heart';
+
+/** Unit outline point for an angle (x, y in about −1..1). */
+function shapePt(shape: Shape, th: number, k = 0): Pt {
+  const c = Math.cos(th);
+  const s = Math.sin(th);
+  if (shape === 'square') {
+    // Superellipse: a rounded rectangle.
+    const p = 0.45;
+    return { x: Math.sign(c) * Math.pow(Math.abs(c), p), y: Math.sign(s) * Math.pow(Math.abs(s), p) };
+  }
+  if (shape === 'heart') {
+    // Polar heart: a notch at the top and a point at the bottom (y grows downward on screen).
+    // Star-shaped, so nested copies never cross; the notch is shallow enough to keep rings apart.
+    const a = Math.atan2(s, c);
+    const top = a + Math.PI / 2; // 0 at the top
+    const wrap = (v: number) => Math.atan2(Math.sin(v), Math.cos(v));
+    // Heart on the outer ring (shallow notch on top, sides narrowing to a point below),
+    // easing to an ellipse inside so the notch can't reach the next ring.
+    const h = Math.max(0, 1 - k * 1.1);
+    const r = 1 - 0.15 * h * Math.exp(-(wrap(top) ** 2) / 0.06);
+    const narrow = 1 - 0.42 * h * Math.pow(Math.max(0, s), 1.6);
+    return { x: r * c * narrow, y: r * s };
+  }
+  return { x: c, y: s };
+}
+
+interface SpiralOpts {
+  lobes: number;
+  lobeAmp: number;
+  turns: number;
+  shape?: Shape;
+  safe?: boolean;
+  /** Launcher offset from the board centre; the spiral's centre drifts toward it as it winds in. */
+  drift?: Pt;
+  /** Cap on width/height so shapes like the heart don't stretch across the board. */
+  maxAspect?: number;
+  /** Fixed start angle (default random). */
+  th0?: number;
+  /** Twin arm: start half a turn round. */
+  arm?: number;
+  arms?: number;
+}
+
+function spiralArm(rng: Rng, o: SpiralOpts, base: { cx: number; cy: number; dir: number; th0: number; ayIn: number; axIn: number }): Pt[] {
+  const { cx, cy, dir, ayIn, axIn } = base;
+  const th0 = base.th0 + ((o.arm ?? 0) * Math.PI * 2) / (o.arms ?? 1);
+  const ayOut = Math.min(cy, GH - cy) - 40;
+  const axOut = Math.min(Math.min(cx, GW - cx) - 46, o.maxAspect ? ayOut * o.maxAspect : Infinity);
+  let turns = o.turns;
+  // Twin arms interleave: each needs room for the other between its own rings.
+  if ((o.arms ?? 1) > 1) turns = Math.min(turns, (ayOut - ayIn) / (BALL_D * 4.7));
+  // Small (large-marble) boards: never wind more turns than fit at ≥ 2.5 marbles apart.
+  if (GH < WORLD_H && (o.arms ?? 1) === 1) {
+    const maxTurns = (ayOut - ayIn) / (BALL_D * 2.5 * (1 + o.lobeAmp * 2));
+    turns = Math.max(1.05, Math.min(turns, maxTurns));
+  }
+  const shape = o.shape ?? 'ellipse';
+  const wobK = rng.int(2, 5);
+  const wobA = o.safe || shape !== 'ellipse' ? 0 : rng.range(0, 0.05);
+  const wobP = rng.range(0, Math.PI * 2);
+  const dx = o.drift?.x ?? 0;
+  const dy = o.drift?.y ?? 0;
+  const pts: Pt[] = [];
+  const steps = Math.ceil(turns * 180);
+  for (let i = 0; i <= steps; i++) {
+    const u = i / steps;
+    const th = th0 + dir * u * turns * Math.PI * 2;
+    // Ease the radius so outer rings are spaced more like the inner ones.
+    const k = Math.pow(u, 0.92);
+    const lobe = 1 + o.lobeAmp * Math.cos(o.lobes * th) * (1 - u * 0.6);
+    const wob = 1 + wobA * Math.sin(wobK * th + wobP);
+    const ax = (axOut + (axIn - axOut) * k) * lobe * wob;
+    const ay = (ayOut + (ayIn - ayOut) * k) * lobe * wob;
+    const sp = shapePt(shape, th, k);
+    pts.push({ x: cx + dx * k + ax * sp.x, y: cy + dy * k + ay * sp.y });
+  }
+  return chaikin(withEntry(clampIn(pts)), 2);
+}
+
+function spiralLike(rng: Rng, o: SpiralOpts): Cand {
+  const cx = GW / 2 + (o.safe ? 0 : rng.range(-60, 60));
+  const cy = GH / 2 + (o.safe ? 0 : rng.range(-25, 25));
+  const dir = rng.chance(0.5) ? 1 : -1;
+  const th0 = o.th0 ?? rng.range(0, Math.PI * 2);
+  const twin = (o.arms ?? 1) > 1;
+  const ayIn = twin ? rng.range(104, 116) : rng.range(118, 140);
+  const axIn = ayIn * (o.maxAspect ? Math.min(o.maxAspect, 1.1) : rng.range(1.15, 1.45));
+  const base = { cx, cy, dir, th0, ayIn, axIn };
+  const arms = o.arms ?? 1;
+  const paths: Pt[][] = [];
+  for (let a = 0; a < arms; a++) paths.push(spiralArm(rng, { ...o, arm: a, arms }, base));
+  return { paths, launcher: { x: cx + (o.drift?.x ?? 0), y: cy + (o.drift?.y ?? 0) } };
+}
+
+/** Off-centre drift for spiral-type tracks. */
+function drift(rng: Rng, o: GenOpts): Pt | undefined {
+  if (!o.off) return undefined;
+  const sx = rng.chance(0.5) ? 1 : -1;
+  return { x: sx * rng.range(140, 260) * (GW / WORLD_W), y: rng.range(-40, 40) * (GH / WORLD_H) };
+}
+
+const turnK = () => 0.55 + 0.45 * (GH / WORLD_H);
+
+/** Rows of a boustrophedon: alternate direction each row. */
+function rows(rng: Rng, ys: number[], left: number, right: number, goRight: boolean, wobble = 12): Pt[] {
+  const way: Pt[] = [];
+  for (const ry of ys) {
+    const a = goRight ? left : right;
+    const b = goRight ? right : left;
+    const amp = rng.range(0, wobble);
+    const ph = rng.range(0, 6);
+    for (let k = 0; k <= 8; k++) {
+      const x = a + ((b - a) * k) / 8;
+      const edge = k === 0 || k === 8 ? 0 : 1;
+      way.push({ x, y: ry + Math.sin(k * 0.9 + ph) * amp * edge });
+    }
+    goRight = !goRight;
+  }
+  return way;
+}
+
+/** Vertical columns: alternate direction each column. */
+function cols(xs: number[], top: number, bottom: number, goDown: boolean): Pt[] {
+  const way: Pt[] = [];
+  for (const cx of xs) {
+    const a = goDown ? top : bottom;
+    const b = goDown ? bottom : top;
+    for (let k = 0; k <= 6; k++) way.push({ x: cx, y: a + ((b - a) * k) / 6 });
+    goDown = !goDown;
+  }
+  return way;
 }
 
 export const __GEN = {} as Record<TrackFamily, Gen>;
 const GENERATORS: Record<TrackFamily, Gen> = {
-  spiral(rng, index, safe) {
-    const k = GH / WORLD_H;
-    const turns = (safe ? 1.6 : rng.range(1.35, 2.05) + Math.min(index, 20) * 0.004) * (0.55 + 0.45 * k);
-    return spiralLike(rng, { lobes: 0, lobeAmp: 0, turns, safe });
+  spiral(rng, o) {
+    const turns = (o.safe ? 1.6 : rng.range(1.35, 2.05) + Math.min(o.index, 20) * 0.004) * turnK();
+    return spiralLike(rng, { lobes: 0, lobeAmp: 0, turns, safe: o.safe, drift: o.safe ? undefined : drift(rng, o) });
   },
-  lobes(rng) {
-    return spiralLike(rng, { lobes: rng.int(3, 6), lobeAmp: rng.range(0.08, 0.16), turns: rng.range(1.3, 1.8) * (0.55 + 0.45 * (GH / WORLD_H)) });
+  lobes(rng, o) {
+    return spiralLike(rng, { lobes: rng.int(3, 6), lobeAmp: rng.range(0.08, 0.16), turns: rng.range(1.3, 1.8) * turnK(), drift: drift(rng, o) });
   },
-  wave(rng) {
-    return spiralLike(rng, { lobes: rng.int(6, 10), lobeAmp: rng.range(0.035, 0.06), turns: rng.range(1.4, 1.9) * (0.55 + 0.45 * (GH / WORLD_H)) });
+  wave(rng, o) {
+    return spiralLike(rng, { lobes: rng.int(6, 10), lobeAmp: rng.range(0.035, 0.06), turns: rng.range(1.4, 1.9) * turnK(), drift: drift(rng, o) });
+  },
+  square(rng, o) {
+    return spiralLike(rng, { lobes: 0, lobeAmp: 0, turns: rng.range(1.3, 1.85) * turnK(), shape: 'square', drift: drift(rng, o) });
+  },
+  heart(rng, o) {
+    return spiralLike(rng, { lobes: 0, lobeAmp: 0, turns: rng.range(1.3, 1.75) * turnK(), shape: 'heart', maxAspect: 1.35, th0: Math.PI / 2 + rng.range(-0.3, 0.3), drift: o.off ? { x: drift(rng, o)!.x * 0.6, y: 0 } : undefined });
   },
   serpentine(rng) {
     // Horizontal rows above and below a central lane that holds the launcher.
@@ -208,44 +483,136 @@ const GENERATORS: Record<TrackFamily, Gen> = {
     const botRows = rng.int(1, 3);
     const gap = rng.range(92, 110);
     // S-shape: bottom rows (outer → inner), up one side, top rows (inner → outer).
-    // The launcher sits in the open lane between them.
-    const way: Pt[] = [];
     const ys: number[] = [];
     for (let i = 0; i < botRows; i++) ys.push(GH - 52 - i * gap);
     for (let i = topRows - 1; i >= 0; i--) ys.push(52 + i * gap);
-    let goRight = rng.chance(0.5);
-    for (const ry of ys) {
-      const a = goRight ? left : right;
-      const b = goRight ? right : left;
-      const amp = rng.range(0, 12);
-      const ph = rng.range(0, 6);
-      for (let k = 0; k <= 8; k++) {
-        const x = a + ((b - a) * k) / 8;
-        const edge = k === 0 || k === 8 ? 0 : 1;
-        way.push({ x, y: ry + Math.sin(k * 0.9 + ph) * amp * edge });
-      }
-      goRight = !goRight;
-    }
+    const way = rows(rng, ys, left, right, rng.chance(0.5));
     const launcher = { x: GW / 2 + rng.range(-120, 120), y: GH / 2 + rng.range(-20, 20) };
-    return { points: chaikin(withEntry(way), 5), launcher };
+    return { paths: [chaikin(withEntry(way), 5)], launcher };
+  },
+  columns(rng) {
+    // Vertical columns on both sides of an open lane; the launcher sits in the lane.
+    const gap = rng.range(96, 116);
+    const nl = rng.int(1, 4);
+    const nr = rng.int(1, 4);
+    const top = 50;
+    const bottom = GH - 50;
+    const xl: number[] = [];
+    const xr: number[] = [];
+    for (let i = 0; i < nl; i++) xl.push(60 + i * gap);
+    for (let i = nr - 1; i >= 0; i--) xr.push(GW - 60 - i * gap);
+    // Outer-left → inner-left, across the top/bottom of the lane, inner-right → outer-right.
+    const way = cols([...xl, ...xr], top, bottom, rng.chance(0.5));
+    const laneL = xl[xl.length - 1];
+    const laneR = xr[0];
+    const launcher = { x: (laneL + laneR) / 2 + rng.range(-40, 40), y: GH / 2 + rng.range(-30, 30) };
+    return { paths: [chaikin(withEntry(way), 5)], launcher };
+  },
+  comb(rng) {
+    // Long fingers hanging from the top edge, down one side, fingers rising from the bottom.
+    const n = 2 * rng.int(2, 4); // even, so the top half ends at a finger tip
+    const left = 70;
+    const right = GW - 70;
+    const sp = (right - left) / (n - 1);
+    const reach = GH / 2 - rng.range(105, 130);
+    const fromLeft = rng.chance(0.5);
+    const xs: number[] = [];
+    for (let i = 0; i < n; i++) xs.push(fromLeft ? left + i * sp : right - i * sp);
+    // Top fingers (first one rises from its tip), then straight down the far side into
+    // the bottom fingers, which end at a tip near the middle.
+    const topHalf = cols(xs, 46, reach, false);
+    const botHalf = cols([...xs].reverse(), GH - reach, GH - 46, true);
+    const way = [...topHalf, ...botHalf];
+    const launcher = { x: GW / 2 + rng.range(-80, 80), y: GH / 2 };
+    return { paths: [chaikin(withEntry(way), 5)], launcher };
+  },
+  horseshoe(rng) {
+    // Nested arches opening toward the launcher, which sits near one edge.
+    const side = rng.int(0, 4); // 0 bottom, 1 top, 2 left, 3 right
+    const ks = GH / WORLD_H;
+    const gap = rng.range(96, 112);
+    let F: Pt;
+    let u: Pt; // toward the arches
+    let v: Pt; // across
+    let aOut: number;
+    let bOut: number;
+    if (side < 2) {
+      F = { x: GW / 2 + rng.range(-80, 80), y: side === 0 ? GH - 120 * ks : 120 * ks };
+      u = { x: 0, y: side === 0 ? -1 : 1 };
+      v = { x: 1, y: 0 };
+      aOut = (side === 0 ? F.y : GH - F.y) - 46;
+      bOut = Math.min(F.x, GW - F.x) - 50;
+    } else {
+      F = { x: side === 2 ? 150 * ks : GW - 150 * ks, y: GH / 2 + rng.range(-30, 30) };
+      u = { x: side === 2 ? 1 : -1, y: 0 };
+      v = { x: 0, y: 1 };
+      aOut = (side === 2 ? GW - F.x : F.x) - 50;
+      bOut = Math.min(F.y, GH - F.y) - 44;
+    }
+    const n = Math.max(2, Math.min(5, Math.floor((Math.min(aOut, bOut) - 150) / gap) + 1));
+    const way: Pt[] = [];
+    let cw = rng.chance(0.5);
+    for (let k = 0; k < n; k++) {
+      const a = aOut - k * gap;
+      const b = bOut - k * gap;
+      const lim = Math.PI / 2 + 0.12;
+      for (let j = 0; j <= 24; j++) {
+        const phi = (cw ? -1 : 1) * (-lim + (2 * lim * j) / 24);
+        const ca = Math.cos(phi);
+        const sa = Math.sin(phi);
+        way.push({ x: F.x + u.x * a * ca + v.x * b * sa, y: F.y + u.y * a * ca + v.y * b * sa });
+      }
+      cw = !cw;
+    }
+    return { paths: [chaikin(withEntry(clampIn(way)), 4)], launcher: F };
+  },
+  twinSpiral(rng) {
+    return spiralLike(rng, { lobes: 0, lobeAmp: 0, turns: rng.range(0.85, 1.12) * turnK(), arms: 2, shape: rng.chance(0.3) ? 'square' : 'ellipse' });
+  },
+  twinSerpentine(rng) {
+    // One chain snakes down from the top, the other up from the bottom; launcher in the middle lane.
+    const left = rng.range(60, 110);
+    const right = GW - rng.range(60, 110);
+    const n = 2;
+    const gap = rng.range(94, 110);
+    const topYs: number[] = [];
+    const botYs: number[] = [];
+    for (let i = 0; i < n; i++) {
+      topYs.push(52 + i * gap);
+      botYs.push(GH - 52 - i * gap);
+    }
+    const r = rng.chance(0.5);
+    const mk = (ys: number[], goRight: boolean) => chaikin(withEntry(rows(rng, ys, left, right, goRight, 8)), 5);
+    const launcher = { x: GW / 2 + rng.range(-100, 100), y: GH / 2 };
+    return { paths: [mk(topYs, r), mk(botYs, !r)], launcher };
+  },
+  twinColumns(rng) {
+    // Left block feeds one chain, right block the other; launcher in the lane between.
+    const gap = rng.range(100, 118);
+    const n = rng.int(2, 4);
+    const top = 50;
+    const bottom = GH - 50;
+    const xl: number[] = [];
+    const xr: number[] = [];
+    for (let i = 0; i < n; i++) {
+      xl.push(60 + i * gap);
+      xr.push(GW - 60 - i * gap);
+    }
+    const down = rng.chance(0.5);
+    const launcher = { x: GW / 2 + rng.range(-60, 60), y: GH / 2 + rng.range(-30, 30) };
+    return { paths: [chaikin(withEntry(cols(xl, top, bottom, down)), 5), chaikin(withEntry(cols(xr, top, bottom, !down)), 5)], launcher };
   },
 };
 
 // ---------------------------------------------------------------- validation
 
-/** Rejects tracks whose parts overlap, leave the board, or crowd the launcher. */
-export function validate(points: Pt[], launcher: Pt, world?: { w: number; h: number }): boolean {
-  if (world) {
-    GW = world.w;
-    GH = world.h;
-  }
-  const track = buildTrack(points, { w: GW, h: GH });
+/** Rejects a track whose parts overlap, leave the board, or crowd the launcher. Returns its visible length. */
+function checkPath(track: Track, launcher: Pt, minLen: number, maxLen: number): number | null {
   const { xs, ys } = track;
   const n = xs.length;
   const visStart = Math.floor(track.visibleFrom / TRACK_STEP);
   const visLen = track.length - track.visibleFrom;
-  const ks = GH / WORLD_H;
-  if (visLen < 2000 * ks || visLen > 6200) return false;
+  if (visLen < minLen || visLen > maxLen) return null;
   // Coarse samples every ~half ball.
   const stride = Math.max(1, Math.floor(BALL_R / 2 / TRACK_STEP));
   const minSep = BALL_D * 2.25;
@@ -255,16 +622,56 @@ export function validate(points: Pt[], launcher: Pt, world?: { w: number; h: num
     const x = xs[i];
     const y = ys[i];
     const entering = i * TRACK_STEP < track.visibleFrom + 140;
-    if (!entering && (x < BALL_R || x > GW - BALL_R || y < BALL_R || y > GH - BALL_R)) return false;
+    if (!entering && (x < BALL_R || x > GW - BALL_R || y < BALL_R || y > GH - BALL_R)) return null;
     const lx = x - launcher.x;
     const ly = y - launcher.y;
-    if (lx * lx + ly * ly < 92 * 92) return false;
+    if (lx * lx + ly * ly < 92 * 92) return null;
     for (let j = i + arcSkip; j < n; j += stride) {
       const dx = xs[j] - x;
       const dy = ys[j] - y;
+      if (dx * dx + dy * dy < minSep2) return null;
+    }
+  }
+  return visLen;
+}
+
+/** Two tracks must keep the same clearance from each other as from themselves. */
+function apart(a: Track, b: Track): boolean {
+  const stride = Math.max(1, Math.floor(BALL_R / 2 / TRACK_STEP));
+  const minSep = BALL_D * 2.25;
+  const minSep2 = minSep * minSep;
+  const sa = Math.max(0, Math.floor(a.visibleFrom / TRACK_STEP) - 40);
+  const sb = Math.max(0, Math.floor(b.visibleFrom / TRACK_STEP) - 40);
+  for (let i = sa; i < a.xs.length; i += stride) {
+    for (let j = sb; j < b.xs.length; j += stride) {
+      const dx = a.xs[i] - b.xs[j];
+      const dy = a.ys[i] - b.ys[j];
       if (dx * dx + dy * dy < minSep2) return false;
     }
   }
   return true;
+}
+
+/** Validate every path of a level; returns visible lengths, or null if invalid. */
+export function validateLevel(paths: Pt[][], launcher: Pt, twin: boolean, world?: { w: number; h: number }): number[] | null {
+  if (world) {
+    GW = world.w;
+    GH = world.h;
+  }
+  const ks = GH / WORLD_H;
+  const tracks = paths.map((p) => buildTrack(p, { w: GW, h: GH }));
+  const lens: number[] = [];
+  for (const t of tracks) {
+    const l = checkPath(t, launcher, (twin ? 1100 : 2000) * ks, twin ? 4200 : 6200);
+    if (l === null) return null;
+    lens.push(l);
+  }
+  for (let i = 0; i < tracks.length; i++) for (let j = i + 1; j < tracks.length; j++) if (!apart(tracks[i], tracks[j])) return null;
+  return lens;
+}
+
+/** Single-track check (kept for tests/tools). */
+export function validate(points: Pt[], launcher: Pt, world?: { w: number; h: number }): boolean {
+  return validateLevel([points], launcher, false, world) !== null;
 }
 Object.assign(__GEN, GENERATORS);

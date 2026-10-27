@@ -2,7 +2,7 @@
 // audio/haptics, saving, screens. The simulation itself lives in src/sim.
 
 import './style.css';
-import { BALL_D, generateLevel, type Level } from './sim/levelgen';
+import { BALL_D, generateLevel, isLargeCampaign, LARGE_PREFIX, type Level, MUTATOR_INFO } from './sim/levelgen';
 import {
   ballPos,
   type Command,
@@ -12,6 +12,7 @@ import {
   type GameState,
   POWER_NAMES,
   Power,
+  isRolling,
   progress,
   raycast,
   runIfInserted,
@@ -31,7 +32,19 @@ import { FEEL, feedbackFor, shakeOffset, springAngle } from './game/feel';
 import { Audio } from './game/audio';
 import { Haptics } from './game/haptics';
 import { UI } from './game/ui';
-import { freshSave, loadSave, parseLevelCode, type SaveData, starsFor, switchCampaign, writeSave } from './game/save';
+import {
+  dailySeed,
+  type EndlessRun,
+  endlessSeed,
+  freshSave,
+  levelsUpdated,
+  loadSave,
+  parseLevelCode,
+  type SaveData,
+  starsFor,
+  switchCampaign,
+  writeSave,
+} from './game/save';
 
 type Mode = 'title' | 'playing' | 'paused' | 'result';
 
@@ -54,6 +67,8 @@ let hitstop = 0; // ms
 let slowmo: { scale: number; left: number } | null = null;
 let peakDanger = 0;
 let resultTimer = -1;
+/** Endless run being played (null in the campaign). */
+let run: EndlessRun | null = null;
 let lastHitBall = -1;
 let heartT = 0;
 let autosaveT = 0;
@@ -124,18 +139,55 @@ function loadLevel(seed: string, index: number, state?: GameState) {
 
 function startLevel(index: number, fromSnapshot = false) {
   attract = false;
+  run = null;
   if (fromSnapshot && save.snapshot) loadLevel(save.campaignSeed, save.snapshot.levelIndex, save.snapshot.state);
   else {
     loadLevel(save.campaignSeed, index);
     save.snapshot = null;
     writeSave(save);
   }
+  beginPlay();
+}
+
+/** Endless: a fresh run (random seed, or today's daily seed). Board size follows the campaign. */
+function startEndless(daily: boolean) {
+  attract = false;
+  const prefix = isLargeCampaign(save.campaignSeed) ? LARGE_PREFIX : '';
+  run = { seed: prefix + (daily ? dailySeed() : endlessSeed()), daily, stage: 0, runScore: 0, snapshot: null };
+  save.endless = run;
+  writeSave(save);
+  loadLevel(run.seed, 0);
+  beginPlay();
+}
+
+function continueEndless() {
+  if (!save.endless) return;
+  attract = false;
+  run = save.endless;
+  loadLevel(run.seed, run.stage, run.snapshot ?? undefined);
+  beginPlay();
+}
+
+/** Level-start banner: boss / mini-boss / level number, plus a note for twists and two chains. */
+function levelBanner(): string[] {
+  const label = run ? `Stage ${level.index + 1}` : `Level ${level.index + 1}`;
+  if (level.boss === 'boss') view.banner = { text: 'BOSS', sub: `${label} · ${level.name}`, t: 0, color: '#ff6b81' };
+  else if (level.boss === 'mini') view.banner = { text: 'MINI-BOSS', sub: `${label} · ${level.name}`, t: 0, color: '#ffb36b' };
+  else view.banner = { text: label, sub: level.name, t: 0, color: '#ffe08a' };
+  const notes: string[] = [];
+  if (level.tracks.length > 1) notes.push('Two chains — watch both skulls!');
+  for (const m of level.mutators) notes.push(`${MUTATOR_INFO[m].name}: ${MUTATOR_INFO[m].desc}`);
+  return notes;
+}
+
+function beginPlay() {
   mode = 'playing';
   ui.hide();
   ui.showHud(true);
-  view.banner = { text: `Level ${level.index + 1}`, sub: level.name, t: 0, color: '#ffe08a' };
+  const notes = levelBanner();
   audio.unlock();
   requestWakeLock();
+  if (notes.length) ui.toast(notes.join(' · '), 2800);
   if (!save.tutorialSeen) {
     save.tutorialSeen = true;
     writeSave(save);
@@ -166,7 +218,11 @@ function toTitle() {
 
 function saveSnapshot() {
   if (attract || mode === 'title' || mode === 'result' || !st || st.phase !== 'playing') return;
-  save.snapshot = { levelIndex: level.index, state: JSON.parse(snapshot(st)), savedAt: Date.now() };
+  if (run) {
+    run.stage = level.index;
+    run.snapshot = JSON.parse(snapshot(st));
+    save.endless = run;
+  } else save.snapshot = { levelIndex: level.index, state: JSON.parse(snapshot(st)), savedAt: Date.now() };
   writeSave(save);
 }
 
@@ -175,11 +231,44 @@ function pause() {
   mode = 'paused';
   view.aimActive = false;
   saveSnapshot();
-  ui.pause(save, level);
+  ui.pause(save, level, run);
+  releaseWakeLock();
+}
+
+/** Endless: a cleared stage rolls straight into the next; losing ends the run. */
+function endlessStageDone(won: boolean, r: EndlessRun) {
+  if (won) {
+    r.runScore += st.score;
+    r.stage = level.index + 1;
+    r.snapshot = null;
+    save.endless = r;
+    writeSave(save);
+    loadLevel(r.seed, r.stage);
+    beginPlay();
+    return;
+  }
+  mode = 'result';
+  ui.showHud(false);
+  const total = r.runScore + st.score;
+  const stage = level.index + 1;
+  let newBest = false;
+  if (r.daily) {
+    const day = r.seed.replace(/^(xl-)?daily-/, '');
+    const prev = save.dailyBest?.day === day ? save.dailyBest : undefined;
+    newBest = !prev || total > prev.score;
+    if (newBest) save.dailyBest = { day, score: total, stage };
+  } else {
+    newBest = !save.endlessBest || total > save.endlessBest.score;
+    if (newBest) save.endlessBest = { score: total, stage };
+  }
+  save.endless = null;
+  writeSave(save);
+  ui.endlessOver({ daily: r.daily, total, stage, newBest, best: (r.daily ? save.dailyBest?.score : save.endlessBest?.score) ?? total });
   releaseWakeLock();
 }
 
 function finishLevel(won: boolean) {
+  if (run) return endlessStageDone(won, run);
   mode = 'result';
   ui.showHud(false);
   const seconds = st.tick / TICK_HZ;
@@ -209,7 +298,9 @@ const ui = new UI({
     audio.unlock();
     requestWakeLock();
   },
-  restart: () => startLevel(level.index),
+  restart: () => (run ? startEndless(run.daily) : startLevel(level.index)),
+  endless: (daily) => startEndless(daily),
+  continueEndless: () => continueEndless(),
   quit: () => {
     saveSnapshot();
     toTitle();
@@ -659,14 +750,17 @@ const POWER_HINTS = ['', 'Bomb marble! Pop it in a match to blast everything nea
 /** First time each power-up appears on screen, explain it once (tap ? for details). */
 function announcePowers() {
   const seen = save.seenPowers ?? 0;
-  for (const b of st.balls) {
-    if (b.p && !(seen & (1 << b.p)) && b.s > level.track.visibleFrom + 40) {
-      save.seenPowers = seen | (1 << b.p);
-      writeSave(save);
-      ui.toast(`${POWER_HINTS[b.p]} · tap ? for all power-ups`, 4200);
-      const p = pointAt(level.track, b.s);
-      fx.ring(p.x, p.y, '#fff', 20, 120, 0.8);
-      return;
+  for (let ci = 0; ci < st.chains.length; ci++) {
+    const tr = level.tracks[ci];
+    for (const b of st.chains[ci].balls) {
+      if (b.p && !(seen & (1 << b.p)) && b.s > tr.visibleFrom + 40) {
+        save.seenPowers = seen | (1 << b.p);
+        writeSave(save);
+        ui.toast(`${POWER_HINTS[b.p]} · tap ? for all power-ups`, 4200);
+        const p = pointAt(tr, b.s);
+        fx.ring(p.x, p.y, '#fff', 20, 120, 0.8);
+        return;
+      }
     }
   }
 }
@@ -714,16 +808,20 @@ function handleEvents(events: GameEvent[]) {
         fx.burst(e.x, e.y, col.base, col.light, fb.particles, 0.5);
         // Ripple through the chain from the impact point.
         let best = -1;
+        let bestC = 0;
         let bd = Infinity;
-        for (const b of st.balls) {
-          const p = pointAt(level.track, b.s);
-          const d = Math.hypot(p.x - e.x, p.y - e.y);
-          if (d < bd) {
-            bd = d;
-            best = b.s;
+        st.chains.forEach((ch, ci) => {
+          for (const b of ch.balls) {
+            const p = pointAt(level.tracks[ci], b.s);
+            const d = Math.hypot(p.x - e.x, p.y - e.y);
+            if (d < bd) {
+              bd = d;
+              best = b.s;
+              bestC = ci;
+            }
           }
-        }
-        view.ripple0 = { s: best, t: view.time };
+        });
+        view.ripple0 = { s: best, t: view.time, c: bestC };
         break;
       }
       case 'pop': {
@@ -782,7 +880,7 @@ function handleEvents(events: GameEvent[]) {
           startAttract();
           break;
         }
-        view.banner = { text: 'Level clear!', t: 0, color: '#7dffcf' };
+        view.banner = { text: run ? 'Stage clear!' : 'Level clear!', sub: run ? `Run score ${(run.runScore + st.score).toLocaleString()}` : undefined, t: 0, color: '#7dffcf' };
         const lc = level.launcher;
         fx.confetti(lc.x, lc.y, PALETTE.map((p) => p.base), fb.particles);
         resultTimer = 1.8;
@@ -837,7 +935,7 @@ function frame(now: number) {
       steps++;
       let cmds: Command[] = [];
       if (attract) {
-        if (st.tick % 30 === 0 && !st.rolling) {
+        if (st.tick % 30 === 0 && !isRolling(st)) {
           cmds = decide(st, level, BOT_PRESETS.casual, botRng);
           const f = cmds.find((c) => c.type === 'fire');
           if (f && f.type === 'fire') aimTarget = aimAngleToward(f);
@@ -877,7 +975,7 @@ function frame(now: number) {
   renderer.draw(st, view, fx);
   drawMs = drawMs * 0.95 + (performance.now() - d0) * 0.05;
   const h0 = performance.now();
-  if (!attract && (mode === 'playing' || mode === 'paused')) ui.updateHud(st, level);
+  if (!attract && (mode === 'playing' || mode === 'paused')) ui.updateHud(st, level, run);
   hudMs = hudMs * 0.95 + (performance.now() - h0) * 0.05;
 
   // Autosave every few seconds
@@ -953,7 +1051,7 @@ function updateView(dt: number) {
     else {
       const front = age * FEEL.ripple.speed;
       const fade = Math.exp(-age / FEEL.ripple.decay);
-      for (const b of st.balls) {
+      for (const b of st.chains[view.ripple0.c]?.balls ?? []) {
         const d = Math.abs(b.s - view.ripple0.s);
         if (d > front + BALL_D * 2) continue;
         const w = Math.exp(-((d - front) * (d - front)) / (2 * BALL_D * BALL_D));
@@ -1021,7 +1119,7 @@ window.__zuma = {
     return attract;
   },
   state: () => st,
-  level: () => ({ index: level.index, seed: level.campaignSeed, launcher: level.launcher, length: level.track.length, family: level.family }),
+  level: () => ({ index: level.index, seed: level.campaignSeed, launcher: level.launcher, length: level.tracks[0].length, chains: level.tracks.length, family: level.family, boss: level.boss, mutators: level.mutators }),
   layout: () => layout,
   view: () => ({ aimAngle: view.aimAngle, aimShot: view.aimShot, aimCancel: view.aimCancel, aimActive: view.aimActive, aimHit: view.aimHit, willPop: view.aimWillPop, trauma: view.trauma, danger: view.danger }),
   fps: () => fps,
@@ -1037,28 +1135,42 @@ window.__zuma = {
   particles: () => fx.list.length,
   save: () => save,
   start: (i: number) => startLevel(i),
+  /** Play any (seed, level) outside the campaign progress (tests / tools). */
+  load: (seed: string, i: number) => {
+    attract = false;
+    run = null;
+    loadLevel(seed, i);
+    beginPlay();
+  },
+  run: () => run,
   fireAt: (wx: number, wy: number) => queueFire({ x: wx, y: wy }),
   swap: () => queueSwap(),
   pause,
-  ballScreen: (i: number) => {
-    const b = st.balls[i];
+  ballScreen: (i: number, chain = 0) => {
+    const b = st.chains[chain]?.balls[i];
     if (!b) return null;
-    const p = ballPos(level, b);
+    const p = ballPos(level.tracks[chain], b);
     return { x: layout.a * p.x + layout.c * p.y + layout.e, y: layout.b * p.x + layout.d * p.y + layout.f, s: b.s, c: b.c };
   },
   worldToScreen: (x: number, y: number) => ({ x: layout.a * x + layout.c * y + layout.e, y: layout.b * x + layout.d * y + layout.f }),
   /** Drop the chain into a scripted test layout (frozen) for deterministic visual checks. */
   setup: (colors: number[], opts: { headGap?: number; power?: [number, number] } = {}) => {
     st.spawning = false;
-    st.rolling = false;
-    st.speed = 0;
-    st.stopT = 1e6;
     st.gun.cool = 0;
-    const headS = level.track.length - (opts.headGap ?? 500);
-    st.balls = colors.map((c, i) => ({ id: st.nextId++, c, s: headS - (colors.length - 1 - i) * BALL_D, p: 0 as Power, pt: 0, g: 1, ins: 1, ix: 0, iy: 0, clr: -1, combo: 0, suck: 0, rt: 0, rv: 0, gb: 0 }));
+    // Chain 0 gets the scripted marbles; any other chain is emptied.
+    st.chains.forEach((ch, ci) => {
+      ch.rolling = false;
+      ch.speed = 0;
+      ch.stopT = 1e6;
+      ch.pending = [];
+      if (ci > 0) ch.balls = [];
+    });
+    const ch = st.chains[0];
+    const headS = level.tracks[0].length - (opts.headGap ?? 500);
+    ch.balls = colors.map((c, i) => ({ id: st.nextId++, c, s: headS - (colors.length - 1 - i) * BALL_D, p: 0 as Power, pt: 0, g: 1, ins: 1, ix: 0, iy: 0, clr: -1, combo: 0, suck: 0, rt: 0, rv: 0, gb: 0 }));
     if (opts.power) {
-      st.balls[opts.power[0]].p = opts.power[1] as Power;
-      st.balls[opts.power[0]].pt = 99;
+      ch.balls[opts.power[0]].p = opts.power[1] as Power;
+      ch.balls[opts.power[0]].pt = 99;
     }
   },
 };
@@ -1068,6 +1180,10 @@ window.__zuma = {
 applySettings();
 resize();
 toTitle();
+if (levelsUpdated) {
+  writeSave(save);
+  ui.toast('Levels got an update! New shapes, bosses, two-chain levels & Endless mode', 5000);
+}
 requestAnimationFrame(frame);
 
 if (import.meta.env.PROD && 'serviceWorker' in navigator) {

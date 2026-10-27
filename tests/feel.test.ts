@@ -150,8 +150,8 @@ describe('timing (input → feedback latency)', () => {
     let doneAt = -1;
     for (let t = 0; t < 8 * TICK_HZ; t++) {
       const ev = step(st, level);
-      const head = st.balls[st.balls.length - 1];
-      if (visibleAt < 0 && head && head.s > level.track.visibleFrom + BALL_D) visibleAt = t / TICK_HZ;
+      const head = st.chains[0].balls[st.chains[0].balls.length - 1];
+      if (visibleAt < 0 && head && head.s > level.tracks[0].visibleFrom + BALL_D) visibleAt = t / TICK_HZ;
       if (doneAt < 0 && ev.some((e) => e.type === 'rollInDone')) doneAt = t / TICK_HZ;
     }
     expect(visibleAt).toBeLessThan(1);

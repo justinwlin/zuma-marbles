@@ -155,6 +155,13 @@ h2 { font-size: 30px; font-weight: 900; letter-spacing: .5px; }
 .lv.next { background: linear-gradient(180deg, #2fd6a8, #12856a); color: #03261c; }
 .lv.next small { color: #064a39; }
 .lv.locked { opacity: .35; pointer-events: none; }
+.lv { position: relative; }
+.lv.boss:not(.next) { background: linear-gradient(180deg, rgba(255,90,120,.28), rgba(120,20,40,.35)); border-color: rgba(255,120,140,.45); }
+.lv.mini:not(.next) { background: linear-gradient(180deg, rgba(255,170,90,.22), rgba(120,60,20,.3)); border-color: rgba(255,180,110,.35); }
+.lv .bds { position: absolute; top: 6px; right: 6px; display: flex; gap: 3px; }
+.lv .bd { font-size: 10px; font-weight: 800; line-height: 1; padding: 3px 5px; border-radius: 8px; background: rgba(0,0,0,.4); color: #fff; }
+.lv .bd.boss { background: #ff5a78; }
+.lv .bd.mini { background: #ff9d4d; color: #2a1200; }
 .code-form { width: min(720px, 100%); display: flex; gap: 8px; margin-top: 18px; }
 .code-form input { flex: 1; min-width: 0; }
 input[type=text] {
