@@ -31,7 +31,7 @@ import { FEEL, feedbackFor, shakeOffset, springAngle } from './game/feel';
 import { Audio } from './game/audio';
 import { Haptics } from './game/haptics';
 import { UI } from './game/ui';
-import { freshSave, loadSave, parseLevelCode, type SaveData, starsFor, writeSave } from './game/save';
+import { freshSave, loadSave, parseLevelCode, type SaveData, starsFor, switchCampaign, writeSave } from './game/save';
 
 type Mode = 'title' | 'playing' | 'paused' | 'result';
 
@@ -96,6 +96,8 @@ function loadLevel(seed: string, index: number, state?: GameState) {
   st = state ?? createGame(level);
   view.hue = hueFor(level);
   renderer.setLevel(level, view.hue);
+  // Board size can differ per campaign (large marbles): re-fit to the screen.
+  if (layout) resize();
   pending = [];
   recording = [];
   acc = 0;
@@ -114,6 +116,7 @@ function loadLevel(seed: string, index: number, state?: GameState) {
   view.aimAngle = aimTarget;
   rawAim = aimTarget;
   aimSlot = null;
+  aimLocked = false;
   ui.resetHud();
 }
 
@@ -134,7 +137,14 @@ function startLevel(index: number, fromSnapshot = false) {
   if (!save.tutorialSeen) {
     save.tutorialSeen = true;
     writeSave(save);
-    ui.toast(matchMedia('(pointer: coarse)').matches ? `Drag to aim · release to shoot · slide to ✕ to cancel · tap the ${characterNoun(save.settings.character)} to swap` : 'Move to aim · click to shoot · right-click / Space to swap', 4800);
+    const noun = characterNoun(save.settings.character);
+    const touchHint =
+      save.settings.touchAim === 'aimtap'
+        ? `Drag to aim · tap to shoot · tap the ${noun} to swap`
+        : save.settings.touchAim === 'tap'
+          ? `Tap to shoot · tap the ${noun} to swap`
+          : `Drag to aim · release to shoot · slide to ✕ to cancel · tap the ${noun} to swap`;
+    ui.toast(matchMedia('(pointer: coarse)').matches ? touchHint : 'Move to aim · click to shoot · right-click / Space to swap', 4800);
   }
 }
 
@@ -220,6 +230,14 @@ const ui = new UI({
     toTitle();
     ui.toast('Progress reset — new campaign ' + save.campaignSeed);
   },
+  setLargeMarbles: (large) => {
+    const base = save.campaignSeed.replace(/^xl-/, '');
+    save = switchCampaign(save, large ? `xl-${base}` : base);
+    writeSave(save);
+    toTitle();
+    ui.levels(save);
+    ui.toast(large ? 'Large marbles: bigger marbles, own levels & progress' : 'Normal marbles');
+  },
   newCampaign: (seed) => {
     const clean = seed.replace(/[^\w-]/g, '').slice(0, 40);
     if (!clean) return;
@@ -274,7 +292,7 @@ function resize() {
   const vh = window.innerHeight;
   // Up to 3× so text and marbles are pixel-sharp on modern phones (iPhones are 3×).
   const dpr = Math.min(window.devicePixelRatio || 1, 3);
-  layout = computeLayout(vw, vh, dpr, readInsets());
+  layout = computeLayout(vw, vh, dpr, readInsets(), level ? { w: level.worldW, h: level.worldH } : undefined);
   canvas.style.width = `${vw}px`;
   canvas.style.height = `${vh}px`;
   renderer.setLayout(layout);
@@ -331,6 +349,8 @@ let touchStart: TouchAim | null = null;
 let rawAim = -Math.PI / 2;
 const aimHistory: { t: number; a: number }[] = [];
 let aimSlot: Slot | null = null;
+/** Aim + tap mode: the aim stays set after lifting; the next tap fires along it. */
+let aimLocked = false;
 const LIFTOFF_MS = 70;
 
 const stage = document.getElementById('stage') as HTMLElement;
@@ -404,6 +424,7 @@ stage.addEventListener('pointerdown', (e) => {
   }
   // A second finger while aiming cancels the shot.
   if (touchStart && touchStart.id !== e.pointerId) {
+    if (save.settings.touchAim === 'aimtap') return; // lifting never fires in this mode
     if (!touchStart.cancelled && view.aimActive) {
       touchStart.cancelled = true;
       view.aimActive = false;
@@ -417,6 +438,8 @@ stage.addEventListener('pointerdown', (e) => {
   const frog = onLauncher(w);
   touchStart = { id: e.pointerId, sx: e.clientX, sy: e.clientY, onFrog: frog, moved: false, cancelled: false };
   aimHistory.length = 0;
+  // Aim + tap: decide on lift — a drag sets the aim, a tap fires.
+  if (save.settings.touchAim === 'aimtap') return;
   if (save.settings.touchAim === 'tap' && !frog) {
     setRawAim(w);
     const a = shotAngle(rawAim);
@@ -441,6 +464,14 @@ stage.addEventListener('pointermove', (e) => {
   }
   if (!touchStart || touchStart.id !== e.pointerId || touchStart.cancelled) return;
   if (Math.hypot(e.clientX - touchStart.sx, e.clientY - touchStart.sy) > 10) touchStart.moved = true;
+  if (save.settings.touchAim === 'aimtap') {
+    if (touchStart.moved && !(touchStart.onFrog && onLauncher(w))) {
+      setRawAim(w);
+      view.aimActive = true;
+      aimLocked = true;
+    }
+    return;
+  }
   if (save.settings.touchAim !== 'drag') return;
   const overFrog = onLauncher(w);
   const overZone = inCancelZone(e.clientX, e.clientY);
@@ -467,7 +498,21 @@ function endTouch(e: PointerEvent, interrupted: boolean) {
     return;
   }
   if (t.onFrog && !t.moved) queueSwap();
-  else if (save.settings.touchAim === 'drag') {
+  else if (save.settings.touchAim === 'aimtap') {
+    if (!t.moved && !interrupted) {
+      if (aimLocked) {
+        // A real tap: on iPhone the invisible switch under the finger gives the haptic tick.
+        haptics.tickNow();
+        fireAngle(shotAngle(rawAim));
+      } else {
+        // First tap with no aim yet: aim there (no shot), so a tap never fires blind.
+        setRawAim(w);
+        aimLocked = true;
+      }
+    }
+    view.aimActive = aimLocked;
+    return;
+  } else if (save.settings.touchAim === 'drag') {
     if (cancelled || onLauncher(w)) {
       if (!interrupted && !t.cancelled) audio.play('cancel');
     } else {
@@ -773,6 +818,7 @@ function frame(now: number) {
 }
 
 function updateView(dt: number) {
+  if (aimLocked && save.settings.touchAim === 'aimtap' && mode === 'playing' && !attract) view.aimActive = true;
   // Aim spring
   [view.aimAngle, aimVel] = springAngle(view.aimAngle, aimVel, aimTarget, Math.min(dt, 1 / 30));
   view.recoil = Math.max(0, view.recoil - dt / FEEL.recoilReturn);

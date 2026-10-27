@@ -11,8 +11,11 @@ export interface Settings {
   reduceMotion: boolean;
   colorblind: boolean;
   guide: boolean;
-  /** Touch aiming: 'drag' = drag to aim, release to fire; 'tap' = tap fires at point. */
-  touchAim: 'drag' | 'tap';
+  /**
+   * Touch aiming: 'drag' = drag to aim, release to fire; 'aimtap' = drag to aim, tap to fire
+   * (a real tap, so iPhones give a haptic tick per shot); 'tap' = tap fires at the point.
+   */
+  touchAim: 'drag' | 'aimtap' | 'tap';
   /** Nudge shots into the previewed slot (±3.5°). */
   assist: boolean;
   /** Launcher character. */
@@ -38,6 +41,25 @@ export interface SaveData {
   tutorialSeen: boolean;
   /** Bitmask of power-up types the player has been told about. */
   seenPowers?: number;
+  /** Progress of campaigns you switched away from, keyed by campaign seed. */
+  archive?: Record<string, CampaignProgress>;
+}
+
+export interface CampaignProgress {
+  unlocked: number;
+  best: Record<number, LevelRecord>;
+  totalScore: number;
+  snapshot: SaveData['snapshot'];
+}
+
+/** Switch to another campaign, keeping each campaign's progress (and in-progress level). */
+export function switchCampaign(d: SaveData, seed: string): SaveData {
+  if (seed === d.campaignSeed) return d;
+  const archive = { ...(d.archive ?? {}) };
+  archive[d.campaignSeed] = { unlocked: d.unlocked, best: d.best, totalScore: d.totalScore, snapshot: d.snapshot };
+  const next = archive[seed] ?? { unlocked: 0, best: {}, totalScore: 0, snapshot: null };
+  delete archive[seed];
+  return { ...d, campaignSeed: seed, unlocked: next.unlocked, best: next.best, totalScore: next.totalScore, snapshot: next.snapshot, archive };
 }
 
 const KEY = 'zuma-marbles.save.v1';

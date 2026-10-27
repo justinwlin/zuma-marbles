@@ -237,6 +237,42 @@ async function runProfile(name: string, opts: BrowserContextOptions) {
   check('character change applies, persists and play resumes', ch.mode === 'playing' && ch.character === 'calico' && ch.stored === 'calico', JSON.stringify(ch));
   await page.screenshot({ path: `${OUT}/${name}-9-calico.png` });
 
+  // ---- Aim + tap mode (touch): drag sets the aim without firing; a tap fires along it.
+  if (opts.hasTouch) {
+    await page.locator('#btn-settings').click();
+    await page.waitForTimeout(200);
+    await page.locator('[data-a=aim][data-v=aimtap]').click();
+    await page.locator('[data-screen=settings] [data-a=back]').click();
+    await page.waitForTimeout(200);
+    await page.evaluate(() => (window as unknown as { __zuma: Z }).__zuma.setup([0, 1, 2, 3, 0, 1, 2, 3], {}));
+    await page.waitForTimeout(100);
+    const s0 = await page.evaluate(() => (window as unknown as { __zuma: Z }).__zuma.state().stats.shots);
+    const tg = (await page.evaluate(() => (window as unknown as { __zuma: Z }).__zuma.ballScreen(3)))!;
+    const cdp2 = await page.context().newCDPSession(page);
+    const t2 = (type: 'touchStart' | 'touchMove' | 'touchEnd', pts: { x: number; y: number; id: number }[]) => cdp2.send('Input.dispatchTouchEvent', { type, touchPoints: pts });
+    await t2('touchStart', [{ x: tg.x + 30, y: tg.y + 60, id: 1 }]);
+    for (let i = 1; i <= 5; i++) await t2('touchMove', [{ x: tg.x + 30 - 6 * i, y: tg.y + 60 - 12 * i, id: 1 }]);
+    await t2('touchEnd', []);
+    await page.waitForTimeout(300);
+    let st2 = await page.evaluate(() => ({ shots: (window as unknown as { __zuma: Z }).__zuma.state().stats.shots, aim: (window as unknown as { __zuma: Z }).__zuma.view().aimActive }));
+    check('aim+tap: dragging sets the aim without shooting', st2.shots === s0 && st2.aim, JSON.stringify(st2));
+    await page.evaluate(() => ((window as unknown as { __vib: unknown[] }).__vib.length = 0));
+    await t2('touchStart', [{ x: 60, y: 300, id: 1 }]);
+    await t2('touchEnd', []);
+    await page.waitForTimeout(300);
+    st2 = await page.evaluate(() => ({ shots: (window as unknown as { __zuma: Z }).__zuma.state().stats.shots, aim: (window as unknown as { __zuma: Z }).__zuma.view().aimActive }));
+    const vib2 = await page.evaluate(() => (window as unknown as { __vib: { ev: string }[] }).__vib);
+    check('aim+tap: a tap fires along the set aim (guide stays)', st2.shots === s0 + 1 && st2.aim, JSON.stringify(st2));
+    check('aim+tap: the firing tap vibrates in-gesture', vib2.some((v) => v.ev === 'pointerup'));
+    await page.screenshot({ path: `${OUT}/${name}-10-aimtap.png` });
+    // back to drag mode for the remaining checks
+    await page.locator('#btn-settings').click();
+    await page.waitForTimeout(200);
+    await page.locator('[data-a=aim][data-v=drag]').click();
+    await page.locator('[data-screen=settings] [data-a=back]').click();
+    await page.waitForTimeout(200);
+  }
+
   // ---- Natural play for a few seconds → frame rate.
   await page.evaluate(() => (window as unknown as { __zuma: Z }).__zuma.start(0));
   await page.waitForTimeout(3500);
@@ -256,6 +292,36 @@ async function runProfile(name: string, opts: BrowserContextOptions) {
   await page.waitForTimeout(100);
   const resumed = await page.evaluate(() => (window as unknown as { __zuma: Z }).__zuma.state() as unknown as { tick: number });
   check('snapshot resumes where it left off', resumed.tick >= tickAtPause.tick && resumed.tick - tickAtPause.tick < 30, `paused@${tickAtPause.tick} resumed@${resumed.tick}`);
+
+  // ---- Large-marble campaign: switch on the Levels screen, marbles render 25% bigger.
+  const normalScale = await page.evaluate(() => (window as unknown as { __zuma: Z }).__zuma.layout().scale);
+  const unlockedBefore = await page.evaluate(() => (window as unknown as { __zuma: Z & { save(): { unlocked: number } } }).__zuma.save().unlocked);
+  await page.locator('#btn-pause').click();
+  await page.waitForTimeout(200);
+  await page.locator('[data-a=quit]').click();
+  await page.waitForTimeout(200);
+  await page.locator('[data-a=levels]').click();
+  await page.waitForTimeout(200);
+  await page.locator('[data-a=size][data-v="1"]').click();
+  await page.waitForTimeout(300);
+  check('large toggle switches to an xl- campaign', (await page.evaluate(() => (window as unknown as { __zuma: Z & { save(): { campaignSeed: string } } }).__zuma.save().campaignSeed)).startsWith('xl-'));
+  await page.locator('[data-a=lv]').first().click();
+  await page.waitForTimeout(3500);
+  const bigScale = await page.evaluate(() => (window as unknown as { __zuma: Z }).__zuma.layout().scale);
+  check('large campaign marbles render ~25% bigger', Math.abs(bigScale / normalScale - 1.25) < 0.03, `⌀ ${(36 * normalScale).toFixed(1)} → ${(36 * bigScale).toFixed(1)} css px`);
+  const bL = await page.evaluate(() => (window as unknown as { __zuma: Z }).__zuma.layout().board);
+  check('large board still fits the screen', bL.x >= -0.5 && bL.y >= -0.5 && bL.x + bL.w <= vp.width + 0.5 && bL.y + bL.h <= vp.height + 0.5);
+  await page.screenshot({ path: `${OUT}/${name}-11-large.png` });
+  await page.locator('#btn-pause').click();
+  await page.waitForTimeout(200);
+  await page.locator('[data-a=quit]').click();
+  await page.waitForTimeout(200);
+  await page.locator('[data-a=levels]').click();
+  await page.waitForTimeout(200);
+  await page.locator('[data-a=size][data-v="0"]').click();
+  await page.waitForTimeout(300);
+  const back = await page.evaluate(() => (window as unknown as { __zuma: Z & { save(): { campaignSeed: string; unlocked: number } } }).__zuma.save());
+  check('switching back restores the normal campaign progress', !back.campaignSeed.startsWith('xl-') && back.unlocked === unlockedBefore);
 
   check('no console errors', errors.length === 0, errors.slice(0, 3).join(' | '));
   await browser.close();

@@ -262,3 +262,26 @@ it('mkBall helper produces a valid ball', () => {
   const { st } = frozenGame([0]);
   expect(mkBall(st, 1, 10).clr).toBe(-1);
 });
+
+describe('generator stability (golden)', () => {
+  it('existing campaigns keep producing identical levels', async () => {
+    const { createHash } = await import('node:crypto');
+    const h = createHash('sha1');
+    for (let i = 0; i < 40; i++) h.update(JSON.stringify(generateLevel('jade-1234', i).points));
+    // If this changes, every saved campaign and shared level code changes too.
+    expect(h.digest('hex').slice(0, 12)).toBe('56cb51413cd3');
+  });
+
+  it('large-marble campaigns use a smaller board with valid, varied tracks', () => {
+    const fams = new Set<string>();
+    for (let i = 0; i < 40; i++) {
+      const l = generateLevel('xl-jade-1234', i);
+      expect(l.worldW).toBe(1024);
+      expect(l.worldH).toBe(576);
+      expect(validate(l.points, l.launcher, { w: l.worldW, h: l.worldH })).toBe(true);
+      fams.add(l.family);
+    }
+    expect(fams.size).toBe(4);
+    expect(generateLevel('jade-1234', 0).worldW).toBe(1280);
+  });
+});

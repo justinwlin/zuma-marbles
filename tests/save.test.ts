@@ -54,3 +54,23 @@ describe('save data', () => {
     expect(starsFor(0.95)).toBe(1);
   });
 });
+
+describe('campaign switching', () => {
+  it('keeps each campaign’s progress and in-progress level', async () => {
+    const { switchCampaign } = await import('../src/game/save');
+    let d = freshSave('jade-1');
+    d.unlocked = 5;
+    d.best[2] = { score: 900, stars: 3, seconds: 40 };
+    d = switchCampaign(d, 'xl-jade-1');
+    expect(d.campaignSeed).toBe('xl-jade-1');
+    expect(d.unlocked).toBe(0);
+    expect(d.best).toEqual({});
+    d.unlocked = 2;
+    d = switchCampaign(d, 'jade-1');
+    expect(d.unlocked).toBe(5);
+    expect(d.best[2].stars).toBe(3);
+    d = switchCampaign(d, 'xl-jade-1');
+    expect(d.unlocked).toBe(2);
+    expect(Object.keys(d.archive ?? {})).toEqual(['jade-1']);
+  });
+});

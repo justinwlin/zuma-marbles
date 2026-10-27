@@ -250,3 +250,9 @@ input[type=range] { width: 140px; accent-color: var(--accent); touch-action: man
 }
 
 .cancel-zone.compact { padding: 12px 14px; font-size: 14px; }
+
+.size-row { width: min(720px, 100%); display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: -4px 0 14px; }
+.size-row > span { font-weight: 800; }
+.size-row small { color: var(--muted); font-size: 12px; flex-basis: 100%; }
+.seg.seg3 { margin-top: 8px; }
+.seg.seg3 button { flex: 1; padding: 8px 6px; }

@@ -1,7 +1,7 @@
 // Canvas 2D renderer. Static layers (background, track, launcher pad) are cached
 // per layout; marbles use pre-rendered rolling sprite frames per colour.
 
-import { BALL_D, BALL_R, type Level, WORLD_H, WORLD_W } from '../sim/levelgen';
+import { BALL_D, BALL_R, type Level } from '../sim/levelgen';
 import { type Ball, ballPos, type GameState, Power, type RayHit, TUNING } from '../sim/game';
 import { pointAt, type Pt, tangentAt } from '../sim/track';
 import { applyWorld, type Layout, worldToScreen } from './layout';
@@ -220,8 +220,8 @@ export class Renderer {
     applyWorld(g, L);
     // Board panel
     g.save();
-    roundRect(g, -6, -6, WORLD_W + 12, WORLD_H + 12, 28);
-    const panel = g.createLinearGradient(0, 0, WORLD_W, WORLD_H);
+    roundRect(g, -6, -6, lvl.worldW + 12, lvl.worldH + 12, 28);
+    const panel = g.createLinearGradient(0, 0, lvl.worldW, lvl.worldH);
     panel.addColorStop(0, `hsla(${hue}, 40%, 18%, 0.55)`);
     panel.addColorStop(1, `hsla(${hue + 40}, 40%, 10%, 0.55)`);
     g.fillStyle = panel;
@@ -323,7 +323,7 @@ export class Renderer {
     // Slow / reverse / laser board tints
     if (st.slowT > 0 || st.revT > 0) {
       g.fillStyle = st.slowT > 0 ? 'rgba(80,160,255,0.07)' : 'rgba(255,200,80,0.06)';
-      g.fillRect(0, 0, WORLD_W, WORLD_H);
+      g.fillRect(0, 0, lvl.worldW, lvl.worldH);
     }
 
     // Aim guide (under the balls)

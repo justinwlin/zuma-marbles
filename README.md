@@ -9,6 +9,8 @@ A Zuma-style marble shooter for phone (portrait) and desktop. It installs as a P
   - The shot uses the aim from 70 ms before your finger lifts, so the wobble as you lift doesn't move it.
   - With a ±0.6° finger wobble, 95% of assisted shots stay in the previewed slot, compared with 54% unassisted.
 - **Characters**: pick the launcher (Frog, Calico Cat, Fox, Penguin) in Settings. They're drawn in code in `src/game/characters.ts`, with blinking, tail sway and ear flicks on recoil.
+- **Large-marble campaigns**: switch Marbles to Large on the Levels screen. The levels are generated on a 25% smaller board with the same marble size, so when the board is scaled to fit the screen everything is 25% bigger. The campaign seed gets an `xl-` prefix, so codes like `xl-jade-1234/3` stay deterministic and shareable. Each campaign keeps its own progress. A golden test pins normal-campaign levels so they never change.
+- **Aim modes** (touch): Drag & release, **Aim + tap** (drag to set the aim, tap to shoot; the tap is a real one, so iPhones vibrate on every shot), and Tap.
 - **Settings mid-game**: the gear button in the HUD pauses the game and opens Settings.
 - **Haptics**:
   - Android uses `navigator.vibrate` with full patterns.

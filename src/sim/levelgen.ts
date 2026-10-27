@@ -6,6 +6,23 @@ import { buildTrack, chaikin, type Pt, type Track, TRACK_STEP } from './track';
 
 export const WORLD_W = 1280;
 export const WORLD_H = 720;
+
+/**
+ * Large-marble campaigns (seed prefix "xl-") use a smaller board with the same marbles,
+ * so when the board is scaled to fit the screen everything is LARGE_SCALE× bigger.
+ * Physics stays in px; only the board shrinks — deterministic and shareable per campaign.
+ */
+export const LARGE_PREFIX = 'xl-';
+export const LARGE_SCALE = 1.25;
+export function isLargeCampaign(seed: string) {
+  return seed.startsWith(LARGE_PREFIX);
+}
+export function worldFor(seed: string): { w: number; h: number } {
+  return isLargeCampaign(seed) ? { w: Math.round(WORLD_W / LARGE_SCALE), h: Math.round(WORLD_H / LARGE_SCALE) } : { w: WORLD_W, h: WORLD_H };
+}
+// Board size for the level currently being generated (generation is synchronous).
+let GW = WORLD_W;
+let GH = WORLD_H;
 export const BALL_R = 18;
 export const BALL_D = BALL_R * 2;
 
@@ -28,6 +45,9 @@ export interface LevelDef {
   powerChance: number;
   /** Attempts the generator needed (debug/telemetry). */
   attempts: number;
+  /** Board size in px (smaller for large-marble campaigns). */
+  worldW: number;
+  worldH: number;
 }
 
 export interface Level extends LevelDef {
@@ -54,9 +74,17 @@ export function difficulty(index: number) {
 }
 
 export function generateLevel(campaignSeed: string, index: number): Level {
+  const world = worldFor(campaignSeed);
+  GW = world.w;
+  GH = world.h;
   const seed = levelSeed(campaignSeed, index);
   const rng = new Rng(seed);
   const diff = difficulty(index);
+  if (isLargeCampaign(campaignSeed)) {
+    // Fewer marbles fit on the smaller board, so levels end sooner: ask for more score.
+    // Tuned with scripts/balance.ts (PREFIX=xl-) to match normal win rates/durations.
+    diff.target = Math.round(diff.target * 1.5);
+  }
   const families: TrackFamily[] =
     index === 0 ? ['spiral'] : index < 3 ? ['spiral', 'lobes', 'wave'] : ['spiral', 'lobes', 'serpentine', 'wave'];
 
@@ -75,7 +103,7 @@ export function generateLevel(campaignSeed: string, index: number): Level {
   }
 
   const name = `${rng.pick(NAMES_A)} ${rng.pick(NAMES_B)}`;
-  const track = buildTrack(result.points, { w: WORLD_W, h: WORLD_H });
+  const track = buildTrack(result.points, { w: GW, h: GH });
   return {
     campaignSeed,
     index,
@@ -89,6 +117,8 @@ export function generateLevel(campaignSeed: string, index: number): Level {
     target: diff.target,
     powerChance: diff.powerChance,
     attempts,
+    worldW: GW,
+    worldH: GH,
     track,
   };
 }
@@ -106,27 +136,33 @@ function withEntry(raw: Pt[], len = 260): Pt[] {
   const a = pts[0];
   // Head out from the start toward the nearest edge.
   const dl = a.x;
-  const dr = WORLD_W - a.x;
+  const dr = GW - a.x;
   const dt = a.y;
-  const db = WORLD_H - a.y;
+  const db = GH - a.y;
   const m = Math.min(dl, dr, dt, db);
   let e: Pt;
   if (m === dl) e = { x: -len, y: a.y };
-  else if (m === dr) e = { x: WORLD_W + len, y: a.y };
+  else if (m === dr) e = { x: GW + len, y: a.y };
   else if (m === dt) e = { x: a.x, y: -len };
-  else e = { x: a.x, y: WORLD_H + len };
+  else e = { x: a.x, y: GH + len };
   return [e, ...pts];
 }
 
 function spiralLike(rng: Rng, opts: { lobes: number; lobeAmp: number; turns: number; safe?: boolean }) {
-  const cx = WORLD_W / 2 + (opts.safe ? 0 : rng.range(-60, 60));
-  const cy = WORLD_H / 2 + (opts.safe ? 0 : rng.range(-25, 25));
+  const cx = GW / 2 + (opts.safe ? 0 : rng.range(-60, 60));
+  const cy = GH / 2 + (opts.safe ? 0 : rng.range(-25, 25));
   const dir = rng.chance(0.5) ? 1 : -1;
   const th0 = rng.range(0, Math.PI * 2);
-  const axOut = Math.min(cx, WORLD_W - cx) - 46;
-  const ayOut = Math.min(cy, WORLD_H - cy) - 40;
+  const axOut = Math.min(cx, GW - cx) - 46;
+  const ayOut = Math.min(cy, GH - cy) - 40;
   const ayIn = rng.range(118, 140);
   const axIn = ayIn * rng.range(1.15, 1.45);
+  // Small (large-marble) boards: never wind more turns than fit at ≥ 2.5 marbles apart.
+  // (Normal boards are left untouched so existing campaigns/level codes stay identical.)
+  if (GH < WORLD_H) {
+    const maxTurns = (ayOut - ayIn) / (BALL_D * 2.5 * (1 + opts.lobeAmp * 2));
+    opts = { ...opts, turns: Math.max(1.05, Math.min(opts.turns, maxTurns)) };
+  }
   const wobK = rng.int(2, 5);
   const wobA = opts.safe ? 0 : rng.range(0, 0.05);
   const wobP = rng.range(0, Math.PI * 2);
@@ -145,8 +181,8 @@ function spiralLike(rng: Rng, opts: { lobes: number; lobeAmp: number; turns: num
   }
   // Outer-most point may touch the edge; clamp inside the board.
   for (const p of pts) {
-    p.x = Math.min(WORLD_W - 30, Math.max(30, p.x));
-    p.y = Math.min(WORLD_H - 30, Math.max(30, p.y));
+    p.x = Math.min(GW - 30, Math.max(30, p.x));
+    p.y = Math.min(GH - 30, Math.max(30, p.y));
   }
   return { points: chaikin(withEntry(pts), 2), launcher: { x: cx, y: cy } };
 }
@@ -154,19 +190,20 @@ function spiralLike(rng: Rng, opts: { lobes: number; lobeAmp: number; turns: num
 export const __GEN = {} as Record<TrackFamily, Gen>;
 const GENERATORS: Record<TrackFamily, Gen> = {
   spiral(rng, index, safe) {
-    const turns = safe ? 1.6 : rng.range(1.35, 2.05) + Math.min(index, 20) * 0.004;
+    const k = GH / WORLD_H;
+    const turns = (safe ? 1.6 : rng.range(1.35, 2.05) + Math.min(index, 20) * 0.004) * (0.55 + 0.45 * k);
     return spiralLike(rng, { lobes: 0, lobeAmp: 0, turns, safe });
   },
   lobes(rng) {
-    return spiralLike(rng, { lobes: rng.int(3, 6), lobeAmp: rng.range(0.08, 0.16), turns: rng.range(1.3, 1.8) });
+    return spiralLike(rng, { lobes: rng.int(3, 6), lobeAmp: rng.range(0.08, 0.16), turns: rng.range(1.3, 1.8) * (0.55 + 0.45 * (GH / WORLD_H)) });
   },
   wave(rng) {
-    return spiralLike(rng, { lobes: rng.int(6, 10), lobeAmp: rng.range(0.035, 0.06), turns: rng.range(1.4, 1.9) });
+    return spiralLike(rng, { lobes: rng.int(6, 10), lobeAmp: rng.range(0.035, 0.06), turns: rng.range(1.4, 1.9) * (0.55 + 0.45 * (GH / WORLD_H)) });
   },
   serpentine(rng) {
     // Horizontal rows above and below a central lane that holds the launcher.
     const left = rng.range(60, 120);
-    const right = WORLD_W - rng.range(60, 120);
+    const right = GW - rng.range(60, 120);
     const topRows = rng.int(1, 3);
     const botRows = rng.int(1, 3);
     const gap = rng.range(92, 110);
@@ -174,7 +211,7 @@ const GENERATORS: Record<TrackFamily, Gen> = {
     // The launcher sits in the open lane between them.
     const way: Pt[] = [];
     const ys: number[] = [];
-    for (let i = 0; i < botRows; i++) ys.push(WORLD_H - 52 - i * gap);
+    for (let i = 0; i < botRows; i++) ys.push(GH - 52 - i * gap);
     for (let i = topRows - 1; i >= 0; i--) ys.push(52 + i * gap);
     let goRight = rng.chance(0.5);
     for (const ry of ys) {
@@ -189,7 +226,7 @@ const GENERATORS: Record<TrackFamily, Gen> = {
       }
       goRight = !goRight;
     }
-    const launcher = { x: WORLD_W / 2 + rng.range(-120, 120), y: WORLD_H / 2 + rng.range(-20, 20) };
+    const launcher = { x: GW / 2 + rng.range(-120, 120), y: GH / 2 + rng.range(-20, 20) };
     return { points: chaikin(withEntry(way), 5), launcher };
   },
 };
@@ -197,13 +234,18 @@ const GENERATORS: Record<TrackFamily, Gen> = {
 // ---------------------------------------------------------------- validation
 
 /** Rejects tracks whose parts overlap, leave the board, or crowd the launcher. */
-export function validate(points: Pt[], launcher: Pt): boolean {
-  const track = buildTrack(points, { w: WORLD_W, h: WORLD_H });
+export function validate(points: Pt[], launcher: Pt, world?: { w: number; h: number }): boolean {
+  if (world) {
+    GW = world.w;
+    GH = world.h;
+  }
+  const track = buildTrack(points, { w: GW, h: GH });
   const { xs, ys } = track;
   const n = xs.length;
   const visStart = Math.floor(track.visibleFrom / TRACK_STEP);
   const visLen = track.length - track.visibleFrom;
-  if (visLen < 2000 || visLen > 6200) return false;
+  const ks = GH / WORLD_H;
+  if (visLen < 2000 * ks || visLen > 6200) return false;
   // Coarse samples every ~half ball.
   const stride = Math.max(1, Math.floor(BALL_R / 2 / TRACK_STEP));
   const minSep = BALL_D * 2.25;
@@ -213,7 +255,7 @@ export function validate(points: Pt[], launcher: Pt): boolean {
     const x = xs[i];
     const y = ys[i];
     const entering = i * TRACK_STEP < track.visibleFrom + 140;
-    if (!entering && (x < BALL_R || x > WORLD_W - BALL_R || y < BALL_R || y > WORLD_H - BALL_R)) return false;
+    if (!entering && (x < BALL_R || x > GW - BALL_R || y < BALL_R || y > GH - BALL_R)) return false;
     const lx = x - launcher.x;
     const ly = y - launcher.y;
     if (lx * lx + ly * ly < 92 * 92) return false;

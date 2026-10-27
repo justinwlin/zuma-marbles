@@ -1,7 +1,7 @@
 // DOM screens (menus, results, settings) and the HUD. Kept separate from the
 // canvas so text is crisp, accessible and laid out by CSS on every screen size.
 
-import { generateLevel } from '../sim/levelgen';
+import { generateLevel, isLargeCampaign } from '../sim/levelgen';
 import { POWER_NAMES, type GameState, progress, type Power } from '../sim/game';
 import type { Level } from '../sim/levelgen';
 import { PALETTE, powerIconUrl } from './render';
@@ -22,6 +22,7 @@ export interface UiActions {
   settingsChanged(s: Settings): void;
   resetProgress(): void;
   newCampaign(seed: string): void;
+  setLargeMarbles(large: boolean): void;
   playCode(code: string): void;
   install(): void;
   click(): void;
@@ -87,7 +88,7 @@ export class UI {
         <button class="btn ghost" data-a="help">How to play</button>
         ${this.canInstall ? `<button class="btn ghost" data-a="install">⬇ Install app</button>` : ''}
       </div>
-      <div class="foot">${isIOS && !standalone ? 'Tip: Share → <b>Add to Home Screen</b> to play full-screen & offline.<br>' : ''}Campaign <b>${save.campaignSeed}</b> · infinite levels</div>`,
+      <div class="foot">${isIOS && !standalone ? 'Tip: Share → <b>Add to Home Screen</b> to play full-screen & offline.<br>' : ''}Campaign <b>${save.campaignSeed}</b>${isLargeCampaign(save.campaignSeed) ? ' · large marbles' : ''} · infinite levels</div>`,
       {
         continue: () => this.a.continueSnapshot(),
         play: () => this.a.play(save.unlocked),
@@ -100,6 +101,7 @@ export class UI {
   }
 
   levels(save: SaveData) {
+    const large = isLargeCampaign(save.campaignSeed);
     const count = save.unlocked + 1;
     const cards: string[] = [];
     for (let i = count - 1; i >= 0; i--) {
@@ -114,6 +116,11 @@ export class UI {
       'levels',
       `<div class="levels-head"><button class="icon-btn" data-a="back" aria-label="Back">←</button><h2>Levels</h2>
         <button class="chip" data-a="copy" title="Copy level code">🌱 ${save.campaignSeed}</button></div>
+      <div class="size-row"><span>Marbles</span><div class="seg">
+        <button data-a="size" data-v="0" class="${large ? '' : 'on'}">Normal</button>
+        <button data-a="size" data-v="1" class="${large ? 'on' : ''}">Large</button></div>
+        <small>${large ? 'Bigger marbles on a smaller board — easier to see and hit on phones.' : 'Large: 25% bigger marbles, its own levels & progress.'}</small>
+      </div>
       <div class="grid">${cards.join('')}</div>
       <form class="code-form" onsubmit="return false">
         <input type="text" id="code" placeholder="Level code (seed/level) or new seed" autocomplete="off" autocapitalize="off" spellcheck="false">
@@ -122,6 +129,7 @@ export class UI {
       <div class="foot">Levels are generated from the campaign seed — same seed, same levels, on any device.</div>`,
       {
         back: () => this.title(save),
+        size: (el) => this.a.setLargeMarbles(el.dataset.v === '1'),
         lv: (el) => this.a.play(Number(el.dataset.i)),
         copy: () => {
           const code = levelCode(save.campaignSeed, save.unlocked);
@@ -215,7 +223,7 @@ export class UI {
         <div class="setting"><label>Reduce motion<small>No screen shake or flashes</small></label>${tog('reduceMotion', s.reduceMotion)}</div>
         ${
           coarse
-            ? `<div class="setting"><label>Touch aiming</label><div class="seg"><button data-a="aim" data-v="drag" class="${s.touchAim === 'drag' ? 'on' : ''}">Drag & release</button><button data-a="aim" data-v="tap" class="${s.touchAim === 'tap' ? 'on' : ''}">Tap</button></div></div>`
+            ? `<div class="setting col"><label>Touch aiming<small id="aim-hint">${AIM_HINTS[s.touchAim]}</small></label><div class="seg seg3">${(['drag', 'aimtap', 'tap'] as const).map((m) => `<button data-a="aim" data-v="${m}" class="${s.touchAim === m ? 'on' : ''}">${AIM_LABELS[m]}</button>`).join('')}</div></div>`
             : ''
         }
         <div class="btns" style="margin:18px auto 0">
@@ -239,7 +247,9 @@ export class UI {
           this.a.settingsChanged(s);
         },
         aim: (el) => {
-          s.touchAim = el.dataset.v as 'drag' | 'tap';
+          s.touchAim = el.dataset.v as 'drag' | 'aimtap' | 'tap';
+          const hint = document.getElementById('aim-hint');
+          if (hint) hint.textContent = AIM_HINTS[s.touchAim];
           el.parentElement!.querySelectorAll('button').forEach((b) => b.classList.toggle('on', b === el));
           this.a.settingsChanged(s);
         },
@@ -367,6 +377,13 @@ function thumbMarble(g: CanvasRenderingContext2D, x: number, y: number, r: numbe
   g.arc(x, y, r, 0, Math.PI * 2);
   g.fill();
 }
+
+const AIM_LABELS = { drag: 'Drag & release', aimtap: 'Aim + tap', tap: 'Tap' } as const;
+const AIM_HINTS = {
+  drag: 'Drag to aim, lift to shoot',
+  aimtap: 'Drag to aim, tap to shoot — iPhone vibrates on every shot',
+  tap: 'Tap where you want to shoot',
+} as const;
 
 const nameCache = new Map<string, string>();
 export function levelName(seed: string, i: number): string {

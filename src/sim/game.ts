@@ -7,7 +7,7 @@
 // Constants are ported from Zuma Deluxe (100 Hz, ~1 px per waypoint, r=16) to
 // per-second units at our ball radius (r=18, ×1.125).
 
-import { BALL_D, BALL_R, type Level, WORLD_H, WORLD_W } from './levelgen';
+import { BALL_D, BALL_R, type Level } from './levelgen';
 import { next as rngNext } from './rng';
 import { pointAt, type Pt, tangentAt } from './track';
 
@@ -433,7 +433,7 @@ function stepShots(st: GameState, level: Level, ev: GameEvent[]) {
         insertShot(st, level, sh, best, ev);
         st.shots.splice(si, 1);
         done = true;
-      } else if (sh.x < -60 || sh.x > WORLD_W + 60 || sh.y < -60 || sh.y > WORLD_H + 60) {
+      } else if (sh.x < -60 || sh.x > level.worldW + 60 || sh.y < -60 || sh.y > level.worldH + 60) {
         st.shots.splice(si, 1);
         st.streak = 0;
         st.stats.misses++;

@@ -12,7 +12,7 @@ for (const L of levels) {
     let wins = 0;
     let secs = 0;
     for (let c = 0; c < N; c++) {
-      const lvl = generateLevel(`bal-${c}`, L);
+      const lvl = generateLevel(`${process.env.PREFIX ?? ''}bal-${c}`, L);
       const r = playLevel(createGame(lvl), lvl, opts);
       if (r.outcome === 'won') wins++;
       secs += r.seconds;

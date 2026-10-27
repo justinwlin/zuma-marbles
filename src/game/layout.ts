@@ -31,7 +31,7 @@ export interface Insets {
   right: number;
 }
 
-export function computeLayout(vw: number, vh: number, dpr: number, insets: Insets): Layout {
+export function computeLayout(vw: number, vh: number, dpr: number, insets: Insets, world: { w: number; h: number } = { w: WORLD_W, h: WORLD_H }): Layout {
   const portrait = vh > vw * 1.05;
   // Space reserved for HUD bars (CSS px), on top of device safe areas.
   // Tall phones (≥ ~19.5:9) have room for a bottom bar; on shorter screens the swap
@@ -41,8 +41,8 @@ export function computeLayout(vw: number, vh: number, dpr: number, insets: Inset
   const hudBottom = (portrait ? (tall ? 92 : 10) : 8) + insets.bottom;
   const availW = vw - insets.left - insets.right - (portrait ? 8 : 16);
   const availH = vh - hudTop - hudBottom;
-  const bw = portrait ? WORLD_H : WORLD_W;
-  const bh = portrait ? WORLD_W : WORLD_H;
+  const bw = portrait ? world.h : world.w;
+  const bh = portrait ? world.w : world.h;
   const scale = Math.max(0.1, Math.min(availW / bw, availH / bh));
   const w = bw * scale;
   const h = bh * scale;
@@ -55,7 +55,7 @@ export function computeLayout(vw: number, vh: number, dpr: number, insets: Inset
     b = scale;
     c = -scale;
     d = 0;
-    e = x + WORLD_H * scale;
+    e = x + world.h * scale;
     f = y;
   } else {
     a = scale;
