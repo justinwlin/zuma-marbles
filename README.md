@@ -1,0 +1,91 @@
+# Zuma Marbles
+
+A Zuma-style marble shooter for phone (portrait) and desktop. It installs as a PWA, plays offline, and has infinite deterministic levels.
+
+- **Play**: on desktop, move to aim, click to shoot, and right-click or Space to swap. On a phone, drag to aim, release to shoot, and tap the frog or the swap button to swap.
+- **Power-ups** trigger when they pop as part of a match:
+  - Bomb: blasts nearby marbles.
+  - Slow: slows the chain.
+  - Reverse: rolls the chain back.
+  - Laser: aim beam and rapid fire.
+- **Levels** come from `(campaignSeed, levelIndex)`, so the same seed gives the same levels on any device. Level codes look like `jade-1234/12` and can be shared from the Levels screen.
+- **Saving**: progress, settings and a snapshot of the level you're in are saved to `localStorage`. The snapshot is written every 4 s, when you pause, and when the tab is hidden. "Continue" resumes on the exact tick you left.
+
+Research and design notes: [`zuma-marble-game.md`](./zuma-marble-game.md).
+
+## Run
+
+```bash
+npm install
+npm run dev          # http://localhost:5173 (binds 0.0.0.0)
+npm run build        # production build + service worker in dist/
+npm run preview      # serve dist/ (needed to test the PWA / offline)
+```
+
+## Architecture
+
+```
+src/sim/      pure, deterministic simulation (no DOM): unit-testable and replayable
+  rng.ts        mulberry32 PRNG + string hash; state is one uint32
+  track.ts      arc-length lookup table; a ball's position is distance s along the track
+  levelgen.ts   infinite level generator (spiral / lobes / wave / serpentine) + validator + difficulty curve
+  game.ts       fixed-tick (120 Hz) step(state, level, commands) → events
+  bot.ts        scripted player used by tests and the balance report
+src/game/     presentation
+  feel.ts       pure event → feedback map (hit-stop, shake, flash, haptics, sound pitch, particles, slow-mo)
+  render.ts     Canvas 2D: cached background/track, pre-rendered rolling marble sprites, aim preview
+  layout.ts     world (1280×720) → screen; the board is rotated 90° on portrait phones
+  fx.ts         pooled particles + screen-space floating text
+  audio.ts      procedural Web Audio SFX + generative music (no audio files)
+  haptics.ts    navigator.vibrate on Android, hidden switch-checkbox trick on iOS (best effort)
+  ui.ts         DOM HUD and screens; save.ts persistence and level codes
+src/main.ts   loop: fixed timestep + hit-stop + slow-mo, input, events → feel, autosave, test hook
+```
+
+Mechanics are ported from the Zuma Deluxe decompilation ([alula/CircleShootApp](https://github.com/alula/CircleShootApp)) and converted to per-second units:
+- Roll-in that decelerates to cruise speed.
+- Slow-down in the danger zone.
+- Only the rear segment of the chain is pushed.
+- Magnet pull across a gap that accelerates.
+- Knockback on combos.
+- About 0.15 s of insertion animation before the match check.
+- Scoring: `100·combo + 10·n` plus chain bonus and gap bonus.
+- The gun only offers colours that are still on the board.
+- New chain balls repeat the previous colour 41% of the time.
+
+### Determinism
+
+- The step uses only `+ - * / sqrt`, which are exact in IEEE floating point. Generated control points are quantized to 1/16 px, so engine differences in `sin`/`cos` can't change a track.
+- Inputs are recorded as `[tick, command]`. Replaying them from a fresh state reproduces the same state hash, and the tests check this.
+- Gameplay feel (hit-stop, slow-mo) only changes when ticks run, never what a tick does.
+
+## Testing
+
+| Command | What it checks |
+|---|---|
+| `npm test` | 41 Vitest tests (summarized below) |
+| `npm run e2e` | Real Chromium on 6 device profiles (summarized below). Needs `npm run dev` running. |
+| `npm run pwa-check` | After `npm run build`: manifest, Chrome installability, active service worker, cold **offline** boot and play |
+| `npm run sim -- <seed> <levels>` | Bot playthroughs per level: outcome, time, peak danger, combos, gap shots, power-ups |
+| `npm run balance -- <campaigns> <levels…>` | Win-rate/time table per bot skill. Difficulty ramps, then plateaus for endless play. |
+| `npx tsx scripts/showcase.ts phone\|desktop` | Frame sequences of combo, bomb, danger, win and menus in `e2e-out/showcase/` for visual review |
+
+**`npm test`** covers:
+- **Mechanics**: generator validity over 120 levels, arc-length uniformity, matching, insertion side, spacing, magnet pull and its acceleration, combos, scoring, power-ups, gun colours, cooldown, win and lose.
+- **Determinism**: same inputs give the same state hash, and save → load → continue matches an uninterrupted run.
+- **Aim-preview honesty**: the highlighted ball is the ball the shot actually hits, at least 97% of the time.
+- **Game feel**:
+  - Combos escalate monotonically, all effects are capped, and the bomb is the biggest moment.
+  - Reduce-motion works.
+  - Shake stays bounded and decays in about 0.6 s, and the aim spring is critically damped.
+  - Fire feedback arrives on the next tick, and the magnet pull visibly closes a gap in 0.1–0.5 s. Roll-in pacing is checked too.
+  - Over a full level, under 5% of play time is frozen by hit-stop, big shakes are rare, and pops come at a steady rhythm.
+
+**`npm run e2e`** checks, on each profile:
+- Orientation is detected, the board fits and uses the screen well, and marbles stay readable.
+- The HUD doesn't cover the board.
+- Real touch drag and mouse aim show the guide and predict a pop.
+- One shot leads to a match, and the pop gets hit-stop, shake, particles and sound. A bomb in the match triggers.
+- Frame rate is acceptable, pause → quit → continue restores the snapshot, and there are no console errors.
+
+The test hook `window.__zuma` exposes state, layout, events, the feel log, `setup()` for scripted chains, and `fireAt()`.
