@@ -21,6 +21,7 @@ import {
 } from './sim/game';
 import { BOT_PRESETS, decide } from './sim/bot';
 import { assistAim, type Slot } from './sim/aim';
+import { characterNoun } from './game/characters';
 import { Rng } from './sim/rng';
 import { pointAt, type Pt } from './sim/track';
 import { computeLayout, type Layout, screenToWorld } from './game/layout';
@@ -133,7 +134,7 @@ function startLevel(index: number, fromSnapshot = false) {
   if (!save.tutorialSeen) {
     save.tutorialSeen = true;
     writeSave(save);
-    ui.toast(matchMedia('(pointer: coarse)').matches ? 'Drag to aim · release to shoot · slide to ✕ to cancel · tap the frog to swap' : 'Move to aim · click to shoot · right-click / Space to swap', 4800);
+    ui.toast(matchMedia('(pointer: coarse)').matches ? `Drag to aim · release to shoot · slide to ✕ to cancel · tap the ${characterNoun(save.settings.character)} to swap` : 'Move to aim · click to shoot · right-click / Space to swap', 4800);
   }
 }
 
@@ -255,6 +256,7 @@ function applySettings() {
   document.getElementById('tapzone')!.classList.toggle('hidden', !(haptics.iosTap && s.haptics));
   view.colorblind = s.colorblind;
   view.showGuide = s.guide;
+  renderer.character = s.character;
 }
 
 // ------------------------------------------------------------------ layout
@@ -463,6 +465,17 @@ document.getElementById('btn-help')!.addEventListener('click', () => {
     mode = 'playing';
     ui.hide();
   });
+});
+// Gear: adjust settings mid-game (pauses; Done resumes).
+document.getElementById('btn-settings')!.addEventListener('click', () => {
+  if (mode !== 'playing') return;
+  audio.play('ui');
+  mode = 'paused';
+  view.aimActive = false;
+  ui.settings(save, () => {
+    mode = 'playing';
+    ui.hide();
+  }, true);
 });
 document.getElementById('btn-pause')!.addEventListener('click', () => {
   audio.play('ui');

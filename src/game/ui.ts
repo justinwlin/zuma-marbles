@@ -5,6 +5,7 @@ import { generateLevel } from '../sim/levelgen';
 import { POWER_NAMES, type GameState, progress, type Power } from '../sim/game';
 import type { Level } from '../sim/levelgen';
 import { PALETTE, powerIconUrl } from './render';
+import { CHARACTERS, characterThumb, type CharacterId } from './characters';
 import { TUNING } from '../sim/game';
 import { levelCode, type SaveData, type Settings } from './save';
 
@@ -195,13 +196,16 @@ export class UI {
     tick();
   }
 
-  settings(save: SaveData, back: () => void) {
+  settings(save: SaveData, back: () => void, inGame = false) {
     const s = save.settings;
     const tog = (k: keyof Settings, on: boolean) => `<button class="toggle ${on ? 'on' : ''}" data-a="tog" data-k="${k}" aria-pressed="${on}"></button>`;
     const coarse = matchMedia('(pointer: coarse)').matches;
     this.show(
       'settings',
       `<div class="panel"><h2>Settings</h2>
+        <div class="setting col"><label>Character</label>
+          <div class="chars">${CHARACTERS.map((c) => `<button class="char ${s.character === c.id ? 'on' : ''}" data-a="char" data-v="${c.id}" aria-pressed="${s.character === c.id}"><img src="${characterThumb(c.id, thumbMarble)}" alt=""><span>${c.name}</span></button>`).join('')}</div>
+        </div>
         <div class="setting"><label>Sound</label><input type="range" min="0" max="1" step="0.05" value="${s.sfx}" data-k="sfx"></div>
         <div class="setting"><label>Music</label><input type="range" min="0" max="1" step="0.05" value="${s.music}" data-k="music"></div>
         <div class="setting"><label>Vibration<small>${/iP(hone|od)/.test(navigator.userAgent) ? 'iPhone: ticks on taps only (Safari limit) — Tap aiming gives a tick per shot' : 'Haptic feedback on hits & pops'}</small></label>${tog('haptics', s.haptics)}</div>
@@ -215,8 +219,8 @@ export class UI {
             : ''
         }
         <div class="btns" style="margin:18px auto 0">
-          <button class="btn primary" data-a="back">Done</button>
-          <button class="btn ghost" data-a="reset">Reset progress…</button>
+          <button class="btn primary" data-a="back">${inGame ? 'Back to game' : 'Done'}</button>
+          ${inGame ? '' : '<button class="btn ghost" data-a="reset">Reset progress…</button>'}
         </div></div>`,
       {
         back,
@@ -224,6 +228,14 @@ export class UI {
           const k = el.dataset.k as 'haptics' | 'guide' | 'colorblind' | 'reduceMotion' | 'assist';
           s[k] = !s[k];
           el.classList.toggle('on', s[k]);
+          this.a.settingsChanged(s);
+        },
+        char: (el) => {
+          s.character = el.dataset.v as CharacterId;
+          el.parentElement!.querySelectorAll('.char').forEach((b) => {
+            b.classList.toggle('on', b === el);
+            b.setAttribute('aria-pressed', String(b === el));
+          });
           this.a.settingsChanged(s);
         },
         aim: (el) => {
@@ -266,7 +278,7 @@ export class UI {
           <b>Combos:</b> when a gap's two ends match, they snap together and pop again.<br>
           <b>Gap shot:</b> shoot through a gap in the chain for bonus points.<br>
           <b>Chain bonus:</b> 5+ popping shots in a row.<br>
-          ${coarse ? '<b>Cancel a shot:</b> slide onto <b>✕</b> (or back to the frog), or touch with a second finger.' : '<b>Swap:</b> right-click or Space.'}
+          ${coarse ? '<b>Cancel a shot:</b> slide onto <b>✕</b> (or back onto your character), or touch with a second finger.' : '<b>Swap:</b> right-click or Space.'}
         </div>
         <div class="btns" style="margin:14px auto 0"><button class="btn primary" data-a="back">${backLabel}</button></div></div>`,
       { back },
@@ -279,7 +291,7 @@ export class UI {
       'help',
       `<div class="panel help"><h2>How to play</h2>
         <p>Marbles roll toward the <b>skull</b>. Shoot marbles into the chain — <b>3 or more</b> of a colour pop.</p>
-        <p>${coarse ? '<b>Drag</b> to aim, <b>release</b> to shoot. Changed your mind? Slide onto <b>✕</b> or back to the frog, or touch with a second finger. Tap the frog or the swap button to swap.' : '<b>Move</b> to aim, <b>click</b> to shoot. <b>Right-click</b> or <b>Space</b> swaps marbles.'}</p>
+        <p>${coarse ? '<b>Drag</b> to aim, <b>release</b> to shoot. Changed your mind? Slide onto <b>✕</b> or back to the frog, or touch with a second finger. Tap your character (the launcher) or the swap button to swap.' : '<b>Move</b> to aim, <b>click</b> to shoot. <b>Right-click</b> or <b>Space</b> swaps marbles.'}</p>
         <p>When a gap opens and both sides match, they <b>snap together</b> for a combo. Fill the gold <b>ZUMA bar</b> to stop new marbles, then clear the rest.</p>
         <div class="pw"><span>Bomb</span><span>blasts nearby marbles</span><span>Slow</span><span>slows the chain</span><span>Reverse</span><span>rolls the chain back</span><span>Laser</span><span>precise aim & rapid fire</span></div>
         <p style="color:var(--muted);font-size:13px">Pop a power-up marble as part of a match to trigger it. Keep the chain far from the skull for more stars.</p>
@@ -341,6 +353,19 @@ export class UI {
     this.lastScore = -1;
     this.lastPowers = '';
   }
+}
+
+/** Marble in a thumbnail's mouth (golden). */
+function thumbMarble(g: CanvasRenderingContext2D, x: number, y: number, r: number) {
+  const p = PALETTE[1];
+  const gr = g.createRadialGradient(x - r * 0.3, y - r * 0.3, r * 0.1, x, y, r);
+  gr.addColorStop(0, p.light);
+  gr.addColorStop(0.5, p.base);
+  gr.addColorStop(1, p.dark);
+  g.fillStyle = gr;
+  g.beginPath();
+  g.arc(x, y, r, 0, Math.PI * 2);
+  g.fill();
 }
 
 const nameCache = new Map<string, string>();

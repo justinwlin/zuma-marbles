@@ -205,6 +205,21 @@ async function runProfile(name: string, opts: BrowserContextOptions) {
   await page.waitForTimeout(200);
   check('closing the sheet resumes play', (await page.evaluate(() => (window as unknown as { __zuma: Z }).__zuma.mode)) === 'playing');
 
+  // ---- In-game settings: gear pauses, character change persists, resume.
+  await page.locator('#btn-settings').click();
+  await page.waitForTimeout(250);
+  check('gear opens settings mid-game and pauses', (await page.locator('[data-screen=settings]').count()) === 1 && (await page.evaluate(() => (window as unknown as { __zuma: Z }).__zuma.mode)) === 'paused');
+  check('settings shows 4 characters', (await page.locator('.char').count()) === 4);
+  await page.locator('[data-a=char][data-v=calico]').click();
+  await page.locator('[data-screen=settings] [data-a=back]').click();
+  await page.waitForTimeout(250);
+  const ch = await page.evaluate(() => {
+    const z = (window as unknown as { __zuma: Z & { save(): { settings: { character: string } } } }).__zuma;
+    return { mode: z.mode, character: z.save().settings.character, stored: JSON.parse(localStorage.getItem('zuma-marbles.save.v1') ?? '{}').settings?.character };
+  });
+  check('character change applies, persists and play resumes', ch.mode === 'playing' && ch.character === 'calico' && ch.stored === 'calico', JSON.stringify(ch));
+  await page.screenshot({ path: `${OUT}/${name}-9-calico.png` });
+
   // ---- Natural play for a few seconds → frame rate.
   await page.evaluate(() => (window as unknown as { __zuma: Z }).__zuma.start(0));
   await page.waitForTimeout(3500);

@@ -7,6 +7,7 @@ import { pointAt, type Pt, tangentAt } from '../sim/track';
 import { applyWorld, type Layout, worldToScreen } from './layout';
 import { type Particles, PK } from './fx';
 import { FEEL } from './feel';
+import { blinkAt, type CharacterId, drawCharacter, MOUTH_X } from './characters';
 
 export const PALETTE = [
   { base: '#ff3b5c', light: '#ffa3b4', dark: '#7a0820', glyph: 'circle' },
@@ -83,6 +84,7 @@ export class Renderer {
     this.hue = hue;
   }
   hue = 200;
+  character: CharacterId = 'frog';
 
   // ------------------------------------------------------------ sprites
 
@@ -712,55 +714,11 @@ export class Renderer {
     g.rotate(a);
     // Glow in current colour (cached sprite; shadowBlur is slow on phones)
     g.drawImage(this.glowSprite(cur.base), -76, -76, 152, 152);
-    // Body: rounded frog-ish head
-    const body = g.createRadialGradient(-8, -10, 4, 0, 0, 46);
-    body.addColorStop(0, '#5ce0b0');
-    body.addColorStop(0.6, '#1f8f6c');
-    body.addColorStop(1, '#0b3b33');
-    g.fillStyle = body;
-    g.beginPath();
-    g.ellipse(-4, 0, 42, 38, 0, 0, Math.PI * 2);
-    g.fill();
-    // Snout / barrel
-    g.fillStyle = '#1a7a5c';
-    g.beginPath();
-    g.moveTo(8, -24);
-    g.quadraticCurveTo(46, -22, 50, 0);
-    g.quadraticCurveTo(46, 22, 8, 24);
-    g.closePath();
-    g.fill();
-    // Mouth ring
-    g.fillStyle = '#082a24';
-    g.beginPath();
-    g.arc(TUNING.muzzle - 14, 0, BALL_R + 3, 0, Math.PI * 2);
-    g.fill();
-    // Back spots
-    g.fillStyle = 'rgba(255,255,255,0.10)';
-    for (const [x, y, r] of [
-      [-26, -14, 6],
-      [-30, 10, 5],
-      [-14, 20, 4],
-    ])
-      g.beginPath(), g.arc(x, y, r, 0, Math.PI * 2), g.fill();
-    // Eyes (look along the aim)
-    for (const sy of [-1, 1]) {
-      g.fillStyle = '#e9fff4';
-      g.beginPath();
-      g.arc(-2, sy * 22, 10, 0, Math.PI * 2);
-      g.fill();
-      g.fillStyle = '#081a14';
-      g.beginPath();
-      g.arc(2, sy * 22, 5.2, 0, Math.PI * 2);
-      g.fill();
-      g.fillStyle = '#fff';
-      g.beginPath();
-      g.arc(0.5, sy * 22 - 2, 1.6, 0, Math.PI * 2);
-      g.fill();
-    }
+    drawCharacter(g, this.character, { t: v.time, blink: blinkAt(v.time), recoil: v.recoil });
     g.restore();
     // Current ball in the mouth (slides forward as cooldown recovers)
     const load = 1 - Math.min(1, st.gun.cool / TUNING.cooldown);
-    const md = TUNING.muzzle - 14 - rec + load * 2;
+    const md = MOUTH_X - rec + load * 2;
     const scale = 0.55 + 0.45 * easeOutBack(load);
     this.drawMarble(st.gun.cur, cx + Math.cos(a) * md, cy + Math.sin(a) * md, a, v.time * 2, scale, rot);
     // Next ball on the back

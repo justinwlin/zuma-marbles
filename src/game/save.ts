@@ -2,6 +2,7 @@
 // the tab (or the PWA being killed on a phone) resumes exactly where you were.
 
 import type { GameState } from '../sim/game';
+import type { CharacterId } from './characters';
 
 export interface Settings {
   sfx: number;
@@ -14,6 +15,8 @@ export interface Settings {
   touchAim: 'drag' | 'tap';
   /** Nudge shots into the previewed slot (±3.5°). */
   assist: boolean;
+  /** Launcher character. */
+  character: CharacterId;
 }
 
 export interface LevelRecord {
@@ -48,6 +51,7 @@ export const DEFAULT_SETTINGS: Settings = {
   guide: true,
   touchAim: 'drag',
   assist: true,
+  character: 'frog',
 };
 
 export function randomSeed(): string {
