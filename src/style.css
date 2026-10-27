@@ -30,7 +30,8 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
   position: absolute; left: 0; right: 0; top: 0;
   padding: calc(var(--sat) + 8px) calc(var(--sar) + 12px) 6px calc(var(--sal) + 12px);
   display: flex; align-items: center; gap: 12px;
-  background: linear-gradient(to bottom, rgba(5,10,18,0.85), rgba(5,10,18,0));
+  /* Solid under the status bar / notch, then fade: nothing bleeds through behind system UI. */
+  background: linear-gradient(to bottom, #050a12 0, #050a12 var(--sat), rgba(5,10,18,0.92) calc(var(--sat) + 1px), rgba(5,10,18,0.6) calc(var(--sat) + 44px), rgba(5,10,18,0));
 }
 .icon-btn {
   pointer-events: auto; width: 40px; height: 40px; border-radius: 14px; display: grid; place-items: center;
@@ -242,3 +243,10 @@ input[type=range] { width: 140px; accent-color: var(--accent); touch-action: man
   .score { min-width: 54px; }
   .score b { font-size: 19px; }
 }
+
+#safe-probe {
+  position: fixed; inset: 0; visibility: hidden; pointer-events: none;
+  padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
+}
+
+.cancel-zone.compact { padding: 12px 14px; font-size: 14px; }

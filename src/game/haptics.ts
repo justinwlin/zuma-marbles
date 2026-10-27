@@ -27,6 +27,26 @@ export class Haptics {
     this.label = label;
   }
 
+  /**
+   * Immediate single tick. Call synchronously from a pointerup/touchend handler: that event is
+   * a user activation, which is the only context iOS might honour a scripted switch toggle in
+   * (drag-release never produces the real tap that the invisible switches rely on).
+   */
+  tickNow() {
+    if (!this.enabled) return;
+    this.lastAt = performance.now();
+    if (this.canVibrate) {
+      try {
+        navigator.vibrate(12);
+      } catch {
+        /* ignore */
+      }
+    } else if (this.label) {
+      const input = this.label.querySelector('input');
+      input?.click();
+    }
+  }
+
   pulse(pattern: number[]) {
     if (!this.enabled || !pattern.length) return;
     const now = performance.now();

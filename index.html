@@ -48,6 +48,8 @@
     </div>
 
     <div id="cancel-zone" class="cancel-zone" aria-hidden="true">✕ Cancel</div>
+    <!-- Measures safe-area insets as real px (iOS can change them after load without a resize). -->
+    <div id="safe-probe" aria-hidden="true"></div>
     <div id="screens"></div>
     <div id="toast" class="toast"></div>
     <script type="module" src="/src/main.ts"></script>

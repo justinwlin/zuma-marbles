@@ -261,23 +261,51 @@ function applySettings() {
 
 // ------------------------------------------------------------------ layout
 
+const safeProbe = document.getElementById('safe-probe') as HTMLElement;
 function readInsets() {
-  const cs = getComputedStyle(document.documentElement);
-  const px = (v: string) => parseFloat(cs.getPropertyValue(v)) || 0;
-  return { top: px('--sat'), bottom: px('--sab'), left: px('--sal'), right: px('--sar') };
+  // Padding on a fixed probe resolves env(safe-area-inset-*) to real pixels.
+  const cs = getComputedStyle(safeProbe);
+  const px = (v: string) => parseFloat(v) || 0;
+  return { top: px(cs.paddingTop), bottom: px(cs.paddingBottom), left: px(cs.paddingLeft), right: px(cs.paddingRight) };
 }
 
 function resize() {
   const vw = window.innerWidth;
   const vh = window.innerHeight;
-  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  // Up to 3× so text and marbles are pixel-sharp on modern phones (iPhones are 3×).
+  const dpr = Math.min(window.devicePixelRatio || 1, 3);
   layout = computeLayout(vw, vh, dpr, readInsets());
   canvas.style.width = `${vw}px`;
   canvas.style.height = `${vh}px`;
   renderer.setLayout(layout);
+  placeCancelZone();
+}
+
+/** Keep the cancel target off the board: bottom bar in portrait, the side margin in landscape. */
+function placeCancelZone() {
+  const z = document.getElementById('cancel-zone');
+  if (!z) return;
+  if (layout.portrait) {
+    z.classList.remove('compact');
+    z.style.left = '';
+    return;
+  }
+  z.classList.add('compact');
+  z.style.left = `${Math.max(46, layout.board.x / 2)}px`;
 }
 window.addEventListener('resize', resize);
 window.visualViewport?.addEventListener('resize', resize);
+window.addEventListener('orientationchange', () => setTimeout(resize, 300));
+// iOS standalone apps often get their safe-area insets *after* load, with no resize event:
+// watch the probe (its content box shrinks when insets appear) and re-layout.
+let lastInsets = '';
+new ResizeObserver(() => {
+  const k = JSON.stringify(readInsets());
+  if (k !== lastInsets) {
+    lastInsets = k;
+    resize();
+  }
+}).observe(safeProbe);
 
 // ------------------------------------------------------------------ input
 
@@ -344,7 +372,8 @@ function inCancelZone(clientX: number, clientY: number): boolean {
 function setCancelUi(show: boolean, armed: boolean, text = '✕ Cancel') {
   cancelZone.classList.toggle('show', show);
   cancelZone.classList.toggle('armed', armed);
-  cancelZone.textContent = armed ? '✕ Release to cancel' : text;
+  const compact = cancelZone.classList.contains('compact');
+  cancelZone.textContent = compact ? (armed ? '✕ Release' : text.startsWith('✕ Cancelled') ? '✕ Lift' : '✕ Cancel') : armed ? '✕ Release to cancel' : text;
   view.aimCancel = show && armed;
 }
 
@@ -441,7 +470,11 @@ function endTouch(e: PointerEvent, interrupted: boolean) {
   else if (save.settings.touchAim === 'drag') {
     if (cancelled || onLauncher(w)) {
       if (!interrupted && !t.cancelled) audio.play('cancel');
-    } else fireAngle(shotAngle(liftoffAim()));
+    } else {
+      // Haptic tick *inside* the lift-off handler, while the gesture still counts as user activation.
+      haptics.tickNow();
+      fireAngle(shotAngle(liftoffAim()));
+    }
   }
   view.aimActive = false;
 }

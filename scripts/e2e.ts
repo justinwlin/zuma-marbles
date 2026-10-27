@@ -63,11 +63,26 @@ async function runProfile(name: string, opts: BrowserContextOptions) {
   const browser = await chromium.launch({ executablePath: browserPath(), args: ['--autoplay-policy=no-user-gesture-required'] });
   const ctx = await browser.newContext(opts);
   const page = await ctx.newPage();
+  // Record vibration calls with the event they happened in (sync-in-gesture matters on iOS).
+  // (String, not a function: tsx would inject helpers the page doesn't have.)
+  await page.addInitScript(`
+    window.__vib = [];
+    let cur = '';
+    for (const t of ['pointerup', 'pointerdown', 'touchend']) {
+      window.addEventListener(t, () => { cur = t; }, true);
+      window.addEventListener(t, () => setTimeout(() => { cur = ''; }, 0), true);
+    }
+    Object.defineProperty(navigator, 'vibrate', { configurable: true, value: (p) => { window.__vib.push({ p, ev: cur }); return true; } });
+  `);
   const errors: string[] = [];
   page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
   page.on('pageerror', (e) => errors.push(String(e)));
   await page.goto(base);
-  await page.evaluate(() => localStorage.clear());
+  // Fixed campaign so level layouts (and any failure) are reproducible. Override with E2E_SEED.
+  await page.evaluate((seed) => {
+    localStorage.clear();
+    localStorage.setItem('zuma-marbles.save.v1', JSON.stringify({ v: 1, campaignSeed: seed, unlocked: 0, best: {}, totalScore: 0, settings: {}, snapshot: null, tutorialSeen: false }));
+  }, process.env.E2E_SEED ?? 'e2e-fixed');
   await page.reload();
   await page.waitForFunction(() => (window as unknown as { __zuma?: Z }).__zuma?.mode === 'title');
   await page.waitForTimeout(1800);
@@ -195,6 +210,8 @@ async function runProfile(name: string, opts: BrowserContextOptions) {
     await page.waitForTimeout(300);
     shots = await page.evaluate(() => (window as unknown as { __zuma: Z }).__zuma.state().stats.shots);
     check('normal drag still fires afterwards', shots === shots0 + 1);
+    const vib = await page.evaluate(() => (window as unknown as { __vib: { p: unknown; ev: string }[] }).__vib);
+    check('drag-release vibrates inside the lift-off event', vib.some((v) => v.ev === 'pointerup' && v.p === 12), `${vib.filter((v) => v.ev === 'pointerup').length} in-gesture calls`);
   }
   await page.locator('#btn-help').click();
   await page.waitForTimeout(300);
@@ -244,9 +261,50 @@ async function runProfile(name: string, opts: BrowserContextOptions) {
   await browser.close();
 }
 
+/** iPhone in standalone PWA mode: notch + home indicator, with insets arriving *after* load (iOS quirk). */
+async function runNotch() {
+  const name = 'iphoneNotch';
+  console.log(`\n▶ ${name} 390×844 touch, safe-area 59/34 applied after load`);
+  const browser = await chromium.launch({ executablePath: browserPath() });
+  const ctx = await browser.newContext(PROFILES.phone);
+  const page = await ctx.newPage();
+  await page.goto(base);
+  await page.evaluate(() => localStorage.clear());
+  await page.reload();
+  await page.waitForTimeout(500);
+  await page.locator('[data-a=play]').click();
+  await page.waitForTimeout(1500);
+  const before = await page.evaluate(() => (window as unknown as { __zuma: Z }).__zuma.layout().board);
+  const cdp = await ctx.newCDPSession(page);
+  try {
+    await cdp.send('Emulation.setSafeAreaInsetsOverride' as never, { insets: { top: 59, bottom: 34, left: 0, right: 0 } } as never);
+  } catch (e) {
+    check('safe-area emulation available', false, String(e));
+    await browser.close();
+    return;
+  }
+  await page.waitForTimeout(600); // no resize event fires — the probe observer must catch it
+  const L = await page.evaluate(() => (window as unknown as { __zuma: Z }).__zuma.layout());
+  const hud = await page.evaluate(() => {
+    const bar = document.querySelector('.bar')!.getBoundingClientRect();
+    const btn = document.querySelector('#btn-pause')!.getBoundingClientRect();
+    const sw = document.querySelector('#btn-swap')!.getBoundingClientRect();
+    return { barBottom: bar.bottom, btnTop: btn.top, swapBottom: sw.bottom };
+  });
+  check('layout reacts to late safe-area insets', L.board.y > before.y + 30, `board top ${before.y.toFixed(0)} → ${L.board.y.toFixed(0)}`);
+  check('HUD sits below the notch', hud.btnTop >= 59, `pause top ${hud.btnTop.toFixed(0)}`);
+  check('HUD does not overlap the board', hud.barBottom <= L.board.y + 2, `bar bottom ${hud.barBottom.toFixed(0)} vs board ${L.board.y.toFixed(0)}`);
+  check('board clears the home indicator', L.board.y + L.board.h <= 844 - 34 + 1);
+  check('swap button clears the home indicator', hud.swapBottom <= 844 - 34 + 1, `swap bottom ${hud.swapBottom.toFixed(0)}`);
+  check('canvas renders at device resolution (3×)', (await page.evaluate(() => (document.getElementById('game') as HTMLCanvasElement).width)) === 390 * 3);
+  await page.screenshot({ path: `${OUT}/${name}-play.png` });
+  await browser.close();
+}
+
 for (const [name, opts] of Object.entries(PROFILES)) {
   if (only && !only.includes(name)) continue;
   await runProfile(name, opts);
 }
+if (!only || only.includes('iphoneNotch')) await runNotch();
 console.log(failures ? `\n${failures} check(s) failed` : '\nall e2e checks passed');
 process.exit(failures ? 1 : 0);
