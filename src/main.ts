@@ -107,8 +107,17 @@ function hueFor(lvl: Level) {
   return [195, 165, 260, 215, 285, 140, 330, 20][lvl.index % 8] + ((lvl.seed % 20) - 10);
 }
 
+/** Generated cruise speed of the current level (Relaxed speed scales a copy of it). */
+let baseSpeed = 0;
+function applySpeed() {
+  if (!level) return;
+  level.speed = baseSpeed * (save.settings.relaxed && !attract ? 0.75 : 1);
+}
+
 function loadLevel(seed: string, index: number, state?: GameState) {
   level = generateLevel(seed, index);
+  baseSpeed = level.speed;
+  applySpeed();
   st = state ?? createGame(level);
   view.hue = hueFor(level);
   renderer.setLevel(level, view.hue);
@@ -267,6 +276,22 @@ function endlessStageDone(won: boolean, r: EndlessRun) {
   releaseWakeLock();
 }
 
+/** Losses in a row per level (this session), to offer help when someone is stuck. */
+const lossStreak = new Map<number, number>();
+
+/** One helpful, specific tip after losing a level. */
+function lossTip(): string {
+  const s = st.stats;
+  const coarse = matchMedia('(pointer: coarse)').matches;
+  const noun = characterNoun(save.settings.character);
+  if ((lossStreak.get(level.index) ?? 0) >= 2 && !save.settings.relaxed) return 'Stuck? Turn on <b>Relaxed speed</b> in Settings — chains roll 25% slower.';
+  if (level.tracks.length > 1) return 'Two chains: deal with whichever is <b>closer to its skull</b> first.';
+  if (s.shots >= 8 && s.misses / s.shots > 0.3) return 'Missed shots fly off the board. The <b>ghost marble</b> shows exactly where a shot will land.';
+  if (s.powers === 0) return 'Pop the marbles with a <b>white ring</b>: Slow and Reverse buy you time.';
+  if (s.maxCombo === 0) return 'When both sides of a gap match, they <b>snap together</b> and pop again — a combo.';
+  return coarse ? `No good match for this marble? <b>Tap your ${noun}</b> to swap to the next one.` : 'No good match for this marble? <b>Right-click</b> or press <b>Space</b> to swap.';
+}
+
 function finishLevel(won: boolean) {
   if (run) return endlessStageDone(won, run);
   mode = 'result';
@@ -283,7 +308,9 @@ function finishLevel(won: boolean) {
   }
   save.snapshot = null;
   writeSave(save);
-  ui.result(won, st, level, stars, seconds, save.best[level.index]?.score ?? st.score, peakDanger);
+  if (won) lossStreak.delete(level.index);
+  else lossStreak.set(level.index, (lossStreak.get(level.index) ?? 0) + 1);
+  ui.result(won, st, level, stars, seconds, save.best[level.index]?.score ?? st.score, peakDanger, won ? '' : lossTip());
   releaseWakeLock();
 }
 
@@ -368,6 +395,16 @@ function applySettings() {
   view.colorblind = s.colorblind;
   view.showGuide = s.guide;
   renderer.character = s.character;
+  applySpeed();
+  document.body.classList.toggle('lefty', s.leftHanded);
+  document.body.classList.toggle('large-ui', s.largeUi);
+  setUiScale();
+}
+
+/** Menus scale up on big screens (and with "Larger text & buttons"). */
+function setUiScale() {
+  const k = Math.max(1, Math.min(1.35, window.innerHeight / 820, window.innerWidth / 700)) * (save.settings.largeUi ? 1.15 : 1);
+  document.documentElement.style.setProperty('--ui', k.toFixed(3));
 }
 
 // ------------------------------------------------------------------ layout
@@ -390,6 +427,7 @@ function resize() {
   canvas.style.height = `${vh}px`;
   renderer.setLayout(layout);
   placeCancelZone();
+  setUiScale();
 }
 
 /** Keep the cancel target off the board: bottom bar in portrait, the side margin in landscape. */
@@ -725,6 +763,10 @@ document.getElementById('btn-pause')!.addEventListener('click', () => {
 
 window.addEventListener('keydown', (e) => {
   if ((e.target as HTMLElement).tagName === 'INPUT') return;
+  if (e.code === 'Escape' && mode !== 'playing' && ui.current && ui.current !== 'pause') {
+    ui.back();
+    return;
+  }
   if (e.code === 'Escape' || e.code === 'KeyP') {
     if (mode === 'playing') pause();
     else if (mode === 'paused') {
@@ -1143,6 +1185,7 @@ window.__zuma = {
     beginPlay();
   },
   run: () => run,
+  levelSpeed: () => level.speed,
   fireAt: (wx: number, wy: number) => queueFire({ x: wx, y: wy }),
   swap: () => queueSwap(),
   pause,

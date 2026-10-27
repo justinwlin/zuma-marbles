@@ -61,6 +61,14 @@ export class UI {
     this.root.innerHTML = `<div class="screen ${cls}" data-screen="${name}">${html}</div>`;
   }
 
+  /** Escape / browser-back on a menu: run its Back (or Resume) action if it has one. */
+  back(): boolean {
+    const h = this.handlers.back ?? this.handlers.resume;
+    if (!this.current || !h) return false;
+    h(document.body);
+    return true;
+  }
+
   hide() {
     this.current = '';
     this.root.innerHTML = '';
@@ -77,21 +85,29 @@ export class UI {
     const marbles = PALETTE.map((_, i) => `<span style="${marbleCss(i)};animation-delay:${i * 0.12}s"></span>`).join('');
     const isIOS = /iP(hone|ad|od)/.test(navigator.userAgent);
     const standalone = matchMedia('(display-mode: standalone)').matches || (navigator as unknown as { standalone?: boolean }).standalone;
+    const stars = Object.values(save.best).reduce((a, r) => a + r.stars, 0);
+    const fresh = save.unlocked === 0 && !snap;
     this.show(
       'title',
       `<div class="logo"><div class="z">ZUMA</div><div class="m">MARBLES</div><div class="marbles">${marbles}</div></div>
+      ${fresh ? '' : `<div class="progress-chip"><span>Level ${save.unlocked + 1}</span><span class="star">★ ${stars}</span>${isLargeCampaign(save.campaignSeed) ? '<span>Large marbles</span>' : ''}</div>`}
       <div class="btns">
-        ${snap ? `<button class="btn gold" data-a="continue">Continue<small>Level ${snap.levelIndex + 1} · in progress</small></button>` : ''}
-        <button class="btn primary" data-a="play">${save.unlocked > 0 || snap ? 'Play' : 'Start'}<small>Level ${save.unlocked + 1}</small></button>
+        ${
+          snap
+            ? `<button class="btn primary big" data-a="continue">▶ Continue<small>Level ${snap.levelIndex + 1} · pick up where you left off</small></button>`
+            : `<button class="btn primary big" data-a="play">▶ ${fresh ? 'Start' : 'Play'}<small>Level ${save.unlocked + 1}</small></button>`
+        }
         <div class="row">
-          <button class="btn" data-a="levels">Levels</button>
-          <button class="btn endless-btn" data-a="endless">Endless${save.endless ? '<small>run in progress</small>' : save.endlessBest ? `<small>best ${save.endlessBest.score.toLocaleString()}</small>` : ''}</button>
+          <button class="btn" data-a="levels"><span class="ico">▦</span>Levels</button>
+          <button class="btn endless-btn" data-a="endless"><span class="ico">∞</span>Endless${save.endless ? '<small>run in progress</small>' : save.endlessBest ? `<small>best ${save.endlessBest.score.toLocaleString()}</small>` : ''}</button>
         </div>
-        <button class="btn" data-a="settings">Settings</button>
-        <button class="btn ghost" data-a="help">How to play</button>
+        <div class="row">
+          <button class="btn" data-a="settings"><span class="ico">⚙</span>Settings</button>
+          <button class="btn" data-a="help"><span class="ico">?</span>Help</button>
+        </div>
         ${this.canInstall ? `<button class="btn ghost" data-a="install">⬇ Install app</button>` : ''}
       </div>
-      <div class="foot">${isIOS && !standalone ? 'Tip: Share → <b>Add to Home Screen</b> to play full-screen & offline.<br>' : ''}Campaign <b>${save.campaignSeed}</b>${isLargeCampaign(save.campaignSeed) ? ' · large marbles' : ''} · infinite levels</div>`,
+      ${isIOS && !standalone ? '<div class="foot">Tip: Share → <b>Add to Home Screen</b> to play full-screen & offline.</div>' : ''}`,
       {
         continue: () => this.a.continueSnapshot(),
         play: () => this.a.play(save.unlocked),
@@ -107,32 +123,41 @@ export class UI {
   levels(save: SaveData) {
     const large = isLargeCampaign(save.campaignSeed);
     const count = save.unlocked + 1;
+    const stars = Object.values(save.best).reduce((a, r) => a + r.stars, 0);
     const cards: string[] = [];
-    for (let i = count - 1; i >= 0; i--) {
+    // Natural order (1, 2, 3 …); the screen scrolls to the level you're on.
+    for (let i = 0; i < count; i++) {
       const rec = save.best[i];
       const meta = levelMeta(save.campaignSeed, i);
       const st = rec ? '★'.repeat(rec.stars) + `<i>${'★'.repeat(3 - rec.stars)}</i>` : '<i>★★★</i>';
+      const label = `Level ${i + 1}, ${meta.name}${meta.boss ? `, ${meta.boss === 'boss' ? 'boss' : 'mini-boss'}` : ''}${rec ? `, ${rec.stars} stars` : ', not cleared'}`;
       cards.push(
-        `<button class="lv ${i === save.unlocked ? 'next' : ''} ${meta.boss ?? ''}" data-a="lv" data-i="${i}"><b>${i + 1}</b><small>${meta.name}</small>${badges(meta)}<span class="st">${st}</span></button>`,
+        `<button class="lv ${i === save.unlocked ? 'next' : ''} ${meta.boss ?? ''}" data-a="lv" data-i="${i}" aria-label="${label}"><b>${i + 1}</b><small>${meta.name}</small>${badges(meta)}<span class="st">${st}</span></button>`,
       );
     }
-    for (let i = count; i < count + 3; i++) cards.unshift(`<div class="lv locked"><b>${i + 1}</b><small>locked</small></div>`);
-    // Highest level first: with infinite levels the current one stays near the top.
+    cards.push(`<div class="lv locked" aria-hidden="true"><b>🔒</b><small>Level ${count + 1}</small></div>`);
     this.show(
       'levels',
       `<div class="levels-head"><button class="icon-btn" data-a="back" aria-label="Back">←</button><h2>Levels</h2>
-        <button class="chip" data-a="copy" title="Copy level code">🌱 ${save.campaignSeed}</button></div>
-      <div class="size-row"><span>Marbles</span><div class="seg">
+        <span class="chip star">★ ${stars} / ${save.unlocked * 3 || 0}</span></div>
+      <div class="size-row"><span>Marble size</span><div class="seg">
         <button data-a="size" data-v="0" class="${large ? '' : 'on'}">Normal</button>
         <button data-a="size" data-v="1" class="${large ? 'on' : ''}">Large</button></div>
-        <small>${large ? 'Bigger marbles on a smaller board — easier to see and hit on phones.' : 'Large: 25% bigger marbles, its own levels & progress.'}</small>
+        <small>${large ? 'Bigger marbles on a smaller board — easier to see and hit on phones.' : 'Large: 25% bigger marbles. It has its own levels & progress.'}</small>
       </div>
+      <div class="legend"><span><span class="bd boss">BOSS</span> boss</span><span><span class="bd mini">MINI</span> mini-boss</span><span><span class="bd">2×</span> two chains</span><span><span class="bd">⚡</span> power surge</span><span><span class="bd">🌈</span> streaky</span></div>
       <div class="grid">${cards.join('')}</div>
-      <form class="code-form" onsubmit="return false">
-        <input type="text" id="code" placeholder="Level code (seed/level) or new seed" autocomplete="off" autocapitalize="off" spellcheck="false">
-        <button class="btn" data-a="code" style="padding:10px 16px;font-size:16px">Go</button>
-      </form>
-      <div class="foot">Levels are generated from the campaign seed — same seed, same levels, on any device.</div>`,
+      <details class="share">
+        <summary>Share or play a custom campaign</summary>
+        <p>Levels are generated from a seed, so a code like <b>${levelCode(save.campaignSeed, save.unlocked)}</b> opens the same level on any device. Type a new word to start a fresh campaign.</p>
+        <div class="code-form">
+          <button class="btn" data-a="copy" style="padding:10px 14px;font-size:15px">Copy my code</button>
+        </div>
+        <form class="code-form" onsubmit="return false">
+          <input type="text" id="code" placeholder="Level code or new seed" aria-label="Level code or new seed" autocomplete="off" autocapitalize="off" spellcheck="false">
+          <button class="btn" data-a="code" style="padding:10px 16px;font-size:16px">Go</button>
+        </form>
+      </details>`,
       {
         back: () => this.title(save),
         size: (el) => this.a.setLargeMarbles(el.dataset.v === '1'),
@@ -150,6 +175,8 @@ export class UI {
         },
       },
     );
+    // Bring the current level into view.
+    this.root.querySelector('.lv.next')?.scrollIntoView({ block: 'nearest' });
   }
 
   endless(save: SaveData) {
@@ -201,9 +228,14 @@ export class UI {
     const where = run
       ? `Stage ${level.index + 1} · ${level.name}<br><span style="font-size:12px">${run.daily ? 'Daily' : 'Endless'} run · ${(run.runScore).toLocaleString()} banked</span>`
       : `Level ${level.index + 1} · ${level.name}<br><span style="font-size:12px">code ${levelCode(level.campaignSeed, level.index)}</span>`;
+    const info = [
+      level.boss === 'boss' ? '<b>Boss</b> level' : level.boss === 'mini' ? '<b>Mini-boss</b>' : '',
+      level.tracks.length > 1 ? 'two chains' : '',
+      ...level.mutators.map((m) => `<b>${MUTATOR_INFO[m].name}</b>: ${MUTATOR_INFO[m].desc}`),
+    ].filter(Boolean);
     this.show(
       'pause',
-      `<div class="panel"><h2>Paused</h2><p class="sub">${where}</p>
+      `<div class="panel"><h2>Paused</h2><p class="sub">${where}</p>${info.length ? `<p class="sub level-info">${info.join(' · ')}</p>` : ''}
       <div class="btns" style="margin:0 auto">
         <button class="btn primary" data-a="resume">Resume</button>
         <div class="row"><button class="btn" data-a="restart">${run ? 'New run' : 'Restart'}</button><button class="btn" data-a="settings">Settings</button></div>
@@ -218,7 +250,7 @@ export class UI {
     );
   }
 
-  result(won: boolean, st: GameState, level: Level, stars: number, seconds: number, best: number, peak: number) {
+  result(won: boolean, st: GameState, level: Level, stars: number, seconds: number, best: number, peak: number, tip = '') {
     const s = st.stats;
     const starHtml = won ? [0, 1, 2].map((i) => `<span class="${i < stars ? 'on' : ''}" style="animation-delay:${0.25 + i * 0.18}s">★</span>`).join('') : '';
     const mm = `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`;
@@ -228,12 +260,13 @@ export class UI {
         <h2>${won ? 'Level clear!' : 'Swallowed!'}</h2>
         <p class="sub">Level ${level.index + 1} · ${level.name}</p>
         ${won ? `<div class="stars">${starHtml}</div>` : ''}
+        ${!won && tip ? `<div class="tip">💡 ${tip}</div>` : ''}
         <div class="big-score" id="res-score">0</div>
         <div class="stats">
           <div>Time <b>${mm}</b></div><div>Best <b>${best.toLocaleString()}</b></div>
           <div>Max combo <b>×${s.maxCombo + 1}</b></div><div>Best chain <b>${s.maxStreak}</b></div>
           <div>Gap shots <b>${s.gapShots}</b></div><div>Accuracy <b>${s.shots ? Math.round(((s.shots - s.misses) / s.shots) * 100) : 0}%</b></div>
-          <div>Power-ups <b>${s.powers}</b></div><div>Closest call <b>${Math.min(100, Math.round(peak * 100))}%</b></div>
+          <div>Power-ups <b>${s.powers}</b></div><div>Nearest the skull <b>${Math.min(100, Math.round(peak * 100))}%</b></div>
         </div>
         <div class="btns" style="margin:0 auto">
           ${won ? '<button class="btn primary" data-a="next">Next level</button>' : '<button class="btn primary" data-a="restart">Try again</button>'}
@@ -260,37 +293,43 @@ export class UI {
 
   settings(save: SaveData, back: () => void, inGame = false) {
     const s = save.settings;
-    const tog = (k: keyof Settings, on: boolean) => `<button class="toggle ${on ? 'on' : ''}" data-a="tog" data-k="${k}" aria-pressed="${on}"></button>`;
+    const tog = (k: keyof Settings, on: boolean) => `<button class="toggle ${on ? 'on' : ''}" data-a="tog" data-k="${k}" role="switch" aria-pressed="${on}" aria-label="${k}"></button>`;
     const coarse = matchMedia('(pointer: coarse)').matches;
     this.show(
       'settings',
-      `<div class="panel"><h2>Settings</h2>
-        <div class="setting col"><label>Character</label>
-          <div class="chars">${CHARACTERS.map((c) => `<button class="char ${s.character === c.id ? 'on' : ''}" data-a="char" data-v="${c.id}" aria-pressed="${s.character === c.id}"><img src="${characterThumb(c.id, thumbMarble)}" alt=""><span>${c.name}</span></button>`).join('')}</div>
-        </div>
-        <div class="setting"><label>Sound</label><input type="range" min="0" max="1" step="0.05" value="${s.sfx}" data-k="sfx"></div>
-        <div class="setting"><label>Music</label><input type="range" min="0" max="1" step="0.05" value="${s.music}" data-k="music"></div>
-        <div class="setting"><label>Vibration<small>${/iP(hone|od)/.test(navigator.userAgent) ? 'iPhone: ticks on taps only (Safari limit) — Tap aiming gives a tick per shot' : 'Haptic feedback on hits & pops'}</small></label>${tog('haptics', s.haptics)}</div>
-        <div class="setting"><label>Aim guide<small>Dotted line, target ring & ghost marble</small></label>${tog('guide', s.guide)}</div>
-        <div class="setting"><label>Aim assist<small>Nudges shots (±3.5°) into the slot the ghost marble shows</small></label>${tog('assist', s.assist)}</div>
-        <div class="setting"><label>Hold to keep shooting<small>${coarse ? 'Press and hold (without dragging) to rapid-fire' : 'Hold the mouse button to rapid-fire'}</small></label>${tog('holdFire', s.holdFire)}</div>
-        <div class="setting"><label>Colour-blind symbols</label>${tog('colorblind', s.colorblind)}</div>
-        <div class="setting"><label>Reduce motion<small>No screen shake or flashes</small></label>${tog('reduceMotion', s.reduceMotion)}</div>
+      `<div class="panel settings"><h2>Settings</h2>
+        <h3>Character</h3>
+        <div class="chars">${CHARACTERS.map((c) => `<button class="char ${s.character === c.id ? 'on' : ''}" data-a="char" data-v="${c.id}" aria-pressed="${s.character === c.id}"><img src="${characterThumb(c.id, thumbMarble)}" alt=""><span>${c.name}</span></button>`).join('')}</div>
+        <h3>Aiming</h3>
         ${
           coarse
             ? `<div class="setting col"><label>Touch aiming<small id="aim-hint">${AIM_HINTS[s.touchAim]}</small></label><div class="seg seg3">${(['drag', 'aimtap', 'tap'] as const).map((m) => `<button data-a="aim" data-v="${m}" class="${s.touchAim === m ? 'on' : ''}">${AIM_LABELS[m]}</button>`).join('')}</div></div>`
             : ''
         }
-        <div class="btns" style="margin:18px auto 0">
+        <div class="setting"><label>Aim guide<small>Dotted line, target ring & ghost marble</small></label>${tog('guide', s.guide)}</div>
+        <div class="setting"><label>Aim assist<small>Nudges shots (±3.5°) into the slot the ghost marble shows</small></label>${tog('assist', s.assist)}</div>
+        <div class="setting"><label>Hold to keep shooting<small>${coarse ? 'Press and hold (without dragging) to rapid-fire' : 'Hold the mouse button to rapid-fire'}</small></label>${tog('holdFire', s.holdFire)}</div>
+        ${coarse ? `<div class="setting"><label>Left-handed<small>Swap button on the left, cancel target on the right</small></label>${tog('leftHanded', s.leftHanded)}</div>` : ''}
+        <h3>Accessibility</h3>
+        <div class="setting"><label>Relaxed speed<small>Chains roll 25% slower — more time to think</small></label>${tog('relaxed', s.relaxed)}</div>
+        <div class="setting"><label>Colour-blind symbols<small>A shape on every marble colour</small></label>${tog('colorblind', s.colorblind)}</div>
+        <div class="setting"><label>Larger text & buttons</label>${tog('largeUi', s.largeUi)}</div>
+        <div class="setting"><label>Reduce motion<small>No screen shake or flashes</small></label>${tog('reduceMotion', s.reduceMotion)}</div>
+        <h3>Sound & vibration</h3>
+        <div class="setting"><label>Sound</label><input type="range" min="0" max="1" step="0.05" value="${s.sfx}" data-k="sfx" aria-label="Sound volume"></div>
+        <div class="setting"><label>Music</label><input type="range" min="0" max="1" step="0.05" value="${s.music}" data-k="music" aria-label="Music volume"></div>
+        <div class="setting"><label>Vibration<small>${/iP(hone|od)/.test(navigator.userAgent) ? 'iPhone: ticks on taps only (Safari limit) — Tap aiming gives a tick per shot' : 'Haptic feedback on hits & pops'}</small></label>${tog('haptics', s.haptics)}</div>
+        <div class="btns sticky-done">
           <button class="btn primary" data-a="back">${inGame ? 'Back to game' : 'Done'}</button>
           ${inGame ? '' : '<button class="btn ghost" data-a="reset">Reset progress…</button>'}
         </div></div>`,
       {
         back,
         tog: (el) => {
-          const k = el.dataset.k as 'haptics' | 'guide' | 'colorblind' | 'reduceMotion' | 'assist' | 'holdFire';
+          const k = el.dataset.k as 'haptics' | 'guide' | 'colorblind' | 'reduceMotion' | 'assist' | 'holdFire' | 'relaxed' | 'leftHanded' | 'largeUi';
           s[k] = !s[k];
           el.classList.toggle('on', s[k]);
+          el.setAttribute('aria-pressed', String(s[k]));
           this.a.settingsChanged(s);
         },
         char: (el) => {
@@ -318,6 +357,16 @@ export class UI {
         },
       },
     );
+    // Whole row toggles (bigger target); switches get their row's label as their name.
+    this.root.querySelectorAll<HTMLElement>('.setting').forEach((row) => {
+      const t = row.querySelector<HTMLElement>('.toggle');
+      if (!t) return;
+      t.setAttribute('aria-label', row.querySelector('label')?.firstChild?.textContent?.trim() ?? '');
+      row.classList.add('tappable');
+      row.addEventListener('click', (e) => {
+        if (e.target !== t) t.click();
+      });
+    });
     this.root.querySelectorAll<HTMLInputElement>('input[type=range]').forEach((inp) =>
       inp.addEventListener('input', () => {
         (s as unknown as Record<string, number>)[inp.dataset.k!] = Number(inp.value);

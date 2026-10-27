@@ -263,3 +263,46 @@ input[type=range] { width: 140px; accent-color: var(--accent); touch-action: man
 .size-row small { color: var(--muted); font-size: 12px; flex-basis: 100%; }
 .seg.seg3 { margin-top: 8px; }
 .seg.seg3 button { flex: 1; padding: 8px 6px; }
+
+/* ---------------- UX pass: scale, title, levels, settings */
+/* Menus scale with the screen (--ui set from JS; ×1.15 with "Larger text & buttons"). */
+.screen > * { zoom: var(--ui, 1); }
+.progress-chip { display: flex; gap: 8px; justify-content: center; margin: -12px 0 18px; flex-wrap: wrap; }
+.progress-chip span { padding: 5px 12px; border-radius: 99px; background: var(--glass); border: 1px solid var(--line); font-size: 13px; font-weight: 700; color: var(--muted); }
+.progress-chip .star, .chip.star { color: #ffcf4a; }
+.btn.big { padding: 18px 20px; font-size: 24px; }
+.btn .ico { display: inline-block; margin-right: 6px; opacity: .7; font-weight: 900; }
+.btn:focus-visible, .lv:focus-visible, .toggle:focus-visible, .char:focus-visible, .seg button:focus-visible, .icon-btn:focus-visible { outline: 3px solid #fff3c4; outline-offset: 3px; }
+
+.legend { width: min(720px, 100%); display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 0 0 12px; font-size: 12px; color: var(--muted); }
+.legend > span { display: inline-flex; align-items: center; gap: 5px; }
+.legend .bd { font-size: 10px; font-weight: 800; line-height: 1; padding: 3px 5px; border-radius: 8px; background: rgba(0,0,0,.4); color: #fff; }
+.legend .bd.boss { background: #ff5a78; }
+.legend .bd.mini { background: #ff9d4d; color: #2a1200; }
+.lv small { font-size: 11px; }
+.lv .st { font-size: 15px; }
+.lv.locked b { font-size: 24px; }
+details.share { width: min(720px, 100%); margin-top: 18px; background: var(--glass); border: 1px solid var(--line); border-radius: 18px; padding: 4px 14px; }
+details.share summary { cursor: pointer; padding: 10px 0; font-weight: 700; color: var(--muted); }
+details.share p { font-size: 13px; color: var(--muted); margin: 0 0 6px; }
+details.share .code-form { margin: 8px 0 10px; }
+
+.panel.settings h3 { margin: 18px 2px 2px; font-size: 13px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--accent); }
+.panel.settings h3:first-of-type { margin-top: 6px; }
+.setting.tappable { cursor: pointer; }
+.chars { gap: 6px; }
+.char { min-width: 0; }
+.char img { width: 100%; max-width: 64px; height: auto; aspect-ratio: 1; }
+.sticky-done { position: sticky; bottom: -24px; margin: 16px auto -24px; padding: 12px 0 20px; width: 100%; background: linear-gradient(to bottom, rgba(14,28,44,0), rgba(14,28,44,.97) 30%); }
+
+.tip { margin: 4px 0 16px; padding: 10px 14px; border-radius: 14px; background: rgba(255,207,74,.1); border: 1px solid rgba(255,207,74,.3); font-size: 14px; line-height: 1.4; text-align: center; }
+.tip b { color: #ffcf4a; }
+
+/* Left-handed: swap button on the left, cancel target on the right (portrait). */
+@media (orientation: portrait) {
+  body.lefty .hud-bottom { flex-direction: row-reverse; }
+  body.lefty .cancel-zone { left: auto; right: calc(var(--sar) + 14px); }
+}
+
+.level-info { margin-top: -10px; font-size: 13px; }
+.level-info b { color: #ffcf4a; }

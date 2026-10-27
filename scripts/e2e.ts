@@ -237,6 +237,31 @@ async function runProfile(name: string, opts: BrowserContextOptions) {
     return { mode: z.mode, character: z.save().settings.character, stored: JSON.parse(localStorage.getItem('zuma-marbles.save.v1') ?? '{}').settings?.character };
   });
   check('character change applies, persists and play resumes', ch.mode === 'playing' && ch.character === 'calico' && ch.stored === 'calico', JSON.stringify(ch));
+
+  // ---- Accessibility settings: Relaxed speed slows the chain 25%, left-handed moves the swap button,
+  // a tap on the row (not just the switch) toggles, Escape closes the menu.
+  const speedOf = () => page.evaluate(() => (window as unknown as { __zuma: { levelSpeed(): number } }).__zuma.levelSpeed());
+  const sp0 = await speedOf();
+  await page.locator('#btn-settings').click();
+  await page.waitForTimeout(200);
+  await page.locator('.setting:has([data-k=relaxed]) label').click();
+  if (opts.hasTouch) await page.locator('[data-k=leftHanded]').click();
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(250);
+  const sp1 = await speedOf();
+  check('Relaxed speed (row tap) slows the chain to 75%', Math.abs(sp1 / sp0 - 0.75) < 0.01, `${sp0.toFixed(1)} → ${sp1.toFixed(1)} px/s`);
+  check('Escape closes in-game settings and resumes', (await page.evaluate(() => (window as unknown as { __zuma: Z }).__zuma.mode)) === 'playing');
+  if (opts.hasTouch && vp.height > vp.width) {
+    const sw = await page.locator('#btn-swap').boundingBox();
+    check('left-handed puts the swap button on the left', !!sw && sw.x + sw.width / 2 < vp.width / 2, sw ? `swap centre x ${(sw.x + sw.width / 2).toFixed(0)}` : '');
+  }
+  await page.locator('#btn-settings').click();
+  await page.waitForTimeout(200);
+  await page.locator('[data-k=relaxed]').click();
+  if (opts.hasTouch) await page.locator('[data-k=leftHanded]').click();
+  await page.locator('[data-screen=settings] [data-a=back]').click();
+  await page.waitForTimeout(200);
+  check('turning Relaxed off restores the speed', Math.abs((await speedOf()) - sp0) < 0.01);
   await page.screenshot({ path: `${OUT}/${name}-9-calico.png` });
 
   // ---- Aim + tap mode (touch): drag sets the aim without firing; a tap fires along it.

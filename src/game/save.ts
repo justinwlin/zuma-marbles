@@ -23,6 +23,12 @@ export interface Settings {
   holdFire: boolean;
   /** Launcher character. */
   character: CharacterId;
+  /** Accessibility: chains roll at 75% speed. */
+  relaxed: boolean;
+  /** Swap button on the left (portrait phones), cancel target on the right. */
+  leftHanded: boolean;
+  /** Larger menu text and HUD buttons. */
+  largeUi: boolean;
 }
 
 export interface LevelRecord {
@@ -103,6 +109,9 @@ export const DEFAULT_SETTINGS: Settings = {
   assist: true,
   holdFire: true,
   character: 'frog',
+  relaxed: false,
+  leftHanded: false,
+  largeUi: false,
 };
 
 export function randomSeed(): string {

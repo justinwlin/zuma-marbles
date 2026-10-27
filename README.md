@@ -13,6 +13,7 @@ A Zuma-style marble shooter for phone (portrait) and desktop. It installs as a P
 - **Large-marble campaigns**: switch Marbles to Large on the Levels screen. The levels are generated on a 25% smaller board with the same marble size, so when the board is scaled to fit the screen everything is 25% bigger. The campaign seed gets an `xl-` prefix, so codes like `xl-jade-1234/3` stay deterministic and shareable. Each campaign keeps its own progress. A golden test pins normal-campaign levels so they never change.
 - **Aim modes** (touch): Drag & release, **Aim + tap** (drag to set the aim, tap to shoot; the tap is a real one, so iPhones vibrate on every shot), and Tap.
 - **Settings mid-game**: the gear button in the HUD pauses the game and opens Settings.
+- **Accessibility & comfort** (Settings → Accessibility / Aiming): **Relaxed speed** (chains at 75%), colour-blind symbols, **larger text & buttons**, reduce motion, and **left-handed** controls (swap button on the left). Menus scale up on big screens, every settings row is a tap target, Escape goes back, and losing a level shows a specific tip (offering Relaxed speed after two losses in a row).
 - **Haptics**:
   - Android uses `navigator.vibrate` with full patterns.
   - iOS Safari only gives a tick when a real finger taps a switch; since iOS 26 it ignores toggles from code. So invisible switches sit under the board and inside the swap button. Taps (tap-aim shots, tapping the frog, the swap button) tick, but drag-and-release can't.
