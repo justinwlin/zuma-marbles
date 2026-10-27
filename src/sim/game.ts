@@ -268,7 +268,7 @@ export type GameEvent =
   | { type: 'bossWindup' }
   | { type: 'bossAttack'; x: number; y: number; tx: number; ty: number }
   | { type: 'swallow'; x: number; y: number }
-  | { type: 'choke'; x: number; y: number; power: Power }
+  | { type: 'choke'; x: number; y: number; at: { x: number; y: number; power: Power }[] }
   | { type: 'spit'; x: number; y: number; tx: number; ty: number; c: number }
   | { type: 'stun'; x: number; y: number }
   | { type: 'dodge'; x: number; y: number }
@@ -699,21 +699,27 @@ function serpentPush(st: GameState, level: Level, colors: number[], ev: GameEven
   return true;
 }
 
-/** Choked mid-spit: the spit is cancelled and it coughs a power-up onto the marble nearest the skull. */
+/** Choked mid-spit: the spit is cancelled and it coughs 3-5 power-ups onto random marbles along chain 0. */
 function serpentChoke(st: GameState, level: Level, ev: GameEvent[]) {
   st.boss!.wind = 0;
   const balls = st.chains[0].balls;
   const tr = level.tracks[0];
-  for (let i = balls.length - 1; i >= 0; i--) {
+  const cands: Ball[] = [];
+  for (let i = 0; i < balls.length; i++) {
     const b = balls[i];
     if (b.p || b.clr >= 0 || b.ins < 1 || b.s < tr.visibleFrom || inTunnel(tr, b.s)) continue;
+    if (balls[i - 1]?.p || balls[i + 1]?.p) continue;
+    cands.push(b);
+  }
+  const at: { x: number; y: number; power: Power }[] = [];
+  for (let n = 3 + Math.floor(rand(st, 'bonus') * 3); n > 0 && cands.length; n--) {
+    const b = cands.splice(Math.floor(rand(st, 'bonus') * cands.length), 1)[0];
     b.p = (1 + Math.floor(rand(st, 'bonus') * POWER_COUNT)) as Power;
     b.pt = TUNING.powerLife;
     pointAt(tr, b.s, tmpL);
-    ev.push({ type: 'choke', x: tmpL.x, y: tmpL.y, power: b.p });
-    return;
+    at.push({ x: tmpL.x, y: tmpL.y, power: b.p });
   }
-  ev.push({ type: 'choke', x: level.bossFight!.x, y: level.bossFight!.y, power: Power.None });
+  ev.push({ type: 'choke', x: level.bossFight!.x, y: level.bossFight!.y, at });
 }
 
 function damageBoss(st: GameState, dmg: number) {

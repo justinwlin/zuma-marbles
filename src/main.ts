@@ -343,7 +343,7 @@ function lossTip(): string {
   const noun = characterNoun(save.settings.character);
   if ((lossStreak.get(level.index) ?? 0) >= 2 && !save.settings.relaxed) return 'Stuck? Turn on <b>Relaxed speed</b> in Settings — chains roll 25% slower.';
   if (level.rail && stuns >= 2) return 'The yellow target follows you while the idol winds up, then turns <b>red and locks</b> — slide away before the rock lands.';
-  if (level.bossFight?.kind === 'serpent') return 'Every marble you pop hurts the serpent — <b>combos</b> hurt it more. It swallows shots, but hit the <b>target ring while it rears up</b> to choke it: big damage and a free power-up.';
+  if (level.bossFight?.kind === 'serpent') return 'Every marble you pop hurts the serpent — <b>combos</b> hurt it more. It swallows shots, but hit the <b>target ring while it rears up</b> to choke it: big damage and 3-5 power-ups along the chain.';
   if (level.rail && s.bossHits === 0) return 'Shoot through <b>gaps in the chain</b> to hit the boss directly — and every marble you pop hurts it.';
   if (level.tracks.length > 1) return 'Two chains: deal with whichever is <b>closer to its skull</b> first.';
   if (s.shots >= 8 && s.misses / s.shots > 0.3) return 'Missed shots fly off the board. The <b>ghost marble</b> shows exactly where a shot will land.';
@@ -1118,9 +1118,12 @@ function handleEvents(events: GameEvent[]) {
         fx.burst(e.x, e.y, '#7a5a50', '#c9a089', fb.particles, 0.8);
         break;
       case 'choke':
-        fx.ring(e.x, e.y, '#7dffcf', 10, 420, 0.4);
         fx.burst(e.x, e.y, '#7dffcf', '#fff', fb.particles, 1);
-        fx.text(e.x, e.y, e.power ? `CHOKED! ${POWER_NAMES[e.power].toUpperCase()}` : 'CHOKED!', '#7dffcf', 28, 1.2, -40);
+        fx.text(e.x, e.y, e.at.length ? `CHOKED! +${e.at.length} POWER-UPS` : 'CHOKED!', '#7dffcf', 28, 1.4, -40);
+        for (const p of e.at) {
+          fx.ring(p.x, p.y, '#7dffcf', 10, 420, 0.5);
+          fx.text(p.x, p.y, POWER_NAMES[p.power].toUpperCase(), '#7dffcf', 18, 1.2, -24);
+        }
         break;
       case 'swallow':
         fx.burst(e.x, e.y, '#7dffb0', '#fff', fb.particles, 0.6);

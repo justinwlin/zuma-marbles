@@ -343,16 +343,17 @@ describe('mini-boss serpent', () => {
     expect(balls[balls.length - 1].c).toBe(3);
   });
 
-  it('a hit while it rears up chokes it: no spit, big damage, and a power-up near the skull', () => {
+  it('a hit while it rears up chokes it: no spit, big damage, and power-ups along the chain', () => {
     const { st, ev } = atSerpent(5); // long wind-up so it's still rearing when the shot lands
     expect(ev.some((e) => e.type === 'bossHit')).toBe(true);
     expect(ev.some((e) => e.type === 'spit' || e.type === 'swallow')).toBe(false);
-    expect(ev.some((e) => e.type === 'choke' && e.power > 0)).toBe(true);
+    const choke = ev.find((e) => e.type === 'choke');
+    expect(choke && choke.type === 'choke' ? choke.at.length : 0).toBe(3); // 3-5, capped by the 3 marbles here
     expect(st.boss!.hp).toBe(st.boss!.max - TUNING.serpentChoke);
     expect(st.boss!.wind).toBe(0);
     const balls = st.chains[0].balls;
     expect(balls.length).toBe(3);
-    expect(balls[balls.length - 1].p).toBeGreaterThan(0);
+    expect(balls.every((b) => b.p > 0)).toBe(true);
   });
 
   it('the bot can beat mini-bosses, and replays are exact', () => {
