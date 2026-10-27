@@ -25,6 +25,12 @@ A Zuma-style marble shooter for phone (portrait) and desktop. It installs as a P
 
 Research and design notes: [`zuma-marble-game.md`](./zuma-marble-game.md).
 
+## Play
+
+**https://justinwlin.github.io/zuma-marbles/**: install it from the browser (Android/desktop) or via Share → Add to Home Screen (iPhone) to play full-screen and offline.
+
+Every push to `main` runs the tests, builds, and publishes to GitHub Pages (`.github/workflows/deploy.yml`, which publishes to the `gh-pages` branch).
+
 ## Run
 
 ```bash
