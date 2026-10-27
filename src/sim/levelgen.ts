@@ -233,7 +233,7 @@ export const BOSS_HP = 0.8;
  * Mini-boss serpent health per marble of the level's target. It swallows shots, so pops are
  * nearly all of its damage; tuned with scripts/balance.ts.
  */
-export const SERPENT_HP = 1.1;
+export const SERPENT_HP = 1.3;
 /** Mini-bosses only use tracks that end out at the edge, so the serpent never sits next to the frog. */
 const SERPENT_FAMILIES: TrackFamily[] = ['serpentine', 'columns', 'comb', 'figure8', 'tunnelSpiral', 'twinSerpentine', 'twinColumns'];
 const SERPENT_MIN_DIST = 350;
@@ -243,7 +243,7 @@ const SERPENT_MIN_DIST = 350;
  * under half of its wins beat it: quick, accurate play earns it, average play doesn't.
  */
 export function aceTime(target: number, o: { bossHp?: number; serpentHp?: number; twin?: boolean } = {}): number {
-  const t = o.bossHp ? 12 + o.bossHp * 0.38 : o.serpentHp ? (5 + o.serpentHp * 0.32) * (o.twin ? 1.2 : 1) : (25 + target * 0.22) * (o.twin ? 1.2 : 1);
+  const t = o.bossHp ? 12 + o.bossHp * 0.38 : o.serpentHp ? (5 + o.serpentHp * 0.26) * (o.twin ? 1.2 : 1) : (25 + target * 0.22) * (o.twin ? 1.2 : 1);
   return Math.round(t / 5) * 5;
 }
 

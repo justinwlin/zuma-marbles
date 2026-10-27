@@ -84,7 +84,10 @@ export const TUNING = {
   stunTime: 1.2,
   bossDirectHit: 6,
   /** Mini-boss serpent: rears up, then spits a marble onto the front of the chain. */
-  serpentWindup: 0.6,
+  serpentWindup: 1.6,
+  /** While it rears up its hitbox grows (radius x this), and a hit chokes it: big damage + a power-up. */
+  serpentTargetK: 1.8,
+  serpentChoke: 15,
   serpentEvery: 7,
   serpentEvery2: 5,
   serpentFirst: 8,
@@ -265,6 +268,7 @@ export type GameEvent =
   | { type: 'bossWindup' }
   | { type: 'bossAttack'; x: number; y: number; tx: number; ty: number }
   | { type: 'swallow'; x: number; y: number }
+  | { type: 'choke'; x: number; y: number; power: Power }
   | { type: 'spit'; x: number; y: number; tx: number; ty: number; c: number }
   | { type: 'stun'; x: number; y: number }
   | { type: 'dodge'; x: number; y: number }
@@ -695,6 +699,23 @@ function serpentPush(st: GameState, level: Level, colors: number[], ev: GameEven
   return true;
 }
 
+/** Choked mid-spit: the spit is cancelled and it coughs a power-up onto the marble nearest the skull. */
+function serpentChoke(st: GameState, level: Level, ev: GameEvent[]) {
+  st.boss!.wind = 0;
+  const balls = st.chains[0].balls;
+  const tr = level.tracks[0];
+  for (let i = balls.length - 1; i >= 0; i--) {
+    const b = balls[i];
+    if (b.p || b.clr >= 0 || b.ins < 1 || b.s < tr.visibleFrom || inTunnel(tr, b.s)) continue;
+    b.p = (1 + Math.floor(rand(st, 'bonus') * POWER_COUNT)) as Power;
+    b.pt = TUNING.powerLife;
+    pointAt(tr, b.s, tmpL);
+    ev.push({ type: 'choke', x: tmpL.x, y: tmpL.y, power: b.p });
+    return;
+  }
+  ev.push({ type: 'choke', x: level.bossFight!.x, y: level.bossFight!.y, power: Power.None });
+}
+
 function damageBoss(st: GameState, dmg: number) {
   const b = st.boss;
   if (!b || b.dead) return;
@@ -928,7 +949,7 @@ function stepShots(st: GameState, level: Level, ev: GameEvent[]) {
       if (best < 0 && B && st.boss && !st.boss.dead) {
         const bx = sh.x - B.x;
         const by = sh.y - B.y;
-        const br = B.r + BALL_R * 0.7;
+        const br = (B.kind === 'serpent' && st.boss.wind > 0 ? B.r * TUNING.serpentTargetK : B.r) + BALL_R * 0.7;
         bossHit = bx * bx + by * by < br * br;
       }
       if (best >= 0) {
@@ -944,11 +965,13 @@ function stepShots(st: GameState, level: Level, ev: GameEvent[]) {
         serpentPush(st, level, [sh.w ? Math.floor(rand(st, 'bonus') * level.colors) : sh.c], ev);
         done = true;
       } else if (bossHit) {
-        // Serpent: only hittable while it rears up to spit. The hit chokes off the spit.
-        if (B!.kind === 'serpent') st.boss!.wind = 0;
-        damageBoss(st, TUNING.bossDirectHit);
+        // Serpent: only hittable while it rears up to spit. The hit chokes it: no spit, big damage, a power-up.
+        const choke = B!.kind === 'serpent';
+        const dmg = choke ? TUNING.serpentChoke : TUNING.bossDirectHit;
+        damageBoss(st, dmg);
         st.stats.bossHits++;
-        ev.push({ type: 'bossHit', x: sh.x, y: sh.y, dmg: TUNING.bossDirectHit });
+        ev.push({ type: 'bossHit', x: sh.x, y: sh.y, dmg });
+        if (choke) serpentChoke(st, level, ev);
         st.shots.splice(si, 1);
         done = true;
       } else if (sh.x < -60 || sh.x > level.worldW + 60 || sh.y < -60 || sh.y > level.worldH + 60) {

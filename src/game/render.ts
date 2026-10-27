@@ -1297,6 +1297,28 @@ export class Renderer {
       g.arc(0, 0, 54, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * (b.hp / b.max));
       g.stroke();
     }
+    // Rearing up = open target: a pulsing reticle the size of its (bigger) hitbox
+    if (!dead && b.wind > 0) {
+      const R = B.r * TUNING.serpentTargetK + BALL_R * 0.7;
+      const pulse = 0.5 + 0.5 * Math.sin(v.time * 14);
+      g.save();
+      g.strokeStyle = `rgba(125,255,207,${0.55 + pulse * 0.45})`;
+      g.lineWidth = 3 + pulse * 2;
+      g.setLineDash([10, 7]);
+      g.lineDashOffset = -v.time * 40;
+      g.beginPath();
+      g.arc(0, 0, R, 0, Math.PI * 2);
+      g.stroke();
+      g.setLineDash([]);
+      for (let k = 0; k < 4; k++) {
+        const a = (k * Math.PI) / 2;
+        g.beginPath();
+        g.moveTo(Math.cos(a) * (R + 4), Math.sin(a) * (R + 4));
+        g.lineTo(Math.cos(a) * (R + 14), Math.sin(a) * (R + 14));
+        g.stroke();
+      }
+      g.restore();
+    }
     g.rotate(ang);
     g.scale(1.55, 1.55);
     // Coiled body around the pit: banded scales
