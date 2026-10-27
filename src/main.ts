@@ -1610,7 +1610,7 @@ resize();
 toTitle();
 if (levelsUpdated) {
   writeSave(save);
-  ui.toast('Levels got an update! Mini-boss serpents now live at the far end of the board, and swallow shots unless you hit them mid-spit', 5000);
+  ui.toast('Levels got an update! Tunnels on every kind of track, and serpents you can choke mid-spit for power-ups', 5000);
 }
 requestAnimationFrame(frame);
 

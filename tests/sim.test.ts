@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { BALL_D, bossKind, difficulty, effDifficulty, FAMILY_LEN, generateLevel, isEndlessSeed, TWIN_FAMILIES, validateLevel, WORLD_H, WORLD_W } from '../src/sim/levelgen';
 import { createGame, Power, raycast, restore, snapshot, stateHash, step, TICK_HZ, TUNING } from '../src/sim/game';
 import { BOT_PRESETS, playLevel, replay } from '../src/sim/bot';
-import { TRACK_STEP } from '../src/sim/track';
+import { inTunnel, TRACK_STEP } from '../src/sim/track';
 import { aimAt, frozenGame, mkBall, run, untilHit } from './helpers';
 
 describe('level generation', () => {
@@ -178,6 +178,28 @@ describe('figure-8 and tunnel tracks', () => {
         expect(h1 < b0 || b1 < h0).toBe(true);
       }
     }
+  });
+
+  it('any track shape can get standalone tunnels: mid-track, apart, and hiding their marbles', () => {
+    const fams = new Set<string>();
+    for (let c = 0; c < 20; c++) for (let i = 0; i < 30; i++) {
+      const l = generateLevel(`tun-${c}`, i);
+      l.tracks.forEach((t) => {
+        if (!t.tunnels) return;
+        fams.add(l.family);
+        expect(i).toBeGreaterThanOrEqual(2);
+        expect(l.rail).toBeUndefined();
+        for (const [a, b] of t.tunnels) {
+          expect(a).toBeGreaterThan(t.visibleFrom);
+          expect(b).toBeLessThan(t.length * 0.72 + 1);
+          expect(b - a).toBeGreaterThanOrEqual(BALL_D * 4 - 1);
+          expect(inTunnel(t, (a + b) / 2)).toBe(true);
+          for (const [h0, h1] of [...(t.hidden ?? []), ...(t.bridges ?? [])]) expect(b < h0 || a > h1).toBe(true);
+        }
+        for (let k = 1; k < t.tunnels.length; k++) expect(t.tunnels[k][0]).toBeGreaterThan(t.tunnels[k - 1][1]);
+      });
+    }
+    expect(fams.size).toBeGreaterThanOrEqual(10);
   });
 
   it('tunnel spirals run the tunnel under the rings (the earlier pass is hidden)', () => {
@@ -499,11 +521,11 @@ describe('generator stability (golden)', () => {
     const h = createHash('sha1');
     for (let i = 0; i < 40; i++) {
       const l = generateLevel('jade-1234', i);
-      h.update(JSON.stringify([l.paths, l.colors, l.speed, l.target, l.mutators, l.repeatChance]));
+      h.update(JSON.stringify([l.paths, l.colors, l.speed, l.target, l.mutators, l.repeatChance, l.tracks.map((t) => t.tunnels ?? [])]));
     }
     // If this changes, every saved campaign and shared level code changes too:
     // bump GEN_VERSION (saves then drop stale mid-level snapshots) and update the hash.
-    expect(h.digest('hex').slice(0, 12)).toBe('5582659c5f0d');
+    expect(h.digest('hex').slice(0, 12)).toBe('8363e298e4b3');
   });
 
   it('large-marble campaigns use a smaller board with valid, varied tracks', () => {

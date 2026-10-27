@@ -471,6 +471,8 @@ export class Renderer {
         this.drawBall(b, pos, v, rot, tr);
       }
     });
+    // Tunnels cover the marbles rolling through them.
+    for (const tr of lvl.tracks) for (const [a, c] of tr.tunnels ?? []) this.drawTunnel(tr, a, c);
     // Bridges, then the marbles crossing them.
     lvl.tracks.forEach((tr, ti) => {
       if (!tr.bridges) return;
@@ -697,6 +699,56 @@ export class Renderer {
     g.strokeStyle = `hsla(${hue}, 80%, 75%, 0.3)`;
     g.lineWidth = 2;
     g.stroke(path);
+    g.restore();
+  }
+
+  /** A rocky tunnel over the track from s0 to s1, with a dark mouth at each end. */
+  private drawTunnel(tr: Track, s0: number, s1: number) {
+    const g = this.ctx;
+    const path = new Path2D();
+    const p0 = pointAt(tr, s0);
+    path.moveTo(p0.x, p0.y);
+    for (let s = s0 + 4; s <= s1; s += 4) {
+      const p = pointAt(tr, s);
+      path.lineTo(p.x, p.y);
+    }
+    g.save();
+    g.lineCap = 'round';
+    g.lineJoin = 'round';
+    g.translate(4, 7);
+    g.strokeStyle = 'rgba(0,0,0,0.5)';
+    g.lineWidth = BALL_D + 24;
+    g.stroke(path);
+    g.translate(-4, -7);
+    g.strokeStyle = '#6b5a48';
+    g.lineWidth = BALL_D + 20;
+    g.stroke(path);
+    g.strokeStyle = '#3a2e24';
+    g.lineWidth = BALL_D + 12;
+    g.stroke(path);
+    g.setLineDash([5, 11]);
+    g.strokeStyle = 'rgba(160,135,105,0.45)';
+    g.lineWidth = 4;
+    g.stroke(path);
+    g.setLineDash([]);
+    // Mouths: a dark opening facing along the track at each end
+    for (const [s, dir] of [[s0, -1], [s1, 1]] as const) {
+      const p = pointAt(tr, s);
+      const t = tangentAt(tr, s);
+      g.save();
+      g.translate(p.x, p.y);
+      g.rotate(Math.atan2(t.y, t.x) + (dir < 0 ? Math.PI : 0));
+      g.fillStyle = '#050403';
+      g.beginPath();
+      g.ellipse(2, 0, BALL_R * 0.55, BALL_R * 1.15, 0, -Math.PI / 2, Math.PI / 2);
+      g.fill();
+      g.strokeStyle = '#8a765f';
+      g.lineWidth = 3;
+      g.beginPath();
+      g.ellipse(2, 0, BALL_R * 0.55, BALL_R * 1.15, 0, -Math.PI / 2, Math.PI / 2);
+      g.stroke();
+      g.restore();
+    }
     g.restore();
   }
 

@@ -19,13 +19,13 @@ export interface Track {
   hidden?: [number, number][];
   /** Arc ranges [s0, s1] that form a bridge over another part of the track (drawn on top). */
   bridges?: [number, number][];
+  /** Arc ranges [s0, s1] covered by a standalone tunnel: marbles there are hidden and can't be hit. */
+  tunnels?: [number, number][];
 }
 
-/** Is arc distance s under a bridge (hidden)? */
+/** Is arc distance s hidden (under a bridge or in a tunnel)? */
 export function inTunnel(track: Track, s: number): boolean {
-  const h = track.hidden;
-  if (!h) return false;
-  for (const [a, b] of h) if (s > a && s < b) return true;
+  for (const h of [track.hidden, track.tunnels]) if (h) for (const [a, b] of h) if (s > a && s < b) return true;
   return false;
 }
 

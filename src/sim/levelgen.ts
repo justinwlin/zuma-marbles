@@ -10,7 +10,7 @@ import { hash32, Rng } from './rng';
 import { buildTrack, chaikin, type Pt, type Track, TRACK_STEP } from './track';
 
 /** Bump when generated levels change; saves made with an older generator drop their mid-level snapshot. */
-export const GEN_VERSION = 6;
+export const GEN_VERSION = 7;
 
 export const WORLD_W = 1280;
 export const WORLD_H = 720;
@@ -334,6 +334,8 @@ export function generateLevel(campaignSeed: string, index: number): Level {
   const name = `${rng.pick(NAMES_A)} ${rng.pick(NAMES_B[family])}`;
   const tracks = cand.paths.map((p) => buildTrack(p, { w: GW, h: GH }));
   if (cand.crossings) addCrossings(tracks[0], cand.crossings, rng, cand.under ?? 'random');
+  // Own rng stream, so adding tunnels leaves every other part of the level unchanged.
+  if (!cand.rail && index >= 2) addTunnels(tracks, new Rng(seed ^ 0x7a11e1), index);
   const off = !cand.rail && Math.hypot(cand.launcher.x - GW / 2, cand.launcher.y - GH / 2) > 90 * ks;
   const target = Math.round(diff.target);
   // Boss health ≈ marbles to pop, a bit under a normal bar (direct hits and combos add up).
@@ -877,6 +879,32 @@ export function validateLevel(paths: Pt[][], launcher: Pt, twin: boolean, world?
  * Mark a crossing as a bridge + tunnel: find the two passes through the crossing point;
  * one (chosen by the level's rng) runs under, hidden over a short stretch, the other is the bridge.
  */
+/**
+ * Standalone tunnels on any track shape: 1-2 covered stretches of 4-7 marbles in the middle
+ * of the track. Kept clear of the entry, the last quarter (the danger zone stays visible),
+ * bridges, and each other.
+ */
+function addTunnels(tracks: Track[], rng: Rng, index: number) {
+  for (const tr of tracks) {
+    if (!rng.chance(index < 6 ? 0.35 : 0.5)) continue;
+    const taken = [...(tr.hidden ?? []), ...(tr.bridges ?? [])];
+    const lo = tr.visibleFrom + (tr.length - tr.visibleFrom) * 0.15;
+    const hi = tr.length * 0.72;
+    const want = rng.chance(0.35) ? 2 : 1;
+    const tunnels: [number, number][] = [];
+    for (let k = 0; k < 12 && tunnels.length < want; k++) {
+      const len = BALL_D * rng.range(4, 7);
+      const s0 = rng.range(lo, hi - len);
+      if (s0 < lo) break;
+      const s1 = s0 + len;
+      const pad = BALL_D * 4;
+      if ([...taken, ...tunnels].some(([a, b]) => s0 < b + pad && s1 > a - pad)) continue;
+      tunnels.push([q(s0), q(s1)]);
+    }
+    if (tunnels.length) tr.tunnels = tunnels.sort((a, b) => a[0] - b[0]);
+  }
+}
+
 function addCrossings(track: Track, crossings: Pt[], rng: Rng, mode: 'first' | 'random') {
   const hidden: [number, number][] = [];
   const bridges: [number, number][] = [];
