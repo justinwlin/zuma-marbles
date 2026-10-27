@@ -31,9 +31,12 @@
         </button>
         <button id="btn-help" class="icon-btn" aria-label="Power-ups and tips">?</button>
         <div class="lvl"><b id="hud-level">Level 1</b><small id="hud-name"></small></div>
-        <div class="bar" aria-label="Level progress">
-          <div class="bar-fill" id="hud-bar"></div>
-          <span class="bar-label" id="hud-bar-label">ZUMA</span>
+        <div class="bar-wrap">
+          <div class="bar" aria-label="Level progress">
+            <div class="bar-fill" id="hud-bar"></div>
+            <span class="bar-label" id="hud-bar-label">ZUMA</span>
+          </div>
+          <div class="ace-chip" id="hud-ace" title="Finish before the ace time for a bonus"></div>
         </div>
         <button id="hud-next" class="next-chip" aria-label="Swap marbles (Space or right-click)" title="Swap: Space or right-click">
           <span class="dot big" id="next-cur"></span><span class="dot" id="next-next"></span>

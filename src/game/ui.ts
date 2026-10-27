@@ -6,7 +6,7 @@ import { POWER_NAMES, type GameState, progress, type Power, WILD } from '../sim/
 import type { Level } from '../sim/levelgen';
 import { PALETTE, powerIconUrl } from './render';
 import { CHARACTERS, characterThumb, type CharacterId } from './characters';
-import { TUNING } from '../sim/game';
+import { TICK_HZ, TUNING } from '../sim/game';
 import { dailySeed, type EndlessRun, levelCode, type SaveData, type Settings } from './save';
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -465,6 +465,7 @@ export class UI {
 
   private lastScore = -1;
   private lastPowers = '';
+  private lastAce = '';
   private lastGun = [-1, -1];
   updateHud(st: GameState, level: Level, run: EndlessRun | null = null) {
     $('hud-level').textContent = `${run ? 'Stage' : 'Level'} ${level.index + 1}`;
@@ -477,6 +478,17 @@ export class UI {
     bar.classList.toggle('full', st.barFull);
     bar.classList.toggle('boss', !!st.boss);
     $('hud-bar-label').textContent = st.boss ? (st.boss.dead ? 'DEFEATED!' : `${level.bossFight?.kind === 'serpent' ? 'SERPENT' : 'BOSS'} ${st.boss.hp}`) : st.barFull ? 'CLEAR!' : 'ZUMA';
+    // Ace time: counts down, then shows the result once the level is won.
+    const left = level.ace - st.tick / TICK_HZ;
+    const [cls, text] = st.bonus
+      ? st.bonus.ace ? ['got', 'ACE TIME!'] : ['missed', 'ACE MISSED']
+      : left <= 0 ? ['missed', 'ACE MISSED'] : [left <= 10 ? 'close' : '', `ACE ${mm2(Math.ceil(left))}`];
+    if (cls + text !== this.lastAce) {
+      this.lastAce = cls + text;
+      const el = $('hud-ace');
+      el.className = `ace-chip ${cls}`;
+      el.textContent = text;
+    }
     if (score !== this.lastScore) {
       const el = $('hud-score');
       el.textContent = score.toLocaleString();
@@ -518,6 +530,7 @@ export class UI {
     this.lastGun = [-1, -1];
     this.lastScore = -1;
     this.lastPowers = '';
+    this.lastAce = '';
   }
 }
 

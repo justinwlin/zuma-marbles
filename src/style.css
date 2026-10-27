@@ -42,10 +42,22 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
 .lvl { display: flex; flex-direction: column; line-height: 1.05; min-width: 0; }
 .lvl b { font-size: 17px; font-weight: 800; letter-spacing: .3px; }
 .lvl small { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 30vw; }
+.bar-wrap { position: relative; flex: 1; max-width: 520px; margin: 0 auto; }
 .bar {
-  position: relative; flex: 1; height: 16px; border-radius: 99px; overflow: hidden;
-  background: rgba(0,0,0,0.45); border: 1px solid var(--line); max-width: 520px; margin: 0 auto;
+  position: relative; height: 16px; border-radius: 99px; overflow: hidden;
+  background: rgba(0,0,0,0.45); border: 1px solid var(--line);
 }
+/* Ace time countdown, hanging under the bar */
+.ace-chip {
+  position: absolute; top: calc(100% + 4px); left: 50%; transform: translateX(-50%);
+  padding: 2px 10px; border-radius: 99px; white-space: nowrap;
+  font-size: 12px; font-weight: 900; letter-spacing: 1px; font-variant-numeric: tabular-nums;
+  color: #7dffcf; background: rgba(0,0,0,0.55); border: 1px solid rgba(125,255,207,0.45);
+}
+.ace-chip:empty { display: none; }
+.ace-chip.close { color: #ffc850; border-color: rgba(255,200,80,0.6); animation: power-end .5s ease-in-out infinite alternate; }
+.ace-chip.missed { color: rgba(255,255,255,0.45); border-color: var(--line); }
+.ace-chip.got { color: #ffd86b; border-color: rgba(255,216,107,0.7); }
 .bar-fill {
   position: absolute; inset: 0; transform-origin: left; transform: scaleX(0);
   background: linear-gradient(90deg, #ffbe1f, #ffd86b 60%, #fff3c4);
@@ -87,7 +99,7 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
 .dot.big { width: 38px; height: 38px; }
 @media (orientation: landscape) and (pointer: fine) {
   .swap-btn { display: none; }
-  .hud-bottom { top: calc(var(--sat) + 58px); bottom: auto; justify-content: center; padding-top: 0; }
+  .hud-bottom { top: calc(var(--sat) + 72px); bottom: auto; justify-content: center; padding-top: 0; }
   /* Desktop: active power-ups are big, coloured, and show seconds left */
   .powers { gap: 14px; }
   .power { width: 84px; height: 84px; display: flex; flex-direction: column; justify-content: center; gap: 0; color: var(--pc); border-color: var(--pc); box-shadow: 0 0 22px color-mix(in srgb, var(--pc) 45%, transparent); }
