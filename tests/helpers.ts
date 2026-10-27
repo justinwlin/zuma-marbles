@@ -1,10 +1,11 @@
 import { BALL_D, generateLevel, type Level } from '../src/sim/levelgen';
 import { type Ball, type Command, createGame, type GameEvent, type GameState, step, TICK_HZ, Power } from '../src/sim/game';
 import { pointAt } from '../src/sim/track';
+import { type Mods, NO_MODS } from '../src/sim/items';
 
-export function frozenGame(colors: number[], opts: { campaign?: string; index?: number; headGap?: number } = {}) {
+export function frozenGame(colors: number[], opts: { campaign?: string; index?: number; headGap?: number; mods?: Partial<Mods> } = {}) {
   const level = generateLevel(opts.campaign ?? 'test', opts.index ?? 0);
-  const st = createGame(level);
+  const st = createGame(level, { ...NO_MODS, ...opts.mods });
   st.spawning = false;
   const ch = st.chains[0];
   ch.rolling = false;

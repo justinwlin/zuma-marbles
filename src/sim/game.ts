@@ -8,6 +8,7 @@
 // per-second units at our ball radius (r=18, ×1.125).
 
 import { BALL_D, BALL_R, type Level, type Rail } from './levelgen';
+import { COINS, type CoinLedger, type CoinSource, emptyLedger, type Mods, NO_MODS } from './items';
 import { next as rngNext } from './rng';
 import { inTunnel, pointAt, type Pt, tangentAt, type Track } from './track';
 
@@ -142,6 +143,8 @@ export interface Shot {
   gaps: number[]; // ids of balls whose gaps we flew through
   minGap: number;
   w?: 1;
+  /** Pocket Bomb: explodes where it lands instead of joining the chain. */
+  b?: 1;
 }
 
 /** A scorpion running back along chain ci from the skull, eating the front marbles. */
@@ -214,8 +217,8 @@ export interface GameState {
   /** Part of the score that doesn't fill the bar (coins, end-of-level bonuses). */
   extra: number;
   streak: number; // consecutive matching shots
-  /** w: wild bits (1 = current marble is wild, 2 = next). */
-  gun: { cur: number; next: number; cool: number; w: number };
+  /** w: wild bits (1 = current marble is wild, 2 = next); b: Pocket Bomb bits, same layout; after: Colour Scout's third marble. */
+  gun: { cur: number; next: number; cool: number; w: number; b: number; after: number };
   /** Rail levels: frog position u along the rail, target tu, queued shot, stun time. */
   rail: { u: number; tu: number; q: boolean; stun: number } | null;
   boss: BossState | null;
@@ -240,6 +243,12 @@ export interface GameState {
     coins: number;
     bossHits: number;
   };
+  /** Expedition items in effect (neutral outside Expedition). */
+  mods: Mods;
+  /** Coins earned this level (Expedition currency, separate from score). */
+  coinsEarned: CoinLedger;
+  /** Extra Life rescues left this level. */
+  lives: number;
 }
 
 /** move: rail levels only — slide the frog toward the point's spot on the rail. */
@@ -268,6 +277,7 @@ export type GameEvent =
   | { type: 'bossWindup' }
   | { type: 'bossAttack'; x: number; y: number; tx: number; ty: number }
   | { type: 'swallow'; x: number; y: number }
+  | { type: 'rescue'; x: number; y: number }
   | { type: 'choke'; x: number; y: number; at: { x: number; y: number; power: Power }[] }
   | { type: 'spit'; x: number; y: number; tx: number; ty: number; c: number }
   | { type: 'stun'; x: number; y: number }
@@ -277,7 +287,7 @@ export type GameEvent =
 
 // ------------------------------------------------------------------ setup
 
-export function createGame(level: Level): GameState {
+export function createGame(level: Level, mods: Mods = NO_MODS): GameState {
   const st: GameState = {
     v: 2,
     campaignSeed: level.campaignSeed,
@@ -296,28 +306,32 @@ export function createGame(level: Level): GameState {
     score: 0,
     extra: 0,
     streak: 0,
-    gun: { cur: 0, next: 0, cool: 0.6, w: 0 },
+    gun: { cur: 0, next: 0, cool: 0.6, w: 0, b: mods.pocketBomb ? 1 : 0, after: -1 },
     rail: level.rail ? { u: level.rail.len / 2, tu: level.rail.len / 2, q: false, stun: 0 } : null,
     boss: level.bossFight
       ? { hp: level.bossFight.hp, max: level.bossFight.hp, t: level.bossFight.kind === 'serpent' ? TUNING.serpentFirst : TUNING.bossFirstAttack, wind: 0, hitT: 0, dead: false, n: 0, spitC: 0, shots: [] }
       : null,
     scorps: [],
     coin: null,
-    coinT: TUNING.coinFirst,
+    coinT: TUNING.coinFirst / mods.coinSpawnMul,
     rngBonus: level.seed ^ 0x3c3c3c3c,
     cascade: false,
     bonus: null,
     loseV: 0,
     stats: { shots: 0, matches: 0, popped: 0, maxCombo: 0, maxStreak: 0, gapShots: 0, powers: 0, misses: 0, coins: 0, bossHits: 0 },
+    mods: { ...mods },
+    coinsEarned: emptyLedger(),
+    lives: mods.lives,
   };
   // Roll-in: choose an initial speed that decelerates to cruise after covering rollIn × length.
-  const v = level.speed;
+  const v = cruise(st, level);
   for (const tr of level.tracks) {
     const dist = tr.visibleFrom + (tr.length - tr.visibleFrom) * TUNING.rollIn;
     st.chains.push({ balls: [], pending: [], speed: Math.sqrt(v * v + 2 * TUNING.decel * dist), rolling: true, stopT: 0, lastColor: -1, peak: 0 });
   }
   st.gun.cur = randColor(st, level, 'gun');
   st.gun.next = randColor(st, level, 'gun');
+  if (mods.scout) st.gun.after = randColor(st, level, 'gun');
   return st;
 }
 
@@ -377,6 +391,17 @@ function randColor(st: GameState, level: Level, stream: 'chain' | 'gun', ch?: Ch
 
 function newBall(st: GameState, c: number, s: number): Ball {
   return { id: st.nextId++, c, s, p: Power.None, pt: 0, g: 1, ins: 1, ix: 0, iy: 0, clr: -1, combo: 0, suck: 0, rt: 0, rv: 0, gb: 0 };
+}
+
+/** Cruise speed with items applied. */
+function cruise(st: GameState, level: Level): number {
+  return level.speed * st.mods.speedMul;
+}
+
+/** Expedition coins: add to this level's ledger. */
+function earn(st: GameState, src: CoinSource, n: number) {
+  st.coinsEarned.by[src] += n;
+  st.coinsEarned.total += n;
 }
 
 const easeOut = (t: number) => 1 - (1 - t) * (1 - t);
@@ -449,7 +474,23 @@ export function step(st: GameState, level: Level, cmds: readonly Command[] = [])
     const n = ch.balls.length;
     return n > 0 && ch.balls[n - 1].s >= level.tracks[ci].length && !ch.balls.some((b) => b.clr >= 0 || b.suck > 0 || b.ins < 1);
   });
-  if (lostChain) {
+  if (lostChain && st.lives > 0) {
+    // Extra Life: every chain is pushed back a quarter of its track instead.
+    st.lives--;
+    st.chains.forEach((ch, ci) => {
+      const shift = level.tracks[ci].length * 0.25;
+      const keep: Ball[] = [];
+      for (const b of ch.balls) {
+        b.s -= shift;
+        if (b.s >= 0) keep.push(b);
+        else ch.pending.push(b.c);
+      }
+      ch.balls = keep;
+      ch.stopT = Math.max(ch.stopT, 1);
+    });
+    pointAt(level.tracks[st.chains.indexOf(lostChain)], level.tracks[st.chains.indexOf(lostChain)].length, tmp);
+    ev.push({ type: 'rescue', x: tmp.x, y: tmp.y });
+  } else if (lostChain) {
     st.phase = 'losing';
     st.loseV = Math.max(lostChain.speed, 200);
     st.shots.length = 0;
@@ -485,6 +526,9 @@ function awardBonus(st: GameState, level: Level) {
   const sweep = pct * TUNING.sweepPerPct;
   const ace = seconds <= level.ace ? TUNING.aceBonus : 0;
   st.bonus = { sweep, ace, seconds, from };
+  if (ace) earn(st, 'ace', COINS.ace);
+  if (st.chains.every((ch, ci) => ch.peak <= level.tracks[ci].length * 0.5)) earn(st, 'clean', COINS.clean);
+  if (level.boss) earn(st, 'boss', COINS.boss);
   st.score += sweep + ace;
   st.extra += sweep + ace;
   return st.bonus;
@@ -498,11 +542,14 @@ function applyCommand(st: GameState, level: Level, cmd: Command, ev: GameEvent[]
   if (cmd.type === 'swap') {
     const wc = st.gun.w & 1;
     const wn = (st.gun.w >> 1) & 1;
-    if (st.gun.cur !== st.gun.next || wc !== wn) {
+    const bc = st.gun.b & 1;
+    const bn = (st.gun.b >> 1) & 1;
+    if (st.gun.cur !== st.gun.next || wc !== wn || bc !== bn) {
       const t = st.gun.cur;
       st.gun.cur = st.gun.next;
       st.gun.next = t;
       st.gun.w = (wc << 1) | wn;
+      st.gun.b = (bc << 1) | bn;
       ev.push({ type: 'swap' });
     }
     return;
@@ -525,8 +572,9 @@ function applyCommand(st: GameState, level: Level, cmd: Command, ev: GameEvent[]
 }
 
 function fireShot(st: GameState, level: Level, lx: number, ly: number, dx: number, dy: number, ev: GameEvent[]) {
-  const speed = TUNING.shotSpeed;
+  const speed = TUNING.shotSpeed * st.mods.shotSpeedMul;
   const wild = (st.gun.w & 1) === 1;
+  const bomb = (st.gun.b & 1) === 1;
   const sh: Shot = {
     id: st.nextId++,
     c: st.gun.cur,
@@ -538,12 +586,20 @@ function fireShot(st: GameState, level: Level, lx: number, ly: number, dx: numbe
     minGap: 1e9,
   };
   if (wild) sh.w = 1;
+  if (bomb) sh.b = 1;
   st.shots.push(sh);
   st.stats.shots++;
   ev.push({ type: 'fire', x: lx, y: ly, dx, dy, c: wild ? WILD : st.gun.cur });
   st.gun.cur = st.gun.next;
   st.gun.w >>= 1;
-  st.gun.next = randColor(st, level, 'gun');
+  st.gun.b >>= 1;
+  if (st.mods.scout) {
+    st.gun.next = st.gun.after;
+    st.gun.after = randColor(st, level, 'gun');
+  } else st.gun.next = randColor(st, level, 'gun');
+  // Rainbow: every Nth shot is Wild (shown on the marble before it's fired).
+  const N = st.mods.wildEvery;
+  if (N > 0 && (st.stats.shots + 1) % N === 0) st.gun.w |= 1;
   st.gun.cool = TUNING.cooldown;
 }
 
@@ -662,7 +718,7 @@ function stepSerpent(st: GameState, level: Level, b: BossState, ev: GameEvent[])
   b.t -= DT;
   if (b.t > 0) return;
   b.t = (angry ? TUNING.serpentEvery2 : TUNING.serpentEvery) * (0.8 + 0.4 * rand(st, 'bonus'));
-  b.wind = TUNING.serpentWindup;
+  b.wind = TUNING.serpentWindup + st.mods.serpentWindupAdd;
   b.spitC = Math.floor(rand(st, 'bonus') * level.colors);
   ev.push({ type: 'bossWindup' });
 }
@@ -712,10 +768,10 @@ function serpentChoke(st: GameState, level: Level, ev: GameEvent[]) {
     cands.push(b);
   }
   const at: { x: number; y: number; power: Power }[] = [];
-  for (let n = 3 + Math.floor(rand(st, 'bonus') * 3); n > 0 && cands.length; n--) {
+  for (let n = 3 + Math.floor(rand(st, 'bonus') * 3) + st.mods.chokeExtra; n > 0 && cands.length; n--) {
     const b = cands.splice(Math.floor(rand(st, 'bonus') * cands.length), 1)[0];
     b.p = (1 + Math.floor(rand(st, 'bonus') * POWER_COUNT)) as Power;
-    b.pt = TUNING.powerLife;
+    b.pt = TUNING.powerLife * st.mods.powerLifeMul;
     pointAt(tr, b.s, tmpL);
     at.push({ x: tmpL.x, y: tmpL.y, power: b.p });
   }
@@ -798,7 +854,7 @@ function stepCoin(st: GameState, level: Level, ev: GameEvent[]) {
   if (isRolling(st) || st.barFull || st.cascade) return;
   st.coinT -= DT;
   if (st.coinT > 0) return;
-  st.coinT = TUNING.coinEvery + rand(st, 'bonus') * TUNING.coinJitter;
+  st.coinT = (TUNING.coinEvery + rand(st, 'bonus') * TUNING.coinJitter) / st.mods.coinSpawnMul;
   const p = coinSpot(st, level);
   if (!p) return;
   st.coin = { x: p.x, y: p.y, t: TUNING.coinLife };
@@ -848,6 +904,7 @@ function rerollGun(st: GameState, level: Level) {
   const mask = presentMask(st);
   if (!(mask & (1 << st.gun.cur))) st.gun.cur = randColor(st, level, 'gun');
   if (!(mask & (1 << st.gun.next))) st.gun.next = randColor(st, level, 'gun');
+  if (st.mods.scout && !(mask & (1 << st.gun.after))) st.gun.after = randColor(st, level, 'gun');
 }
 
 // ------------------------------------------------------------------ shots
@@ -947,6 +1004,7 @@ function stepShots(st: GameState, level: Level, ev: GameEvent[]) {
           st.score += TUNING.coinValue;
           st.extra += TUNING.coinValue;
           st.stats.coins++;
+          earn(st, 'floating', COINS.floating);
           ev.push({ type: 'coinGet', x: coin.x, y: coin.y, score: TUNING.coinValue });
         }
       }
@@ -973,7 +1031,7 @@ function stepShots(st: GameState, level: Level, ev: GameEvent[]) {
       } else if (bossHit) {
         // Serpent: only hittable while it rears up to spit. The hit chokes it: no spit, big damage, a power-up.
         const choke = B!.kind === 'serpent';
-        const dmg = choke ? TUNING.serpentChoke : TUNING.bossDirectHit;
+        const dmg = (choke ? TUNING.serpentChoke : TUNING.bossDirectHit) * st.mods.bossDirectMul;
         damageBoss(st, dmg);
         st.stats.bossHits++;
         ev.push({ type: 'bossHit', x: sh.x, y: sh.y, dmg });
@@ -999,6 +1057,13 @@ export function insertInFront(track: Track, ball: Ball, x: number, y: number): b
 }
 
 function insertShot(st: GameState, level: Level, sh: Shot, ci: number, hitIdx: number, ev: GameEvent[]) {
+  if (sh.b) {
+    // Pocket Bomb: it blows up where it lands instead of joining the chain.
+    ev.push({ type: 'power', power: Power.Bomb, x: sh.x, y: sh.y, c: sh.c });
+    st.stats.powers++;
+    blast(st, level, sh.x, sh.y, 0, ev);
+    return;
+  }
   const balls = st.chains[ci].balls;
   const hit = balls[hitIdx];
   const front = insertInFront(level.tracks[ci], hit, sh.x, sh.y);
@@ -1047,7 +1112,7 @@ function stepChain(st: GameState, level: Level, ci: number, ev: GameEvent[]) {
   const L = track.length;
 
   // Target pusher speed: cruise, slowed by danger zone and the Slow power-up.
-  let target = level.speed;
+  let target = cruise(st, level);
   // The danger slowdown keys on the end of the chain connected to the pusher.
   let firstEnd = 0;
   for (let i = 0; i < balls.length; i++) {
@@ -1238,14 +1303,18 @@ function checkMatch(st: GameState, level: Level, ci: number, i: number, combo: n
   const popped: { x: number; y: number; c: number; p: Power }[] = [];
   let sx = 0;
   let sy = 0;
-  for (let k = lo; k <= hi; k++) {
-    startClear(st, level, ci, balls[k], combo, ev);
+  if (combo > 0) earn(st, 'combos', COINS.comboStep * combo * st.mods.comboCoinMul);
+  // Shockwave: big matches (5+) also pop the marble on each side.
+  const extra = st.mods.shockwave && n >= 5 ? [lo - 1, hi + 1].filter((k) => balls[k] && hittable(balls[k], track)) : [];
+  for (const k of [...extra, ...Array.from({ length: n }, (_, j) => lo + j)]) {
     pointAt(track, balls[k].s, tmp);
     popped.push({ x: tmp.x, y: tmp.y, c: balls[k].c, p: balls[k].p });
+    startClear(st, level, ci, balls[k], combo, ev);
     sx += tmp.x;
     sy += tmp.y;
   }
-  ev.push({ type: 'pop', balls: popped, combo, score, x: sx / n, y: sy / n, c: b.c, gapBonus: gb, chainBonus });
+  st.score += 10 * extra.length;
+  ev.push({ type: 'pop', balls: popped, combo, score, x: sx / popped.length, y: sy / popped.length, c: b.c, gapBonus: gb, chainBonus });
   return true;
 }
 
@@ -1256,7 +1325,14 @@ function startClear(st: GameState, level: Level, ci: number, b: Ball, combo: num
   b.suck = 0;
   st.stats.popped++;
   // Boss fights: every popped marble hurts the boss (combos more).
-  if (!st.cascade) damageBoss(st, 1 + combo);
+  if (!st.cascade) {
+    damageBoss(st, 1 + combo);
+    // Coins for marbles the player popped (the boss-defeat cascade pays nothing).
+    let c = COINS.pop;
+    if (b.c === st.mods.luckyColor) c *= COINS.lucky;
+    if (st.mods.dangerCoinMul !== 1 && headProgress(st, level) > COINS.dangerFrac) c *= st.mods.dangerCoinMul;
+    earn(st, 'pops', c);
+  }
   if (b.p !== Power.None) activatePower(st, level, ci, b, ev);
 }
 
@@ -1285,27 +1361,52 @@ function activatePower(st: GameState, level: Level, ci: number, b: Ball, ev: Gam
         startClear(st, level, oc, o, b.combo, ev);
       }
     }
-    st.score += 10 * zaps.length;
-    pev.zaps = zaps;
-  } else if (p === Power.Bomb) {
-    const r2 = TUNING.bombRadius * TUNING.bombRadius;
-    let n = 0;
-    // The blast hits marbles on every track in range.
-    for (let oc = 0; oc < st.chains.length; oc++) {
-      const tr = level.tracks[oc];
-      for (const o of st.chains[oc].balls) {
-        if (o.clr >= 0 || o.s < tr.visibleFrom || inTunnel(tr, o.s)) continue;
-        pointAt(tr, o.s, tmp);
-        const dx = tmp.x - bx;
-        const dy = tmp.y - by;
-        if (dx * dx + dy * dy < r2) {
-          startClear(st, level, oc, o, b.combo, ev);
-          n++;
+    // Lightning Rod: a second colour is struck too, in the front half of each track.
+    if (st.mods.lightningRod) {
+      let mask = 0;
+      st.chains.forEach((ch, oc) => {
+        const tr = level.tracks[oc];
+        for (const o of ch.balls) if (o.clr < 0 && o.c !== b.c && o.s > tr.length * 0.5 && !inTunnel(tr, o.s)) mask |= 1 << o.c;
+      });
+      const cols: number[] = [];
+      for (let c = 0; c < 8; c++) if (mask & (1 << c)) cols.push(c);
+      if (cols.length) {
+        const c2 = cols[Math.floor(rand(st, 'bonus') * cols.length)];
+        for (let oc = 0; oc < st.chains.length; oc++) {
+          const tr = level.tracks[oc];
+          for (const o of st.chains[oc].balls) {
+            if (o.clr >= 0 || o.c !== c2 || o.s <= tr.length * 0.5 || inTunnel(tr, o.s)) continue;
+            pointAt(tr, o.s, tmp);
+            zaps.push({ x: tmp.x, y: tmp.y });
+            startClear(st, level, oc, o, b.combo, ev);
+          }
         }
       }
     }
-    st.score += 10 * n;
+    st.score += 10 * zaps.length;
+    pev.zaps = zaps;
+  } else if (p === Power.Bomb) blast(st, level, bx, by, b.combo, ev);
+}
+
+/** Bomb blast at (x, y): pops every visible marble in range, on every track. */
+function blast(st: GameState, level: Level, x: number, y: number, combo: number, ev: GameEvent[]) {
+  const R = TUNING.bombRadius * st.mods.bombRadiusMul;
+  const r2 = R * R;
+  let n = 0;
+  for (let oc = 0; oc < st.chains.length; oc++) {
+    const tr = level.tracks[oc];
+    for (const o of st.chains[oc].balls) {
+      if (o.clr >= 0 || o.s < tr.visibleFrom || inTunnel(tr, o.s)) continue;
+      pointAt(tr, o.s, tmp);
+      const dx = tmp.x - x;
+      const dy = tmp.y - y;
+      if (dx * dx + dy * dy < r2) {
+        startClear(st, level, oc, o, combo, ev);
+        n++;
+      }
+    }
   }
+  st.score += 10 * n;
 }
 
 function stepClearing(st: GameState, level: Level, ci: number, ev: GameEvent[]) {
@@ -1335,7 +1436,7 @@ function stepClearing(st: GameState, level: Level, ci: number, ev: GameEvent[]) 
 function maybeSpawnPower(st: GameState, level: Level) {
   if (!st.spawning || ballCount(st) < 8) return;
   // Expected one power-up every ~(1/powerChance) seconds.
-  if (rand(st, 'chain') >= level.powerChance * DT * 2) return;
+  if (rand(st, 'chain') >= level.powerChance * st.mods.powerChanceMul * DT * 2) return;
   const cands: Ball[] = [];
   st.chains.forEach((ch, ci) => {
     const balls = ch.balls;
@@ -1349,7 +1450,7 @@ function maybeSpawnPower(st: GameState, level: Level) {
   if (!cands.length) return;
   const b = cands[Math.floor(rand(st, 'chain') * cands.length)];
   b.p = (1 + Math.floor(rand(st, 'chain') * POWER_COUNT)) as Power;
-  b.pt = TUNING.powerLife;
+  b.pt = TUNING.powerLife * st.mods.powerLifeMul;
 }
 
 function stepLosing(st: GameState, level: Level, ev: GameEvent[]) {
@@ -1437,7 +1538,14 @@ export function snapshot(st: GameState): string {
 }
 
 export function restore(json: string): GameState {
-  return JSON.parse(json) as GameState;
+  const st = JSON.parse(json) as GameState;
+  // Snapshots saved before Expedition items existed.
+  st.mods = { ...NO_MODS, ...st.mods };
+  st.coinsEarned ??= emptyLedger();
+  st.lives ??= 0;
+  st.gun.b ??= 0;
+  st.gun.after ??= -1;
+  return st;
 }
 
 /** Order-sensitive hash of the full state, for determinism tests. */
