@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+    <meta name="theme-color" content="#07111d" />
+    <meta name="description" content="A Zuma-style marble shooter. Infinite generated levels, plays offline on phone and desktop." />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Zuma Marbles" />
+    <link rel="icon" href="./icons/icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="./icons/apple-touch-icon.png" />
+    <title>Zuma Marbles</title>
+    <!-- Link previews (iMessage, Instagram, WhatsApp, Slack, X). Image URLs must be absolute. Regenerate the card with scripts/og-image.ts. -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Zuma Marbles" />
+    <meta property="og:title" content="Zuma Marbles" />
+    <meta property="og:description" content="Pop marbles, chain combos and beat the serpent. Free, plays in your browser, no download." />
+    <meta property="og:url" content="https://justinwlin.github.io/zuma-marbles/" />
+    <meta property="og:image" content="https://justinwlin.github.io/zuma-marbles/og.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="Zuma Marbles: a chain of coloured marbles rolling toward a skull, with the frog shooter in the middle" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Zuma Marbles" />
+    <meta name="twitter:description" content="Pop marbles, chain combos and beat the serpent. Free, plays in your browser." />
+    <meta name="twitter:image" content="https://justinwlin.github.io/zuma-marbles/og.png" />
+    <script type="module" crossorigin src="./assets/index-rYaXcGsy.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-CfKjajvV.css">
+  <link rel="manifest" href="./manifest.webmanifest"></head>
+  <body>
+    <div id="stage">
+      <canvas id="game" aria-label="Game board"></canvas>
+      <!-- iOS only: an invisible switch under the finger. Safari gives a haptic tick when a real
+           tap toggles a switch (scripted toggles are ignored since iOS 26). -->
+      <label id="tapzone" class="tapzone hidden" aria-hidden="true"><input type="checkbox" switch tabindex="-1" /></label>
+    </div>
+
+    <div id="hud" class="hidden">
+      <div class="hud-top">
+        <button id="btn-pause" class="icon-btn" aria-label="Pause">
+          <svg viewBox="0 0 24 24" width="22" height="22"><rect x="6" y="5" width="4" height="14" rx="1.5" fill="currentColor"/><rect x="14" y="5" width="4" height="14" rx="1.5" fill="currentColor"/></svg>
+        </button>
+        <button id="btn-settings" class="icon-btn" aria-label="Settings">
+          <svg viewBox="0 0 24 24" width="21" height="21"><path fill="currentColor" d="M19.4 13a7.6 7.6 0 0 0 0-2l2-1.6-2-3.4-2.4 1a7.4 7.4 0 0 0-1.7-1L15 3.5h-4L10.7 6a7.4 7.4 0 0 0-1.7 1l-2.4-1-2 3.4 2 1.6a7.6 7.6 0 0 0 0 2l-2 1.6 2 3.4 2.4-1c.5.4 1.1.7 1.7 1l.3 2.5h4l.3-2.5c.6-.3 1.2-.6 1.7-1l2.4 1 2-3.4zM13 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7z" transform="translate(-1 0)"/></svg>
+        </button>
+        <button id="btn-help" class="icon-btn" aria-label="Power-ups and tips">?</button>
+        <button id="btn-ff" class="icon-btn" aria-label="Fast-forward the chain (F)" aria-pressed="false" title="Fast-forward: F">
+          <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M3 6.2v11.6a.8.8 0 0 0 1.2.7L12 13.4v4.4a.8.8 0 0 0 1.2.7l8.4-5.8a.8.8 0 0 0 0-1.4l-8.4-5.8a.8.8 0 0 0-1.2.7v4.4L4.2 5.5A.8.8 0 0 0 3 6.2z"/></svg>
+        </button>
+        <div class="lvl"><b id="hud-level">Level 1</b><small id="hud-name"></small></div>
+        <div class="bar-wrap">
+          <div class="bar" aria-label="Level progress">
+            <div class="bar-fill" id="hud-bar"></div>
+            <span class="bar-label" id="hud-bar-label">ZUMA</span>
+          </div>
+          <div class="ace-chip" id="hud-ace" title="Finish before the ace time for a bonus"></div>
+        </div>
+        <button id="hud-next" class="next-chip" aria-label="Swap marbles (Space or right-click)" title="Swap: Space or right-click">
+          <span class="dot big" id="next-cur"></span><span class="dot" id="next-next"></span>
+          <span class="keys">⇄ <kbd>Space</kbd></span>
+        </button>
+        <div class="score"><b id="hud-score">0</b><small id="hud-streak"></small><small id="hud-coins" class="coins"></small><div id="hud-items" class="hud-items"></div></div>
+      </div>
+      <div class="hud-bottom">
+        <div class="powers" id="hud-powers"></div>
+        <label id="btn-swap" class="swap-btn" role="button" aria-label="Swap marbles">
+          <span class="dot big" id="swap-cur"></span><span class="dot" id="swap-next"></span>
+          <svg viewBox="0 0 24 24" width="18" height="18"><path d="M7 7h11l-3-3M17 17H6l3 3" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          <input type="checkbox" switch tabindex="-1" aria-hidden="true" class="haptic-switch" />
+        </label>
+        <!-- Boss fights on touch screens: drag moves the frog, this button shoots (hold to keep firing). -->
+        <label id="btn-fire" class="fire-btn" role="button" aria-label="Fire">
+          <span class="dot" id="fire-cur"></span>
+          <span class="fire-lbl">FIRE</span>
+          <input type="checkbox" switch tabindex="-1" aria-hidden="true" class="haptic-switch" />
+        </label>
+      </div>
+    </div>
+
+    <div id="cancel-zone" class="cancel-zone" aria-hidden="true">✕ Cancel</div>
+    <!-- Measures safe-area insets as real px (iOS can change them after load without a resize). -->
+    <div id="safe-probe" aria-hidden="true"></div>
+    <div id="screens"></div>
+    <div id="toast" class="toast"></div>
+  </body>
+</html>
