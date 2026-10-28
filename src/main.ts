@@ -30,6 +30,7 @@ import { BOT_PRESETS, decide } from './sim/bot';
 import { assistAim, type Slot } from './sim/aim';
 import { characterNoun } from './game/characters';
 import { Rng } from './sim/rng';
+import { themeFor, worldIndex } from './game/themes';
 import { checkUnlocks, LevelTracker, newMeta, withStarters } from './sim/achievements';
 import { activeItems, afterStage, bossPicks, buyUndoable, canRetry, closeShop, gain, miniPicks, modsForStage, newEco, payRetry, reroll, reserve, retryCost, sellCharm, settleStage, shopOffers, traderOffers, undoBuy, worldOf } from './sim/economy';
 import { boostedLevel, ITEMS, type Mods, NO_MODS } from './sim/items';
@@ -134,8 +135,9 @@ let aimTarget = -Math.PI / 2;
 
 // ------------------------------------------------------------------ level lifecycle
 
+/** The world's hue, nudged a little per level so neighbouring levels don't look identical. */
 function hueFor(lvl: Level) {
-  return [195, 165, 260, 215, 285, 140, 330, 20][lvl.index % 8] + ((lvl.seed % 20) - 10);
+  return themeFor(lvl.index).hue + ((lvl.seed % 16) - 8);
 }
 
 /** Generated cruise speed of the current level (Relaxed speed scales a copy of it). */
@@ -152,8 +154,10 @@ function loadLevel(seed: string, index: number, state?: GameState, mods: Mods = 
   applySpeed();
   st = resumed ?? createGame(level, mods);
   tracker = new LevelTracker();
+  const theme = themeFor(level.index);
   view.hue = hueFor(level);
-  renderer.setLevel(level, view.hue);
+  renderer.setLevel(level, view.hue, theme.decor);
+  audio.setKey(theme.key);
   // Board size can differ per campaign (large marbles): re-fit to the screen.
   if (layout) resize();
   pending = [];
@@ -353,6 +357,7 @@ function levelBanner(): string[] {
   const ace = `ace time ${mmss(level.ace)}`;
   if (level.boss === 'boss') view.banner = { text: 'BOSS FIGHT', sub: `${label} · ${level.name} · ${ace}`, t: 0, color: '#ff6b81' };
   else if (level.boss === 'mini') view.banner = { text: 'MINI-BOSS', sub: `${label} · ${level.name} · ${ace}`, t: 0, color: '#ffb36b' };
+  else if (level.index % 10 === 0) view.banner = { text: `WORLD ${worldIndex(level.index) + 1}`, sub: `${themeFor(level.index).name} · ${label} · ${ace}`, t: 0, color: '#ffe08a' };
   else view.banner = { text: label, sub: `${level.name} · ${ace}`, t: 0, color: '#ffe08a' };
   const notes: string[] = [];
   if (level.bossFight?.kind === 'serpent') notes.push('Mini-boss! A serpent guards the skull — pop marbles to hurt it, or hit it while it rears up to spit');

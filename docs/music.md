@@ -33,7 +33,9 @@ The loop is built from layers that follow the game, the way Luxor Evolved advert
 
 Each layer has its own gain node ramped with `setTargetAtTime`, so changes never click. Progress is smoothed (fast up, slow down) so layers don't flicker. Layer notes are only scheduled while audible. `npx tsx scripts/music-check.ts` (with `vite preview` on port 5174) fast-forwards a level and prints the layer levels.
 
-### S2. Music per theme
+### S2. Music per theme (built, keys only)
+
+Each world (10 levels) now has a theme in `src/game/themes.ts` with its own root, 5-note scale and progression, applied with `audio.setKey` when a level loads. Pops on the beat follow the key. Per-theme instruments and ambient beds below are still ideas.
 
 If we add world themes (one per 10-level block, like Zuma's Revenge's islands), each theme gets its own key, scale, tempo and instruments:
 
