@@ -272,6 +272,12 @@ export interface GameState {
   holes: { ci: number; s: number; t: number; left: number; n: number }[];
   /** Magnet Shot time left: shots curve toward a marble of their colour. */
   magnetT: number;
+  /** Coin Rush: fraction of a coin carried to the next pop. */
+  coinFrac: number;
+  /** Opener: power marbles still to place as soon as the chain is in. */
+  openerLeft: number;
+  /** Second Wind: free Reverses left this level. */
+  windLeft: number;
 }
 
 /** move: rail levels only — slide the frog toward the point's spot on the rail. */
@@ -301,6 +307,7 @@ export type GameEvent =
   | { type: 'bossAttack'; x: number; y: number; tx: number; ty: number }
   | { type: 'swallow'; x: number; y: number }
   | { type: 'rescue'; x: number; y: number }
+  | { type: 'wind'; x: number; y: number }
   | { type: 'crack'; x: number; y: number; c: number }
   | { type: 'gem'; x: number; y: number; score: number }
   | { type: 'choke'; x: number; y: number; at: { x: number; y: number; power: Power }[] }
@@ -349,6 +356,9 @@ export function createGame(level: Level, mods: Mods = NO_MODS): GameState {
     lives: mods.lives,
     holes: [],
     magnetT: 0,
+    coinFrac: 0,
+    openerLeft: mods.opener ? 1 : 0,
+    windLeft: mods.secondWind ? 1 : 0,
   };
   // Roll-in: choose an initial speed that decelerates to cruise after covering rollIn × length.
   const v = cruise(st, level);
@@ -453,6 +463,22 @@ export function step(st: GameState, level: Level, cmds: readonly Command[] = [])
   st.slowT = Math.max(0, st.slowT - DT);
   st.revT = Math.max(0, st.revT - DT);
   st.magnetT = Math.max(0, st.magnetT - DT);
+  // Second Wind: the first time a chain passes 90%, it rolls back like a Reverse.
+  if (st.windLeft > 0 && headProgress(st, level) > 0.9) {
+    st.windLeft--;
+    st.revT = Math.max(st.revT, TUNING.reverseTime * st.mods.reverseTimeMul);
+    // Effect at the head closest to its skull.
+    let ci = 0;
+    let best = -1;
+    st.chains.forEach((ch, i) => {
+      const n = ch.balls.length;
+      const f = n ? ch.balls[n - 1].s / level.tracks[i].length : -1;
+      if (f > best) (best = f), (ci = i);
+    });
+    const balls = st.chains[ci].balls;
+    pointAt(level.tracks[ci], balls[balls.length - 1].s, tmp);
+    ev.push({ type: 'wind', x: tmp.x, y: tmp.y });
+  }
   // Chameleon marbles step to the next colour together.
   if (st.tick % Math.round(TUNING.chameleonEvery * TICK_HZ) === 0) {
     for (const ch of st.chains) for (const b of ch.balls) if (b.cm && b.clr < 0 && b.ins >= 1) b.c = (b.c + 1) % level.colors;
@@ -1447,7 +1473,13 @@ function startClear(st: GameState, level: Level, ci: number, b: Ball, combo: num
     let c = COINS.pop;
     if (b.c === st.mods.luckyColor) c *= COINS.lucky;
     if (st.mods.dangerCoinMul !== 1 && headProgress(st, level) > COINS.dangerFrac) c *= st.mods.dangerCoinMul;
-    earn(st, 'pops', c);
+    if (st.mods.popCoinMul !== 1) {
+      // Coin Rush: carry fractions so 1.5× pays 1, 2, 1, 2…
+      st.coinFrac += c * st.mods.popCoinMul;
+      c = Math.floor(st.coinFrac);
+      st.coinFrac -= c;
+    }
+    if (c) earn(st, 'pops', c);
     if (b.gem) {
       st.score += TUNING.gemScore;
       earn(st, 'gems', COINS.gem);
@@ -1583,8 +1615,8 @@ function stepClearing(st: GameState, level: Level, ci: number, ev: GameEvent[]) 
 
 function maybeSpawnPower(st: GameState, level: Level) {
   if (!st.spawning || ballCount(st) < 8) return;
-  // Expected one power-up every ~(1 / (2 * powerChance)) seconds.
-  if (rand(st, 'chain') >= level.powerChance * st.mods.powerChanceMul * DT * 2) return;
+  // Opener places its power marble right away; otherwise expect one every ~(1 / (2 * powerChance)) seconds.
+  if (st.openerLeft <= 0 && rand(st, 'chain') >= level.powerChance * st.mods.powerChanceMul * DT * 2) return;
   const cands: Ball[] = [];
   st.chains.forEach((ch, ci) => {
     const balls = ch.balls;
@@ -1599,6 +1631,7 @@ function maybeSpawnPower(st: GameState, level: Level) {
   const b = cands[Math.floor(rand(st, 'chain') * cands.length)];
   b.p = level.powerPool[Math.floor(rand(st, 'chain') * level.powerPool.length)] as Power;
   b.pt = TUNING.powerLife * st.mods.powerLifeMul;
+  if (st.openerLeft > 0) st.openerLeft--;
 }
 
 function stepLosing(st: GameState, level: Level, ev: GameEvent[]) {
@@ -1698,6 +1731,9 @@ export function normalizeState(st: GameState): GameState {
   st.gun.after ??= -1;
   st.holes ??= [];
   st.magnetT ??= 0;
+  st.coinFrac ??= 0;
+  st.openerLeft ??= 0;
+  st.windLeft ??= 0;
   return st;
 }
 

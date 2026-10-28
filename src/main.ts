@@ -32,7 +32,7 @@ import { characterNoun } from './game/characters';
 import { Rng } from './sim/rng';
 import { checkUnlocks, LevelTracker, newMeta, withStarters } from './sim/achievements';
 import { activeItems, afterStage, bossPicks, canRetry, closeShop, gain, miniPicks, modsForStage, newEco, payRetry, reroll, reserve, retryCost, sellCharm, settleStage, shopOffers, traderOffers, worldOf } from './sim/economy';
-import { ITEMS, type Mods, NO_MODS } from './sim/items';
+import { boostedLevel, ITEMS, type Mods, NO_MODS } from './sim/items';
 import { pointAt, type Pt } from './sim/track';
 import { computeLayout, type Layout, screenToWorld } from './game/layout';
 import { BOLT_LIFE, Renderer, PALETTE, type ViewState } from './game/render';
@@ -146,10 +146,11 @@ function applySpeed() {
 }
 
 function loadLevel(seed: string, index: number, state?: GameState, mods: Mods = NO_MODS) {
-  level = generateLevel(seed, index);
+  const resumed = state ? normalizeState(state) : null;
+  level = boostedLevel(generateLevel(seed, index), resumed ? resumed.mods : mods);
   baseSpeed = level.speed;
   applySpeed();
-  st = state ? normalizeState(state) : createGame(level, mods);
+  st = resumed ?? createGame(level, mods);
   tracker = new LevelTracker();
   view.hue = hueFor(level);
   renderer.setLevel(level, view.hue);
@@ -318,7 +319,7 @@ function betweenStages(r: EndlessRun) {
       },
     });
   } else if (r.pending === 'next' && r.last) {
-    const lv = generateLevel(r.seed, r.stage);
+    const lv = boostedLevel(generateLevel(r.seed, r.stage), modsForStage(eco, r.stage));
     ui.stageClear({
       last: r.last,
       runScore: r.runScore,
@@ -423,7 +424,7 @@ function endlessStageDone(won: boolean, r: EndlessRun) {
   const eco = (r.eco ??= newEco());
   // A lost attempt banks nothing (no farming coins by dying); its Extra Life was marked spent when the chain hit the skull.
   if (won) settleStage(eco, st, level.index, won);
-  const fresh = checkUnlocks(withStarters((save.meta ??= newMeta())), tracker, level, { won, peakDanger });
+  const fresh = checkUnlocks(withStarters((save.meta ??= newMeta())), tracker, level, { won, peakDanger }, eco);
   if (fresh.length) ui.toast(`🔓 Unlocked ${fresh.map((id) => `${ITEMS[id].icon} ${ITEMS[id].name}`).join(', ')}! It can now show up in the shop.`, 4200);
   if (won) {
     r.runScore += st.score;
@@ -1325,6 +1326,11 @@ function handleEvents(events: GameEvent[]) {
         fx.ring(e.x, e.y, '#ff7a9a', 14, 600, 0.6);
         fx.text(e.x, e.y, 'EXTRA LIFE!', '#ff9ab3', 34, 1.4, -50);
         view.banner = { text: 'EXTRA LIFE!', sub: 'The chain was pushed back', t: 0, color: '#ff9ab3' };
+        break;
+      case 'wind':
+        fx.ring(e.x, e.y, '#9fe8ff', 12, 520, 0.5);
+        fx.text(e.x, e.y, 'SECOND WIND!', '#bff0ff', 30, 1.3, -50);
+        view.banner = { text: 'SECOND WIND!', sub: 'The chain rolls back', t: 0, color: '#bff0ff' };
         break;
       case 'swallow':
         fx.burst(e.x, e.y, '#7dffb0', '#fff', fb.particles, 0.6);

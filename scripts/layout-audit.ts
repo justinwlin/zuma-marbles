@@ -20,7 +20,7 @@ const PROFILES: Record<string, BrowserContextOptions> = {
 };
 
 /** Screens that should fit without scrolling. Long reference screens (help, settings) may scroll. */
-const MUST_FIT = new Set(['title', 'endless', 'pause', 'result', 'pick', 'shop', 'collection', 'unlock']);
+const MUST_FIT = new Set(['title', 'endless', 'pause', 'result', 'pick', 'shop', 'collection', 'unlock', 'trader', 'stage-clear']);
 
 interface Row {
   profile: string;
@@ -81,19 +81,25 @@ for (const [name, opts] of Object.entries(PROFILES)) {
   await measure(page, name, 'endless');
   await click(page, '[data-a=collection]');
   await measure(page, name, 'collection');
-  // In a run: pause, then the free picks and the shop (driven through the test hooks).
-  await page.evaluate(() => (window as any).__zuma.expedition(4, 2600));
+  // In a run: pause, the between-stage page, the serpent trader, then the boss pick and the shop (driven through the test hooks).
+  await page.evaluate(() => (window as any).__zuma.expedition(2, 2600));
   await page.waitForTimeout(2500);
   await page.evaluate(() => (window as any).__zuma.pause());
   await measure(page, name, 'pause');
   await click(page, '[data-a=resume]');
   await page.evaluate(() => (window as any).__zuma.winNow());
-  await page.waitForFunction(() => document.querySelector('[data-screen=pick]'), null, { timeout: 15000 });
-  await measure(page, name, 'pick');
+  await page.waitForFunction(() => document.querySelector('[data-screen=stage-clear]'), null, { timeout: 15000 });
+  await measure(page, name, 'stage-clear');
+  await page.evaluate(() => (window as any).__zuma.expedition(4, 2600));
+  await page.waitForTimeout(2500);
+  await page.evaluate(() => (window as any).__zuma.winNow());
+  await page.waitForFunction(() => document.querySelector('[data-screen=trader]'), null, { timeout: 15000 });
+  await measure(page, name, 'trader');
   await page.evaluate(() => (window as any).__zuma.expedition(9, 2600));
   await page.waitForTimeout(2500);
   await page.evaluate(() => (window as any).__zuma.winNow());
   await page.waitForFunction(() => document.querySelector('[data-screen=pick]'), null, { timeout: 15000 });
+  await measure(page, name, 'pick');
   await click(page, '[data-a=take]');
   await measure(page, name, 'shop');
   // Campaign result screen

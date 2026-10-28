@@ -45,10 +45,14 @@ export interface RunEco {
   reserved: ItemId | null;
   /** Rerolls bought in the current shop. */
   rerolls: number;
+  /** Run totals for achievements (missing in runs saved by older versions). */
+  aces?: number;
+  earned?: number;
+  boughtBoost?: boolean;
 }
 
 export function newEco(): RunEco {
-  return { coins: 0, charms: [], boosts: [], lifeWorld: -1, luckyColor: 0, reserved: null, rerolls: 0 };
+  return { coins: 0, charms: [], boosts: [], lifeWorld: -1, luckyColor: 0, reserved: null, rerolls: 0, aces: 0, earned: 0, boughtBoost: false };
 }
 
 export const worldOf = (stage: number) => Math.floor(stage / 10);
@@ -72,6 +76,8 @@ export function modsForStage(eco: RunEco, stage: number): Mods {
 /** After a stage: bank its coins, note a spent Extra Life, and end boosts when a boss falls. */
 export function settleStage(eco: RunEco, st: GameState, stage: number, won: boolean) {
   eco.coins += st.coinsEarned.total;
+  eco.earned = (eco.earned ?? 0) + st.coinsEarned.total;
+  if (won && st.bonus?.ace) eco.aces = (eco.aces ?? 0) + 1;
   if (st.lives < st.mods.lives) eco.lifeWorld = worldOf(stage);
   if (won && bossKind(stage) === 'boss') eco.boosts = eco.boosts.filter((b) => b.until > stage);
 }
@@ -150,6 +156,7 @@ export function gain(eco: RunEco, id: ItemId, seed: string, stage: number, opts:
     }
     if (eco.coins < price) return 'coins';
     eco.coins -= price;
+    if (price > 0) eco.boughtBoost = true;
     eco.boosts.push({ id, paid: price, until: bossStageFor(stage + 1) });
     return null;
   }

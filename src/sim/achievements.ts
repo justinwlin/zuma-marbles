@@ -2,14 +2,17 @@
 // A LevelTracker is fed each step's events (the same way in the game and the simulator);
 // after the level, checkUnlocks() compares it and lifetime progress against the rules.
 
-import { type GameEvent, Power } from './game';
+import { type GameEvent, Power, POWER_COUNT } from './game';
 import { type ItemId, STARTER_ITEMS } from './items';
 import type { Level } from './levelgen';
+import type { RunEco } from './economy';
 
 export interface MetaProgress {
   unlocked: ItemId[];
   /** Lifetime counters. */
   coinsShot: number;
+  /** Bit per power-up type ever triggered (bit p = Power p). */
+  powersSeen?: number;
 }
 
 export function newMeta(): MetaProgress {
@@ -30,6 +33,9 @@ export class LevelTracker {
   coinsShot = 0;
   powers = 0;
   wilds = 0;
+  /** Bit per power-up type triggered this level. */
+  powerTypes = 0;
+  cracks = 0;
   feed(events: readonly GameEvent[]) {
     for (const e of events) {
       if (e.type === 'pop') {
@@ -38,8 +44,9 @@ export class LevelTracker {
       } else if (e.type === 'choke') this.chokes++;
       else if (e.type === 'power') {
         this.powers++;
+        this.powerTypes |= 1 << e.power;
         if (e.power === Power.Wild) this.wilds++;
-      }
+      } else if (e.type === 'crack') this.cracks++;
       else if (e.type === 'coinGet') this.coinsShot++;
     }
   }
@@ -62,11 +69,19 @@ export const UNLOCKS: UnlockRule[] = [
   { id: 'scavenger', hint: 'Shoot 10 floating coins' },
   { id: 'rewinder', hint: 'Trigger 8 power-ups in one level' },
   { id: 'doubleWild', hint: 'Use 3 Wild power-ups in one level' },
+  { id: 'aceHunter', hint: 'Beat the ace time on 5 levels in one run' },
+  { id: 'headStart', hint: 'Win a level without any chain passing halfway' },
+  { id: 'opener', hint: 'Trigger every type of power-up (across runs)' },
+  { id: 'secondWind', hint: 'Crack 5 armored marbles in one level' },
+  { id: 'coinRush', hint: 'Bank 2,000 coins in one run' },
+  { id: 'colourCut', hint: 'Reach world 3 without buying a boost' },
 ];
 
 /** After a level: adds any newly earned unlocks to `meta` and returns them. */
-export function checkUnlocks(meta: MetaProgress, t: LevelTracker, level: Level, r: { won: boolean; peakDanger: number }): ItemId[] {
+export function checkUnlocks(meta: MetaProgress, t: LevelTracker, level: Level, r: { won: boolean; peakDanger: number }, run?: RunEco): ItemId[] {
   meta.coinsShot += t.coinsShot;
+  meta.powersSeen = (meta.powersSeen ?? 0) | t.powerTypes;
+  const allPowers = ((1 << (POWER_COUNT + 1)) - 2) >>> 0; // bits 1..POWER_COUNT
   const earned: Record<string, boolean> = {
     snakeCharmer: r.won && level.bossFight?.kind === 'serpent',
     bossBreaker: r.won && level.bossFight?.kind === 'idol',
@@ -79,6 +94,13 @@ export function checkUnlocks(meta: MetaProgress, t: LevelTracker, level: Level, 
     scavenger: meta.coinsShot >= 10,
     rewinder: t.powers >= 8,
     doubleWild: t.wilds >= 3,
+    aceHunter: (run?.aces ?? 0) >= 5,
+    headStart: r.won && r.peakDanger < 0.5,
+    opener: (meta.powersSeen & allPowers) === allPowers,
+    secondWind: t.cracks >= 5,
+    coinRush: (run?.earned ?? 0) >= 2000,
+    // Runs saved before this was tracked (undefined) do not count.
+    colourCut: r.won && level.index >= 19 && run?.boughtBoost === false,
   };
   const fresh = UNLOCKS.filter((u) => earned[u.id] && !meta.unlocked.includes(u.id)).map((u) => u.id);
   meta.unlocked.push(...fresh);

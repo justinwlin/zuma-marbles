@@ -1,6 +1,8 @@
 // Charms and boosts for Expedition runs. An owned loadout resolves to one Mods object,
 // which is the only thing the simulation reads. Neutral mods = the game as it plays today.
 
+import type { Level } from './levelgen';
+
 export type ItemKind = 'charm' | 'boost';
 
 export type ItemId =
@@ -12,6 +14,12 @@ export type ItemId =
   | 'longFuse'
   | 'snakeCharmer'
   | 'bossBreaker'
+  | 'headStart'
+  | 'colourCut'
+  | 'secondWind'
+  | 'coinRush'
+  | 'aceHunter'
+  | 'opener'
   // Charms: kept until replaced
   | 'shockwave'
   | 'bomber'
@@ -47,6 +55,12 @@ export const ITEMS: Record<ItemId, ItemDef> = {
   longFuse: { id: 'longFuse', kind: 'boost', name: 'Long Fuse', icon: '⏳', desc: 'Power marbles last twice as long', price: 400, starter: true },
   snakeCharmer: { id: 'snakeCharmer', kind: 'boost', name: 'Snake Charmer', icon: '🐍', desc: "The serpent's rear-up lasts 1 s longer; choking it drops 2 extra power-ups", price: 400, starter: false },
   bossBreaker: { id: 'bossBreaker', kind: 'boost', name: 'Boss Breaker', icon: '🔨', desc: 'Direct hits on bosses do double damage', price: 500, starter: false },
+  headStart: { id: 'headStart', kind: 'boost', name: 'Head Start', icon: '🏁', desc: 'Levels need 15% less score', price: 500, starter: false },
+  colourCut: { id: 'colourCut', kind: 'boost', name: 'Colour Cut', icon: '✂️', desc: 'One fewer marble colour (never below 3)', price: 700, starter: false },
+  secondWind: { id: 'secondWind', kind: 'boost', name: 'Second Wind', icon: '🌬️', desc: 'Once per level, a chain passing 90% of the track rolls back (a free Reverse)', price: 450, starter: false },
+  coinRush: { id: 'coinRush', kind: 'boost', name: 'Coin Rush', icon: '💰', desc: 'Popped marbles pay 50% more coins', price: 450, starter: false },
+  aceHunter: { id: 'aceHunter', kind: 'boost', name: 'Ace Hunter', icon: '⏱️', desc: 'Ace time +20 s', price: 350, starter: false },
+  opener: { id: 'opener', kind: 'boost', name: 'Opener', icon: '🎁', desc: 'Every level starts with a power marble in the chain', price: 400, starter: false },
   shockwave: { id: 'shockwave', kind: 'charm', name: 'Shockwave', icon: '💥', desc: 'Matches of 5+ also pop the marble on each side', price: 750, starter: true },
   bomber: { id: 'bomber', kind: 'charm', name: 'Bomber', icon: '🧨', desc: 'Bombs blast 50% wider', price: 650, starter: true },
   quickDraw: { id: 'quickDraw', kind: 'charm', name: 'Quick Draw', icon: '🏹', desc: 'Your shots fly 25% faster', price: 600, starter: true },
@@ -95,6 +109,18 @@ export interface Mods {
   scorpionEatsMul: number;
   /** Wild power-up: how many shots become Wild. */
   wildShots: number;
+  /** Level score target multiplier (Head Start). */
+  targetMul: number;
+  /** Fewer marble colours (Colour Cut). */
+  colorCut: number;
+  /** Seconds added to the ace time (Ace Hunter). */
+  aceAdd: number;
+  /** Free Reverse once per level when a chain passes 90% (Second Wind). */
+  secondWind: boolean;
+  /** Coins per popped marble multiplier (Coin Rush). */
+  popCoinMul: number;
+  /** A power marble appears as soon as the chain is in (Opener). */
+  opener: boolean;
 }
 
 export const NO_MODS: Mods = {
@@ -120,6 +146,12 @@ export const NO_MODS: Mods = {
   reverseTimeMul: 1,
   scorpionEatsMul: 1,
   wildShots: 1,
+  targetMul: 1,
+  colorCut: 0,
+  aceAdd: 0,
+  secondWind: false,
+  popCoinMul: 1,
+  opener: false,
 };
 
 /** Resolve owned items into mods. `luckyColor` is the colour rolled when Lucky Colour was gained. */
@@ -134,6 +166,12 @@ export function modsFor(items: readonly ItemId[], opts: { luckyColor?: number; l
       case 'longFuse': m.powerLifeMul = 2; break;
       case 'snakeCharmer': m.serpentWindupAdd = 1; m.chokeExtra = 2; break;
       case 'bossBreaker': m.bossDirectMul = 2; break;
+      case 'headStart': m.targetMul = 0.85; break;
+      case 'colourCut': m.colorCut = 1; break;
+      case 'secondWind': m.secondWind = true; break;
+      case 'coinRush': m.popCoinMul = 1.5; break;
+      case 'aceHunter': m.aceAdd = 20; break;
+      case 'opener': m.opener = true; break;
       case 'shockwave': m.shockwave = true; break;
       case 'bomber': m.bombRadiusMul = 1.5; break;
       case 'quickDraw': m.shotSpeedMul = 1.25; break;
@@ -151,6 +189,17 @@ export function modsFor(items: readonly ItemId[], opts: { luckyColor?: number; l
     }
   }
   return m;
+}
+
+/** Boosts that change the level itself (score target, colours, ace time) apply to a copy of it. */
+export function boostedLevel(level: Level, mods: Mods): Level {
+  if (mods.targetMul === 1 && !mods.colorCut && !mods.aceAdd) return level;
+  return {
+    ...level,
+    target: Math.round(level.target * mods.targetMul),
+    colors: Math.max(3, level.colors - mods.colorCut),
+    ace: level.ace + mods.aceAdd,
+  };
 }
 
 /** Coins: what each source pays. */

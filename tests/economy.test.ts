@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { generateLevel } from '../src/sim/levelgen';
 import { createGame, Power, progress, stateHash, step, TICK_HZ, TUNING } from '../src/sim/game';
-import { ITEMS, NO_MODS } from '../src/sim/items';
+import { boostedLevel, ITEMS, modsFor, NO_MODS } from '../src/sim/items';
 import { activeItems, bossPicks, priceAt, gain, miniPicks, modsForStage, newEco, reroll, rerollCost, reserve, sellCharm, settleStage, shopOffers, traderOffers, TRADER_BOOSTS, TRADER_CHARMS, retryCost, canRetry, payRetry, RETRY_MIN } from '../src/sim/economy';
 import { checkUnlocks, LevelTracker, newMeta } from '../src/sim/achievements';
 import { runExpedition } from '../src/sim/expedition';
@@ -415,6 +415,111 @@ describe('unlocks', () => {
       const fresh = checkUnlocks(meta, t, level, { won: true, peakDanger: 0.2 });
       expect(fresh.includes('scavenger')).toBe(i === 9);
     }
+  });
+});
+
+describe('new boosts', () => {
+  it('Head Start, Colour Cut, Ace Hunter: change the level itself; no boosts leave it untouched', () => {
+    const level = generateLevel('boost', 20);
+    expect(boostedLevel(level, NO_MODS)).toBe(level);
+    const b = boostedLevel(level, modsFor(['headStart', 'colourCut', 'aceHunter']));
+    expect(b.target).toBe(Math.round(level.target * 0.85));
+    expect(b.colors).toBe(level.colors - 1);
+    expect(b.ace).toBe(level.ace + 20);
+    // Never below 3 colours.
+    expect(boostedLevel({ ...level, colors: 3 }, modsFor(['colourCut'])).colors).toBe(3);
+  });
+
+  it('Colour Cut: the chain only uses the remaining colours', () => {
+    const level = boostedLevel(generateLevel('boost', 20), modsFor(['colourCut']));
+    const st = createGame(level, modsFor(['colourCut']));
+    for (let t = 0; t < 20 * TICK_HZ; t++) step(st, level);
+    expect(Math.max(...st.chains.flatMap((ch) => ch.balls.map((b) => b.c)))).toBeLessThan(level.colors);
+  });
+
+  it('Second Wind: once per level, a chain passing 90% gets a free Reverse', () => {
+    const { level, st } = frozenGame([0, 1, 2, 3], { headGap: 120, mods: { secondWind: true } });
+    expect(progress(st, level).head).toBeGreaterThan(0.9);
+    const ev = run(st, level, 0.1);
+    expect(ev.filter((e) => e.type === 'wind').length).toBe(1);
+    expect(st.revT).toBeGreaterThan(0);
+    expect(run(st, level, 0.5).some((e) => e.type === 'wind')).toBe(false);
+  });
+
+  it('Coin Rush: pops pay 1.5x, carrying fractions', () => {
+    const { level, st } = frozenGame([0, 1, 1, 1, 2, 3, 0, 2], { mods: { popCoinMul: 1.5 } });
+    st.gun.cur = 1;
+    run(st, level, 1, [aimAt(level, st, 2)]);
+    expect(st.coinsEarned.by.pops).toBe(6); // 4 marbles x 1.5
+  });
+
+  it('Opener: a power marble appears as soon as the chain is in', () => {
+    const level = generateLevel('boost', 3);
+    const firstPower = (mods = NO_MODS) => {
+      const st = createGame(level, mods);
+      for (let t = 0; t < 30 * TICK_HZ; t++) {
+        step(st, level);
+        if (st.chains.some((ch) => ch.balls.some((b) => b.p))) return t;
+      }
+      return Infinity;
+    };
+    expect(firstPower(modsFor(['opener']))).toBeLessThan(3 * TICK_HZ);
+    expect(firstPower(modsFor(['opener']))).toBeLessThan(firstPower());
+  });
+});
+
+describe('new achievements', () => {
+  const level = generateLevel('endless-u', 2);
+  const unlocks = (t: LevelTracker, r = { won: true, peakDanger: 0.7 }, eco = newEco(), lvl = level) => checkUnlocks(newMeta(), t, lvl, r, eco);
+
+  it('Ace Hunter after 5 aces in one run, Coin Rush after banking 2,000 in one run', () => {
+    const eco = newEco();
+    expect(unlocks(new LevelTracker(), undefined, eco)).toEqual([]);
+    eco.aces = 5;
+    eco.earned = 2000;
+    expect(unlocks(new LevelTracker(), undefined, eco).sort()).toEqual(['aceHunter', 'coinRush']);
+  });
+
+  it('settling stages counts aces and banked coins', () => {
+    const eco = newEco();
+    const st = createGame(level);
+    st.coinsEarned.total = 120;
+    st.bonus = { sweep: 0, ace: 1000, seconds: 30, from: [] };
+    settleStage(eco, st, 2, true);
+    expect(eco.aces).toBe(1);
+    expect(eco.earned).toBe(120);
+  });
+
+  it('Head Start: win without any chain passing halfway', () => {
+    expect(unlocks(new LevelTracker(), { won: true, peakDanger: 0.4 })).toContain('headStart');
+    expect(unlocks(new LevelTracker(), { won: true, peakDanger: 0.6 })).not.toContain('headStart');
+  });
+
+  it('Opener: every power-up type triggered, across runs', () => {
+    const meta = newMeta();
+    const feed = (powers: number[]) => {
+      const t = new LevelTracker();
+      t.feed(powers.map((power) => ({ type: 'power', power, x: 0, y: 0 }) as never));
+      return checkUnlocks(meta, t, level, { won: false, peakDanger: 0.7 });
+    };
+    expect(feed([1, 2, 3, 4, 5])).not.toContain('opener');
+    expect(feed([6, 7, 8, 9])).toContain('opener');
+  });
+
+  it('Second Wind: crack 5 armored marbles in one level', () => {
+    const t = new LevelTracker();
+    t.feed(Array.from({ length: 5 }, () => ({ type: 'crack', x: 0, y: 0 }) as never));
+    expect(unlocks(t, { won: false, peakDanger: 0.7 })).toContain('secondWind');
+  });
+
+  it('Colour Cut: reach world 3 without buying a boost (free picks are fine)', () => {
+    const l19 = generateLevel('endless-u', 19);
+    const eco = newEco();
+    expect(gain(eco, 'slowpoke', 'u', 4, { free: true })).toBeNull();
+    expect(unlocks(new LevelTracker(), undefined, eco, l19)).toContain('colourCut');
+    eco.coins = 5000;
+    expect(gain(eco, 'pocketBomb', 'u', 9)).toBeNull();
+    expect(unlocks(new LevelTracker(), undefined, eco, l19)).not.toContain('colourCut');
   });
 });
 

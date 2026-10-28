@@ -67,6 +67,16 @@ Coins are separate from your score. Score still fills the bar and decides stars.
 | ⏳ **Long Fuse** | Power marbles last twice as long before they expire (18 s → 36 s) | 400 |
 | 🐍 **Snake Charmer** | The serpent's rear-up lasts 1 s longer, and choking it drops 2 extra power-ups (a choke normally drops 1–2) | 400 |
 | 🔨 **Boss Breaker** | Direct hits on bosses do double damage (shots through gaps at the idol, chokes on the serpent) | 500 |
+| 🏁 **Head Start** | Levels need 15% less score | 500 |
+| ✂️ **Colour Cut** | One fewer marble colour (never below 3) | 700 |
+| 🌬️ **Second Wind** | Once per level, the first time a chain passes 90% of the track it rolls back (a free Reverse) | 450 |
+| 💰 **Coin Rush** | Popped marbles pay 50% more coins | 450 |
+| ⏱️ **Ace Hunter** | Ace time +20 s | 350 |
+| 🎁 **Opener** | Every level starts with a power marble in the chain as soon as it rolls in | 400 |
+
+Head Start, Colour Cut and Ace Hunter change the level itself (`boostedLevel` in `src/sim/items.ts`), so the HUD, ace chip and next-stage preview show the boosted values.
+
+Bot win rate on levels 13/23/33 with one boost (40 levels each, good bot): none 65%, Slowpoke 80%, Colour Cut 76%, Head Start 73%, Opener 73%, Second Wind 69%.
 
 Pocket Bomb is a new mechanic. Today Bombs only come from popping a Bomb marble in the chain.
 
@@ -178,6 +188,12 @@ At the start, only some items can show up. Achievements add more, so the shop ke
 | Shoot 10 floating coins | 🪙 Scavenger (charm) |
 | Trigger 8 power-ups in one level | ⏪ Rewinder (charm) |
 | Use 3 Wild power-ups in one level | 🃏 Double Wild (charm) |
+| Beat the ace time on 5 levels in one run | ⏱️ Ace Hunter (boost) |
+| Win a level without any chain passing halfway | 🏁 Head Start (boost) |
+| Trigger every type of power-up (across runs) | 🎁 Opener (boost) |
+| Crack 5 armored marbles in one level | 🌬️ Second Wind (boost) |
+| Bank 2,000 coins in one run | 💰 Coin Rush (boost) |
+| Reach world 3 without buying a boost (free picks are fine) | ✂️ Colour Cut (boost) |
 
 ---
 

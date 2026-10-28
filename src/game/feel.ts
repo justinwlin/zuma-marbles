@@ -191,6 +191,12 @@ export function feedbackFor(e: GameEvent, ctx: FeelContext): Feedback {
       f.haptic = [30, 40, 30];
       f.particles = 30;
       break;
+    case 'wind':
+      f.sound = 'barfull';
+      f.trauma = 0.25;
+      f.haptic = [20, 30, 20];
+      f.particles = 20;
+      break;
     case 'swallow':
       f.sound = 'spit';
       f.trauma = 0.06;

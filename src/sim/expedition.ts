@@ -6,7 +6,7 @@ import { checkUnlocks, LevelTracker, type MetaProgress, newMeta } from './achiev
 import { type BotOptions, playLevel } from './bot';
 import { activeItems, afterStage, priceAt, bossPicks, closeShop, gain, miniPicks, modsForStage, newEco, rerollCost, reroll, type RunEco, settleStage, shopOffers, traderOffers, worldOf } from './economy';
 import { createGame } from './game';
-import { ITEMS, type ItemId } from './items';
+import { boostedLevel, ITEMS, type ItemId } from './items';
 import { generateLevel } from './levelgen';
 
 /** How the simulated player spends. */
@@ -14,8 +14,8 @@ export type Policy = 'none' | 'greedy' | 'random';
 
 /** Rough value order the greedy policy buys and picks by (best first). */
 export const PRIORITY: ItemId[] = [
-  'extraLife', 'slowpoke', 'shockwave', 'rainbow', 'lightningRod', 'bomber', 'powerSurge', 'comboKing',
-  'deepFreeze', 'quickDraw', 'bossBreaker', 'longFuse', 'rewinder', 'hungryScorpion', 'doubleWild', 'luckyColor', 'daredevil', 'pocketBomb', 'scavenger', 'scout', 'snakeCharmer',
+  'extraLife', 'colourCut', 'slowpoke', 'secondWind', 'headStart', 'shockwave', 'rainbow', 'lightningRod', 'bomber', 'powerSurge', 'comboKing',
+  'deepFreeze', 'quickDraw', 'bossBreaker', 'longFuse', 'rewinder', 'hungryScorpion', 'doubleWild', 'luckyColor', 'daredevil', 'pocketBomb', 'scavenger', 'scout', 'snakeCharmer', 'opener', 'coinRush', 'aceHunter',
 ];
 const rank = (id: ItemId) => PRIORITY.indexOf(id);
 
@@ -65,15 +65,16 @@ export function runExpedition(o: ExpeditionOpts): ExpeditionResult {
     return opts.slice().sort((a, b) => rank(a) - rank(b))[0];
   };
   for (let stage = 0; stage < max; stage++) {
-    const level = generateLevel(o.seed, stage);
-    const st = createGame(level, modsForStage(eco, stage));
+    const mods = modsForStage(eco, stage);
+    const level = boostedLevel(generateLevel(o.seed, stage), mods);
+    const st = createGame(level, mods);
     const tracker = new LevelTracker();
     const r = playLevel(st, level, o.bot, 600, (ev) => tracker.feed(ev));
     const won = r.outcome === 'won';
     settleStage(eco, st, stage, won);
     const w = worldOf(stage);
     res.coinsByWorld[w] = (res.coinsByWorld[w] ?? 0) + st.coinsEarned.total;
-    res.unlocks.push(...checkUnlocks(meta, tracker, level, { won, peakDanger: r.peakDanger }));
+    res.unlocks.push(...checkUnlocks(meta, tracker, level, { won, peakDanger: r.peakDanger }, eco));
     res.log.push({ stage, won, seconds: r.seconds, coins: st.coinsEarned.total, items: activeItems(eco, stage) });
     if (!won) break;
     res.cleared = stage + 1;
