@@ -9,7 +9,7 @@ Everything is synthesized live in `src/game/audio.ts` on Web Audio. There are no
 - **Sound effects** are short "voices" built from oscillators and filtered noise (`shoot`, `pop`, `thunk`, `boom`, `zap`, `spit`, and so on). `src/game/feel.ts` maps every game event to a voice and a pitch.
 - **Combos climb the scale.** Each combo step and streak raises the pop's pitch, so players learn to chase the rising note.
 - **Danger heartbeat.** A low double thump plays as the chain nears the skull.
-- **Music** is a generative loop: a sine pad on the chord root every 4 steps and triangle plucks from a minor pentatonic scale, over a 4-chord progression rooted on G3 (196 Hz). The tempo speeds up as danger rises (`updateMusic(dt, intensity)`).
+- **Music** is a generative loop: a sine pad on the chord root every 4 steps and triangle plucks from a minor pentatonic scale, over a 4-chord progression rooted on G3 (196 Hz). The tempo speeds up as danger rises, and layers are added as the chain advances (see S1).
 
 ## Pops on the beat (built)
 
@@ -22,16 +22,16 @@ With music off or muted, pops sound exactly as before. The code is `Audio.popOnB
 
 ## Ideas
 
-### S1. Layered, reactive music
+### S1. Layered, reactive music (built)
 
-Build the loop from layers that fade in and out with the game state, the way Luxor Evolved advertises "interactive soundtracks":
+The loop is built from layers that follow the game, the way Luxor Evolved advertises "interactive soundtracks":
 
-- **Calm:** pad and plucks, as today.
-- **Pressure:** as the head passes about 50% of the track, add a bassline. Past about 75%, add drums (noise hats on 8ths, a sine kick on the beat).
-- **Release:** after a big combo or a Reverse, drop to the pad for a bar, then bring the layers back.
-- **Clear:** when the bar fills, switch the progression to a major key until the level ends.
+- **Calm:** pad and plucks.
+- **Pressure:** a bassline fades in as the lead chain passes about 50% of the track, and drums (sine kick on the beat, noise snare and hats) past about 75%. The tempo still rises with danger.
+- **Release:** a combo of 3 or more, a Reverse, or Second Wind drops the bass and drums for about a bar, then they come back.
+- **Clear:** once the bar fills, plucks and pops switch to a major pentatonic until the level ends.
 
-Implementation note: keep one scheduler and give each layer its own gain node, ramped with `setTargetAtTime` so changes never click.
+Each layer has its own gain node ramped with `setTargetAtTime`, so changes never click. Progress is smoothed (fast up, slow down) so layers don't flicker. Layer notes are only scheduled while audible. `npx tsx scripts/music-check.ts` (with `vite preview` on port 5174) fast-forwards a level and prints the layer levels.
 
 ### S2. Music per theme
 

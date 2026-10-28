@@ -1249,6 +1249,7 @@ function handleEvents(events: GameEvent[]) {
       }
       case 'pop': {
         const col = PALETTE[e.c];
+        if (e.combo >= 2) audio.release();
         const per = Math.max(4, Math.floor(fb.particles / e.balls.length));
         for (const b of e.balls) {
           fx.burst(b.x, b.y, col.base, col.light, per, 1 + e.combo * 0.15);
@@ -1339,6 +1340,7 @@ function handleEvents(events: GameEvent[]) {
         view.banner = { text: 'EXTRA LIFE!', sub: 'The chain was pushed back', t: 0, color: '#ff9ab3' };
         break;
       case 'wind':
+        audio.release();
         fx.ring(e.x, e.y, '#9fe8ff', 12, 520, 0.5);
         fx.text(e.x, e.y, 'SECOND WIND!', '#bff0ff', 30, 1.3, -50);
         view.banner = { text: 'SECOND WIND!', sub: 'The chain rolls back', t: 0, color: '#bff0ff' };
@@ -1373,6 +1375,7 @@ function handleEvents(events: GameEvent[]) {
       }
       case 'power': {
         const label = POWER_NAMES[e.power].toUpperCase() + '!';
+        if (e.power === Power.Reverse) audio.release();
         if (e.power === Power.Lightning) {
           // Chain lightning: hop from the power marble to the nearest struck marble, and on.
           const col = PALETTE[e.c];
@@ -1617,7 +1620,8 @@ function updateView(dt: number) {
       if (view.danger > 0.6) haptics.pulse([14]);
     }
   }
-  audio.updateMusic(dt, attract || mode !== 'playing' ? 0 : view.danger);
+  const live = !attract && mode === 'playing';
+  audio.updateMusic(dt, { danger: live ? view.danger : 0, head: live && st.phase === 'playing' ? head : 0, clear: !attract && st.barFull });
 
   // Aim raycast + lock-on tick. The guide is always shown during play (along the last
   // aim) so players can see where the next marble will go before touching.
@@ -1780,6 +1784,7 @@ window.__zuma = {
   layout: () => layout,
   view: () => ({ aimAngle: view.aimAngle, aimShot: view.aimShot, aimCancel: view.aimCancel, aimActive: view.aimActive, aimHit: view.aimHit, willPop: view.aimWillPop, trauma: view.trauma, danger: view.danger, aimFrom: view.aimFrom, cursor: view.cursor, sweep: !!view.sweep, aimCoin: view.aimCoin }),
   fps: () => fps,
+  music: () => audio.musicState(),
   drawMs: () => drawMs,
   timings: () => ({ sim: simMs, view: viewMs, draw: drawMs, hud: hudMs }),
   /** Stress: spray particles everywhere (perf testing). */
