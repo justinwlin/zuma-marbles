@@ -27,6 +27,9 @@ export const TUNING = {
   dangerFrac: 0.15,
   dangerBlendFrac: 0.12,
   slowFactor: 4,
+  /** Fast-forward (player toggle): cruise speed multiplier outside the danger zone, and how much quicker it gets there. */
+  ffFactor: 3,
+  ffAccelMul: 6,
   /** Magnet pull: initial speed and acceleration (Zuma: suck 10/8 px/frame, +1/8 per frame). */
   suckV0: 125 * K,
   suckAccel: 1250 * K,
@@ -230,6 +233,8 @@ export interface GameState {
   shots: Shot[];
   slowT: number;
   revT: number;
+  /** Fast-forward toggled on by the player. */
+  ff: boolean;
   spawning: boolean;
   barFull: boolean;
   score: number;
@@ -281,7 +286,7 @@ export interface GameState {
 }
 
 /** move: rail levels only — slide the frog toward the point's spot on the rail. */
-export type Command = { type: 'fire'; x: number; y: number } | { type: 'swap' } | { type: 'move'; x: number; y: number };
+export type Command = { type: 'fire'; x: number; y: number } | { type: 'swap' } | { type: 'move'; x: number; y: number } | { type: 'ff'; on: boolean };
 
 export type GameEvent =
   | { type: 'fire'; x: number; y: number; dx: number; dy: number; c: number }
@@ -333,6 +338,7 @@ export function createGame(level: Level, mods: Mods = NO_MODS): GameState {
     shots: [],
     slowT: 0,
     revT: 0,
+    ff: false,
     spawning: true,
     barFull: false,
     score: 0,
@@ -598,6 +604,10 @@ export function barTarget(level: Level): number {
 }
 
 function applyCommand(st: GameState, level: Level, cmd: Command, ev: GameEvent[]) {
+  if (cmd.type === 'ff') {
+    st.ff = cmd.on;
+    return;
+  }
   if (cmd.type === 'swap') {
     const wc = st.gun.w & 1;
     const wn = (st.gun.w >> 1) & 1;
@@ -1249,6 +1259,9 @@ function stepChain(st: GameState, level: Level, ci: number, ev: GameEvent[]) {
     target = target * (1 - f) + (target / TUNING.slowFactor) * f;
   }
   if (st.slowT > 0) target /= TUNING.slowFactor;
+  // Fast-forward only speeds up a chain that is still clear of the danger zone.
+  const ff = st.ff && !ch.rolling && firstEnd <= danger - blend;
+  if (ff) target *= TUNING.ffFactor;
 
   if (ch.rolling) {
     if (ch.speed <= target + 0.5 || st.tick > TUNING.rollInMax * TICK_HZ) {
@@ -1258,7 +1271,7 @@ function stepChain(st: GameState, level: Level, ci: number, ev: GameEvent[]) {
   }
   if (ch.stopT > 0) ch.speed = 0;
   else if (ch.speed > target) ch.speed = Math.max(target, ch.speed - TUNING.decel * DT);
-  else ch.speed = Math.min(target, ch.speed + (ch.rolling ? TUNING.decel : TUNING.accel) * DT);
+  else ch.speed = Math.min(target, ch.speed + (ch.rolling ? TUNING.decel : ff ? TUNING.accel * TUNING.ffAccelMul : TUNING.accel) * DT);
 
   // Insertion growth.
   for (const b of balls) {
@@ -1734,6 +1747,7 @@ export function normalizeState(st: GameState): GameState {
   st.coinFrac ??= 0;
   st.openerLeft ??= 0;
   st.windLeft ??= 0;
+  st.ff ??= false;
   return st;
 }
 

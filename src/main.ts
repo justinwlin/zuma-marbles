@@ -836,6 +836,11 @@ function queueFire(w: Pt) {
   if (Math.hypot(w.x - level.launcher.x, w.y - level.launcher.y) < 4) return;
   pending.push({ type: 'fire', x: w.x, y: w.y });
 }
+/** Fast-forward: the player's own call to hurry the chain along when nothing is happening. */
+function toggleFastForward() {
+  if (mode !== 'playing' || st.phase !== 'playing') return;
+  pending.push({ type: 'ff', on: !st.ff });
+}
 function queueSwap() {
   if (mode !== 'playing' || st.phase !== 'playing') return;
   pending.push({ type: 'swap' });
@@ -1070,6 +1075,10 @@ document.getElementById('btn-swap')!.addEventListener('pointerdown', (e) => {
   audio.unlock();
   queueSwap();
 });
+document.getElementById('btn-ff')!.addEventListener('click', () => {
+  audio.play('ui');
+  toggleFastForward();
+});
 document.getElementById('btn-help')!.addEventListener('click', () => {
   if (mode !== 'playing') return;
   audio.play('ui');
@@ -1112,6 +1121,8 @@ window.addEventListener('keydown', (e) => {
     if (e.code === 'Space' || e.code === 'KeyS') {
       e.preventDefault();
       queueSwap();
+    } else if (e.code === 'KeyF') {
+      toggleFastForward();
     } else if (e.code === 'ArrowLeft' || e.code === 'ArrowRight' || (level.rail && (e.code === 'ArrowUp' || e.code === 'ArrowDown'))) {
       const d = e.code === 'ArrowLeft' || e.code === 'ArrowUp' ? -1 : 1;
       if (level.rail) railAimU = Math.max(0, Math.min(level.rail.len, railAimU + d * 16));

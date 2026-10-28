@@ -235,6 +235,7 @@ input[type=range] { width: 140px; accent-color: var(--accent); touch-action: man
 .tapzone input, .haptic-switch { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0.001; touch-action: none; }
 .swap-btn { position: relative; }
 #btn-help { font-size: 20px; font-weight: 900; }
+#btn-ff.on { background: #ffd86b; color: #3a2a00; box-shadow: 0 0 14px rgba(255,216,107,.7); }
 
 /* Cancel target shown while drag-aiming on touch. */
 .cancel-zone {
@@ -539,6 +540,7 @@ body.rail-touch .cancel-zone { display: none; }
 /* Shop and trader: nearly opaque so the board (and the launcher) never shows through the cards. */
 .panel.shop, .panel.solid { background: rgba(9, 18, 31, 0.96); }
 .tag.got { color: #7dffcf; }
+.item-card.picked .item-main { outline: 3px solid #7dffcf; outline-offset: -1px; background: rgba(125,255,207,.12); }
 .screen.again, .screen.again .panel { animation: none; }
 
 /* Endless: between-stage page */

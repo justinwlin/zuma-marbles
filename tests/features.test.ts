@@ -373,3 +373,40 @@ describe('mini-boss serpent', () => {
     expect(stateHash(s1)).toBe(stateHash(replay(createGame(level), level, a.inputs, Math.round(a.seconds * TICK_HZ))));
   });
 });
+
+describe('fast-forward', () => {
+  const level = generateLevel('ff-test', 6);
+  const headAfter = (on: boolean, seconds: number) => {
+    const st = createGame(level);
+    // Let the roll-in finish at normal speed, then toggle.
+    for (let i = 0; i < 4 * TICK_HZ; i++) step(st, level);
+    const before = st.chains[0].balls.at(-1)!.s;
+    step(st, level, [{ type: 'ff', on }]);
+    for (let i = 0; i < seconds * TICK_HZ; i++) step(st, level);
+    return { st, moved: st.chains[0].balls.at(-1)!.s - before };
+  };
+
+  it('moves the chain much faster while on', () => {
+    const slow = headAfter(false, 3).moved;
+    const fast = headAfter(true, 3).moved;
+    expect(fast).toBeGreaterThan(slow * 2);
+  });
+
+  it('turns off again', () => {
+    const { st } = headAfter(true, 1);
+    step(st, level, [{ type: 'ff', on: false }]);
+    expect(st.ff).toBe(false);
+  });
+
+  it('never speeds up a chain inside the danger zone', () => {
+    const st = createGame(level);
+    step(st, level, [{ type: 'ff', on: true }]);
+    const L = level.tracks[0].length;
+    const deep = L * (1 - TUNING.dangerFrac) + 10;
+    let guard = 0;
+    while (st.phase === 'playing' && st.chains[0].balls.at(-1)!.s < deep && guard++ < 600 * TICK_HZ) step(st, level);
+    expect(st.chains[0].balls.at(-1)!.s).toBeGreaterThanOrEqual(deep);
+    for (let i = 0; i < TICK_HZ; i++) step(st, level);
+    expect(st.chains[0].speed).toBeLessThanOrEqual((level.speed * st.mods.speedMul) / TUNING.slowFactor + 1e-6);
+  });
+});

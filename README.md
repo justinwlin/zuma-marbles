@@ -2,7 +2,7 @@
 
 A Zuma-style marble shooter for phone (portrait) and desktop. It installs as a PWA, plays offline, and has infinite deterministic levels.
 
-- **Play**: on desktop, move to aim, click to shoot, and right-click or Space to swap. On a phone, drag to aim, release to shoot, and tap the frog or the swap button to swap.
+- **Play**: on desktop, move to aim, click to shoot, and right-click or Space to swap. On a phone, drag to aim, release to shoot, and tap the frog or the swap button to swap. The ⏩ button (or F) fast-forwards the chain when nothing is happening. It never speeds up a chain near the skull.
 - **Hold to keep shooting**: hold the mouse button, or press and hold without dragging on a phone, to rapid-fire along the aim (slide to steer). You can turn it off in Settings.
 - **Touch aiming**:
   - Cancel a shot by sliding onto **✕ Cancel** or back onto the frog, or by touching with a second finger.

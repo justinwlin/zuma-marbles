@@ -101,8 +101,9 @@ for (const [name, opts] of Object.entries(PROFILES)) {
   await page.waitForTimeout(2500);
   await page.evaluate(() => (window as any).__zuma.winNow());
   await page.waitForFunction(() => document.querySelector('[data-screen=pick]'), null, { timeout: 15000 });
-  await measure(page, name, 'pick');
   await click(page, '[data-a=take]');
+  await measure(page, name, 'pick');
+  await click(page, '[data-a=confirm]');
   await measure(page, name, 'shop');
   // Campaign result screen
   await page.evaluate(() => {

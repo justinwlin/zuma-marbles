@@ -241,6 +241,15 @@ async function runProfile(name: string, opts: BrowserContextOptions) {
   await page.waitForTimeout(200);
   check('closing the sheet resumes play', (await page.evaluate(() => (window as unknown as { __zuma: Z }).__zuma.mode)) === 'playing');
 
+  // ---- Fast-forward: the HUD button toggles it on and off.
+  const ffOn = () => page.evaluate(() => (window as any).__zuma.state().ff as boolean);
+  await page.locator('#btn-ff').click();
+  await page.waitForTimeout(200);
+  check('fast-forward button turns it on', (await ffOn()) && (await page.locator('#btn-ff.on').count()) === 1);
+  await page.locator('#btn-ff').click();
+  await page.waitForTimeout(200);
+  check('fast-forward button turns it off', !(await ffOn()) && (await page.locator('#btn-ff.on').count()) === 0);
+
   // ---- In-game settings: gear pauses, character change persists, resume.
   await page.locator('#btn-settings').click();
   await page.waitForTimeout(250);
@@ -523,21 +532,34 @@ async function runProfile(name: string, opts: BrowserContextOptions) {
   const panel = await page.locator('[data-screen=trader] .panel').boundingBox();
   check('trader: fits on one screen', !!panel && panel.y >= -1 && panel.y + panel.height <= vp.height + 1, panel ? `${panel.height.toFixed(0)}px tall` : 'missing');
   await page.screenshot({ path: `${OUT}/${name}-17-trader.png` });
+  // The free boost is only chosen: tapping another card switches the choice, nothing is taken until Continue.
+  const pickState = () =>
+    page.evaluate(() => {
+      const eco = (window as any).__zuma.run().eco;
+      const picked = document.querySelector('[data-screen=trader] .item-card.picked [data-a=take]') as HTMLElement | null;
+      return { picked: picked?.dataset.id ?? null, boosts: eco.boosts.length, took: (window as any).__zuma.run().trader?.took ?? null };
+    });
   await page.locator('[data-a=take]').first().click();
   await page.waitForTimeout(150);
+  const p1 = await pickState();
+  await page.locator('[data-a=take]').nth(1).click();
+  await page.waitForTimeout(150);
+  const p2 = await pickState();
+  check('trader: tapping a free boost picks it without taking it', !!p1.picked && p1.boosts === tr0.boosts && !p1.took, JSON.stringify(p1));
+  check('trader: tapping another free boost changes the pick', !!p2.picked && p2.picked !== p1.picked && p2.boosts === tr0.boosts && !p2.took, JSON.stringify(p2));
   await page.locator('[data-screen=trader] [data-a=buy]').first().click();
   await page.waitForTimeout(150);
-  const tr1 = await page.evaluate(() => {
-    const eco = (window as any).__zuma.run().eco;
-    return { coins: eco.coins, boosts: eco.boosts.length, charms: eco.charms.length, freeLeft: document.querySelectorAll('[data-a=take]').length, yours: document.querySelectorAll('.tag.got').length };
-  });
-  check('trader: the free boost is yours and the others close', tr1.freeLeft === 0 && tr1.boosts + tr1.charms >= 2 && tr1.yours >= 2, JSON.stringify(tr1));
+  const tr1 = await page.evaluate(() => ({ coins: (window as any).__zuma.run().eco.coins }));
   check('trader: buying costs coins', tr1.coins < tr0.coins, `${tr0.coins} → ${tr1.coins}`);
   await page.screenshot({ path: `${OUT}/${name}-17b-trader-bought.png` });
   await page.locator('[data-screen=trader] [data-a=go]').click();
   await page.waitForTimeout(700);
-  const tr2 = await page.evaluate(() => ({ mode: (window as any).__zuma.mode, hud: document.getElementById('hud-level')!.textContent, trader: (window as any).__zuma.run().trader }));
+  const tr2 = await page.evaluate(() => {
+    const run = (window as any).__zuma.run();
+    return { mode: (window as any).__zuma.mode, hud: document.getElementById('hud-level')!.textContent, trader: run.trader, ids: run.eco.boosts.map((b: { id: string }) => b.id).concat(run.eco.charms.map((c: { id: string }) => c.id)) };
+  });
   check('trader: Continue starts stage 6 with the items', tr2.mode === 'playing' && tr2.hud === 'Stage 6' && !tr2.trader, JSON.stringify(tr2));
+  check('trader: Continue takes the last picked boost', tr2.ids.includes(p2.picked) && !tr2.ids.includes(p1.picked), JSON.stringify(tr2.ids));
   await page.evaluate(() => (window as any).__zuma.pause());
   await page.locator('[data-a=quit]').click().catch(() => {});
   await page.waitForTimeout(300);

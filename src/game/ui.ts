@@ -575,14 +575,14 @@ export class UI {
   }
 
   /** An item as a compact card. `price` 0 = free. */
-  private card(id: ItemId, o: { price?: number; action?: string; disabled?: boolean; hold?: string; luckyColor?: number } = {}) {
+  private card(id: ItemId, o: { price?: number; action?: string; disabled?: boolean; hold?: string; luckyColor?: number; picked?: boolean } = {}) {
     const d = ITEMS[id];
     const desc = id === 'luckyColor' && o.luckyColor !== undefined ? `${PALETTE_NAMES[o.luckyColor]} pays triple coins` : d.desc;
     const price = o.price === undefined ? '' : o.price === 0 ? '<span class="price free">FREE</span>' : `<span class="price">🪙 ${o.price.toLocaleString()}</span>`;
-    return `<div class="item-card ${d.kind} ${o.disabled ? 'off' : ''}">
+    return `<div class="item-card ${d.kind} ${o.disabled ? 'off' : ''} ${o.picked ? 'picked' : ''}">
       <button class="item-main" ${o.action && !o.disabled ? `data-a="${o.action}" data-id="${id}"` : 'disabled'}>
         <span class="item-ico">${d.icon}</span><b>${d.name}</b><span class="item-desc">${desc}</span>${price}
-      </button>${o.hold ?? ''}</div>`;
+      </button>${o.picked ? '<span class="tag got">✓ picked</span>' : (o.hold ?? '')}</div>`;
   }
 
   /** Owned charms and live boosts as one compact strip of 6 slots. */
@@ -607,8 +607,12 @@ export class UI {
     return `<div class="owned"><div class="owned-col"><h3>Your charms</h3>${charms}</div><div class="owned-col"><h3>Your boosts</h3>${boosts}</div></div>`;
   }
 
-  /** A free pick: choose one of `ids`, or skip. A full row asks which item to replace. */
+  /**
+   * A free pick: tap a card to choose it (tap another to change your mind), then confirm, or skip.
+   * A full row asks which item to replace.
+   */
   pick(o: { title: string; sub: string; eco: RunEco; stage: number; ids: ItemId[]; onPick: (id: ItemId | null, replace?: number) => void }) {
+    let picked: ItemId | null = null;
     const render = (choosing: ItemId | null) => {
       const kind = choosing ? ITEMS[choosing].kind : null;
       const html = choosing
@@ -616,12 +620,17 @@ export class UI {
             ${this.owned(o.eco, o.stage, kind === 'charm' ? 'replace-charm' : 'replace-boost')}
             <div class="fit-actions"><button class="btn ghost" data-a="cancel">Back</button></div></div>`
         : `<div class="panel wide fit"><h2>${o.title}</h2><p class="sub">${o.sub}</p>
-            <div class="cards">${o.ids.map((id) => this.card(id, { price: 0, action: 'take', luckyColor: o.eco.luckyColor })).join('')}</div>
+            <div class="cards">${o.ids.map((id) => this.card(id, { price: 0, action: 'take', luckyColor: o.eco.luckyColor, picked: id === picked })).join('')}</div>
             ${this.owned(o.eco, o.stage, 'view')}
-            <div class="fit-actions"><button class="btn ghost" data-a="skip">Skip</button></div></div>`;
+            <div class="fit-actions row"><button class="btn ghost" data-a="skip">Skip</button>${picked ? `<button class="btn primary" data-a="confirm">Take ${ITEMS[picked].icon} ${ITEMS[picked].name} ▶</button>` : ''}</div></div>`;
       this.show('pick', html, {
         take: (el) => {
           const id = el.dataset.id as ItemId;
+          picked = picked === id ? null : id;
+          render(null);
+        },
+        confirm: () => {
+          const id = picked!;
           const full = ITEMS[id].kind === 'charm' ? o.eco.charms.length >= CHARM_SLOTS : o.eco.boosts.filter((b) => b.until > o.stage).length >= BOOST_SLOTS;
           if (full) render(id);
           else o.onPick(id);
@@ -723,6 +732,8 @@ export class UI {
    */
   trader(api: TraderApi) {
     let replacing: { id: ItemId; free: boolean } | null = null;
+    // The free boost is only chosen here; it is taken when you press Continue, so you can change your mind.
+    let picked: ItemId | null = null;
     let msg = '';
     const fail = (f: Fail | null) => (f === 'coins' ? 'Not enough coins.' : f === 'slots' ? 'No free slot.' : f === 'owned' ? 'You already have that.' : '');
     const render = () => {
@@ -732,7 +743,7 @@ export class UI {
       const freeCards = visit.free
         .map((id) => {
           if (visit.took) return this.card(id, { price: 0, disabled: true, hold: id === visit.took ? '<span class="tag got">✓ yours</span>' : '' });
-          return this.card(id, { price: 0, action: 'take', luckyColor: eco.luckyColor });
+          return this.card(id, { price: 0, action: 'take', luckyColor: eco.luckyColor, picked: id === picked });
         })
         .join('');
       const buyCards = visit.buy
@@ -755,14 +766,14 @@ export class UI {
             ${msg ? `<p class="shop-msg">${msg}</p>` : ''}
             <div class="shop-body">
               <div class="shop-offers">
-                <h3>Free boost <small>${visit.took ? 'taken' : 'pick one'}</small></h3>
+                <h3>Free boost <small>${visit.took ? 'taken' : picked ? 'yours when you continue' : 'pick one'}</small></h3>
                 <div class="cards">${freeCards || '<p class="sub">Nothing left to offer.</p>'}</div>
                 <h3>Trader <small>a taste of the shop</small></h3>
                 <div class="cards">${buyCards || '<p class="sub">Nothing left to offer.</p>'}</div>
               </div>
               <div class="shop-side">
                 ${this.owned(eco, api.stage, 'view')}
-                <div class="fit-actions row"><button class="btn primary" data-a="go">${visit.took || !visit.free.length ? 'Continue ▶' : 'Continue without a boost ▶'}</button></div>
+                <div class="fit-actions row"><button class="btn primary" data-a="go">${visit.took || !visit.free.length ? 'Continue ▶' : picked ? `Take ${ITEMS[picked].icon} ${ITEMS[picked].name} ▶` : 'Continue without a boost ▶'}</button></div>
               </div>
             </div>
           </div>`;
@@ -772,11 +783,8 @@ export class UI {
         {
           take: (el) => {
             const id = el.dataset.id as ItemId;
-            if (liveBoosts >= BOOST_SLOTS) {
-              replacing = { id, free: true };
-              return render();
-            }
-            msg = fail(api.take(id));
+            picked = picked === id ? null : id;
+            msg = '';
             render();
           },
           buy: (el) => {
@@ -792,13 +800,24 @@ export class UI {
             const r = replacing!;
             msg = fail(r.free ? api.take(r.id, Number(el.dataset.i)) : api.buy(r.id, Number(el.dataset.i)));
             replacing = null;
+            if (r.free && !msg) return api.done();
             render();
           },
           cancel: () => {
             replacing = null;
             render();
           },
-          go: () => api.done(),
+          go: () => {
+            if (picked && !visit.took) {
+              if (liveBoosts >= BOOST_SLOTS) {
+                replacing = { id: picked, free: true };
+                return render();
+              }
+              msg = fail(api.take(picked));
+              if (msg) return render();
+            }
+            api.done();
+          },
         },
         'fit-screen',
       );
@@ -877,6 +896,7 @@ export class UI {
   private lastPowers = '';
   private lastAce = '';
   private lastCoins = '';
+  private lastFf: boolean | null = null;
   private lastGun = [-1, -1];
   updateHud(st: GameState, level: Level, run: EndlessRun | null = null) {
     $('hud-level').textContent = `${run ? 'Stage' : 'Level'} ${level.index + 1}`;
@@ -919,6 +939,11 @@ export class UI {
       this.lastScore = score;
     }
     $('hud-streak').textContent = st.streak >= 3 ? `chain ×${st.streak}` : '';
+    if (st.ff !== this.lastFf) {
+      this.lastFf = st.ff;
+      $('btn-ff').classList.toggle('on', st.ff);
+      $('btn-ff').setAttribute('aria-pressed', String(st.ff));
+    }
     // BOMB (-2) = a Pocket Bomb shot
     const cur = st.gun.b & 1 ? BOMB : st.gun.w & 1 ? WILD : st.gun.cur;
     const nxt = st.gun.b & 2 ? BOMB : st.gun.w & 2 ? WILD : st.gun.next;
@@ -952,6 +977,7 @@ export class UI {
     this.lastScore = -1;
     // Not '' (the key for "nothing showing"), so the next update always redraws.
     this.lastPowers = '-';
+    this.lastFf = null;
     this.lastAce = '-';
     this.lastCoins = '-';
   }
