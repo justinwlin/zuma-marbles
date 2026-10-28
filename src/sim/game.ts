@@ -8,321 +8,12 @@
 // per-second units at our ball radius (r=18, ×1.125).
 
 import { BALL_D, BALL_R, type Level, type Rail } from './levelgen';
-import { COINS, type CoinLedger, type CoinSource, emptyLedger, type Mods, NO_MODS } from './items';
+import { COINS, type CoinSource, emptyLedger, type Mods, NO_MODS } from './items';
 import { next as rngNext } from './rng';
 import { inTunnel, pointAt, type Pt, tangentAt, type Track } from './track';
 
-export const TICK_HZ = 120;
-export const DT = 1 / TICK_HZ;
-
-const K = BALL_R / 16; // Zuma px → our px
-export const TUNING = {
-  /** Roll-in deceleration toward cruise speed (Zuma: 0.1 px/frame²). */
-  decel: 1000 * K,
-  /** Acceleration back up to cruise after a stop (Zuma: 0.005 px/frame²). */
-  accel: 50 * K,
-  /** Fraction of track the roll-in covers before settling (Zuma: 40%). */
-  rollIn: 0.36,
-  /** Danger zone: last fraction of track where the chain slows to speed/slowFactor. */
-  dangerFrac: 0.15,
-  dangerBlendFrac: 0.12,
-  slowFactor: 4,
-  /** Brakes charm: the last fraction of the track it covers. */
-  brakeFrac: 0.3,
-  /** Fast-forward (player toggle): cruise speed multiplier outside the danger zone, and how much quicker it gets there. */
-  ffFactor: 3,
-  ffAccelMul: 6,
-  /** Magnet pull: initial speed and acceleration (Zuma: suck 10/8 px/frame, +1/8 per frame). */
-  suckV0: 125 * K,
-  suckAccel: 1250 * K,
-  /** Knockback after a magnet contact: max(0.5, combo×1.5) px/frame for 0.3 s. */
-  recoilBase: 50 * K,
-  recoilPerCombo: 150 * K,
-  recoilTime: 0.3,
-  /** Pause the pusher after the rear-most ball clears / after recoil. */
-  stopAfterRearClear: 0.4,
-  stopAfterRecoil: 0.2,
-  /** Ball clear (pop) duration before it is removed. Zuma: 0.4 s; snappier here. */
-  clearTime: 0.26,
-  /** Insertion animation (Zuma mergespeed 0.05 → 0.2 s). */
-  insertTime: 0.15,
-  /** Projectile speed px/s (Zuma 600; faster feels better on touch). */
-  shotSpeed: 900,
-  /** Seconds between shots. */
-  cooldown: 0.24,
-  /** Hit distance between projectile and ball centres. */
-  hitDist: BALL_D * 0.92,
-  muzzle: 46,
-  /** Power-ups. */
-  powerLife: 18,
-  bombRadius: 122 * K,
-  slowTime: 8,
-  reverseTime: 3,
-  reverseSpeed: 100 * K,
-  /** When the bar fills with the chain past halfway: free reverse + slow. */
-  barBackTime: 3,
-  barSlowTime: 11,
-  /** Seconds before a stuck level-start is forced to cruise. */
-  rollInMax: 5,
-  /** Scorpion: runs back from the skull eating the front marbles. */
-  scorpionSpeed: 520,
-  scorpionEats: 10,
-  /** Bonus coins: float for coinLife s; one every coinEvery..+coinJitter s. */
-  coinLife: 6.5,
-  coinFirst: 12,
-  coinEvery: 17,
-  coinJitter: 12,
-  coinR: 22,
-  coinValue: 300,
-  /** End-of-level bonuses. */
-  aceBonus: 1000,
-  /** Points per 1% of track the chain never reached. */
-  sweepPerPct: 10,
-  /** Rail (boss fights): frog slide speed, boss attacks. */
-  railSpeed: 1500,
-  /** Rocks: the idol winds up (the target follows you), then lobs; it lands after rockFlight s. */
-  bossWindup: 0.75,
-  rockFlight: 1.45,
-  bossShotHitR: 46,
-  bossAttackEvery: 4.6,
-  bossAttackEvery2: 3.4,
-  bossFirstAttack: 6,
-  stunTime: 1.2,
-  bossDirectHit: 6,
-  /** Mini-boss serpent: rears up, then spits a marble onto the front of the chain. */
-  serpentWindup: 3,
-  /** While it rears up its hitbox grows (radius x this), and a hit chokes it: big damage + a power-up. */
-  serpentTargetK: 1.8,
-  serpentChoke: 15,
-  serpentEvery: 4,
-  serpentEvery2: 2.5,
-  serpentFirst: 8,
-  /** Black hole: lasts this long, swallows at most this many marbles. */
-  holeTime: 3.5,
-  holeEats: 14,
-  /** One marble every holeRate s, from within holeReach px of the vortex. */
-  holeRate: 0.12,
-  holeReach: BALL_D * 6,
-  /** Magnet Shot: seconds, and how hard shots steer toward their colour (per second). */
-  magnetTime: 8,
-  magnetSteer: 9,
-  /** Chameleon marbles change colour this often (seconds). */
-  chameleonEvery: 2.5,
-  /** Gem marbles: bonus score when popped. */
-  gemScore: 150,
-  /** No spitting once the head is past this fraction of the track. */
-  serpentMercy: 0.86,
-};
-
-/** Power-ups. 4 was Laser (aim beam + rapid fire) before Lightning replaced it. */
-export const Power = { None: 0, Bomb: 1, Slow: 2, Reverse: 3, Lightning: 4, Wild: 5, Scorpion: 6, ColorCloud: 7, BlackHole: 8, Magnet: 9 } as const;
-export type Power = (typeof Power)[keyof typeof Power];
-export const POWER_NAMES = ['', 'Bomb', 'Slow', 'Reverse', 'Lightning', 'Wild', 'Scorpion', 'Colour Cloud', 'Black Hole', 'Magnet'];
-export const POWER_COUNT = 9;
-/** Colour index used to draw a wild (rainbow) marble. */
-export const WILD = 6;
-
-export interface Ball {
-  id: number;
-  c: number; // colour index
-  s: number; // arc distance
-  p: Power;
-  pt: number; // power time left
-  /** 0..1 growth of the gap to the previous ball (insertion animation). */
-  g: number;
-  /** Insertion progress 0..1 for a freshly shot ball; 1 = settled. */
-  ins: number;
-  ix: number;
-  iy: number;
-  /** Clear timer; -1 = not clearing. */
-  clr: number;
-  /** Combo depth carried by magnet pulls. */
-  combo: number;
-  /** Magnet pull speed (backwards), 0 = none. */
-  suck: number;
-  /** Recoil time left and speed. */
-  rt: number;
-  rv: number;
-  /** Pending gap bonus for a shot ball, paid when it settles into a match. */
-  gb: number;
-  /** Wild: takes the colour of the best neighbour when it settles. */
-  w?: 1;
-  /** Spat by the serpent (its settling match doesn't count toward your streak). */
-  sp?: 1;
-  /** Armored: the first pop only cracks the armor. */
-  a?: 1;
-  /** Chameleon: changes colour every few seconds. */
-  cm?: 1;
-  /** Gem: pays bonus score and coins when popped. */
-  gem?: 1;
-}
-
-export interface Shot {
-  id: number;
-  c: number;
-  x: number;
-  y: number;
-  vx: number;
-  vy: number;
-  gaps: number[]; // ids of balls whose gaps we flew through
-  minGap: number;
-  w?: 1;
-  /** Pocket Bomb: explodes where it lands instead of joining the chain. */
-  b?: 1;
-}
-
-/** A scorpion running back along chain ci from the skull, eating the front marbles. */
-export interface Scorpion {
-  ci: number;
-  s: number;
-  left: number;
-}
-
-/** A lobbed rock: flies from (x0, y0) to rail spot u, landing when t reaches 0 (of T). */
-export interface Rock {
-  id: number;
-  u: number;
-  t: number;
-  T: number;
-  x0: number;
-  y0: number;
-}
-
-/** Boss state: the rail idol (every 10th level) or the skull serpent (mini-bosses). */
-export interface BossState {
-  hp: number;
-  max: number;
-  /** Seconds to the next wind-up. */
-  t: number;
-  /** Wind-up time left (0 = not winding up). The attack fires when it runs out. */
-  wind: number;
-  /** Hit flash timer. */
-  hitT: number;
-  dead: boolean;
-  /** Attacks so far (the idol alternates hands). */
-  n: number;
-  /** Serpent: colour of the marble it's about to spit. */
-  spitC: number;
-  /** Idol: rocks in the air. */
-  shots: Rock[];
-}
-
-export type Phase = 'playing' | 'losing' | 'lost' | 'won';
-
-/** One chain of marbles on one track (levels can have several). */
-export interface Chain {
-  balls: Ball[]; // ordered by s ascending: [0] = rear (pusher), [n-1] = head
-  pending: number[]; // colours of balls pushed back off the start (re-enter first)
-  speed: number; // current pusher speed px/s
-  rolling: boolean; // level-start roll-in phase
-  stopT: number;
-  lastColor: number;
-  /** Furthest the head has reached (arc length). */
-  peak: number;
-}
-
-export interface GameState {
-  v: 2;
-  campaignSeed: string;
-  levelIndex: number;
-  tick: number;
-  phase: Phase;
-  rngChain: number;
-  rngGun: number;
-  nextId: number;
-  /** One per track; chains[i] runs on level.tracks[i]. */
-  chains: Chain[];
-  shots: Shot[];
-  slowT: number;
-  revT: number;
-  /** Fast-forward toggled on by the player. */
-  ff: boolean;
-  spawning: boolean;
-  barFull: boolean;
-  score: number;
-  /** Part of the score that doesn't fill the bar (coins, end-of-level bonuses). */
-  extra: number;
-  streak: number; // consecutive matching shots
-  /** w: wild bits (1 = current marble is wild, 2 = next); b: Pocket Bomb bits, same layout. */
-  gun: { cur: number; next: number; cool: number; w: number; b: number };
-  /** Rail levels: frog position u along the rail, target tu, queued shot, stun time. */
-  rail: { u: number; tu: number; q: boolean; stun: number } | null;
-  boss: BossState | null;
-  scorps: Scorpion[];
-  coin: { x: number; y: number; t: number } | null;
-  coinT: number;
-  rngBonus: number;
-  /** Boss beaten: the chain pops from the head back, one marble per tick per chain. */
-  cascade: boolean;
-  /** Set when the level is won. */
-  bonus: { sweep: number; ace: number; seconds: number; from: number[] } | null;
-  loseV: number;
-  stats: {
-    shots: number;
-    matches: number;
-    popped: number;
-    maxCombo: number;
-    maxStreak: number;
-    gapShots: number;
-    powers: number;
-    misses: number;
-    coins: number;
-    bossHits: number;
-  };
-  /** Expedition items in effect (neutral outside Expedition). */
-  mods: Mods;
-  /** Coins earned this level (Expedition currency, separate from score). */
-  coinsEarned: CoinLedger;
-  /** Extra Life rescues left this level. */
-  lives: number;
-  /** Black holes: a vortex at arc position s on chain ci, swallowing marbles that reach it. */
-  holes: { ci: number; s: number; t: number; left: number; n: number }[];
-  /** Magnet Shot time left: shots curve toward a marble of their colour. */
-  magnetT: number;
-  /** Coin Rush: fraction of a coin carried to the next pop. */
-  coinFrac: number;
-  /** Opener: power marbles still to place as soon as the chain is in. */
-  openerLeft: number;
-  /** Second Wind: free Reverses left this level. */
-  windLeft: number;
-}
-
-/** move: rail levels only — slide the frog toward the point's spot on the rail. */
-export type Command = { type: 'fire'; x: number; y: number } | { type: 'swap' } | { type: 'move'; x: number; y: number } | { type: 'ff'; on: boolean };
-
-export type GameEvent =
-  | { type: 'fire'; x: number; y: number; dx: number; dy: number; c: number }
-  | { type: 'hit'; x: number; y: number; c: number; front: boolean }
-  | { type: 'settle'; x: number; y: number; c: number }
-  | { type: 'pop'; balls: { x: number; y: number; c: number; p: Power }[]; combo: number; score: number; x: number; y: number; c: number; gapBonus: number; chainBonus: number }
-  | { type: 'suck'; x: number; y: number }
-  | { type: 'contact'; x: number; y: number; combo: number; matched: boolean }
-  | { type: 'power'; power: Power; x: number; y: number; c: number; zaps?: { x: number; y: number }[] }
-  | { type: 'miss' }
-  | { type: 'swap' }
-  | { type: 'barFull' }
-  | { type: 'lose' }
-  | { type: 'lost' }
-  | { type: 'won'; sweep: number; ace: number }
-  | { type: 'rollInDone' }
-  | { type: 'coin'; x: number; y: number }
-  | { type: 'coinGet'; x: number; y: number; score: number }
-  | { type: 'coinGone'; x: number; y: number }
-  | { type: 'eat'; x: number; y: number; c: number }
-  | { type: 'bossHit'; x: number; y: number; dmg: number }
-  | { type: 'bossWindup' }
-  | { type: 'bossAttack'; x: number; y: number; tx: number; ty: number }
-  | { type: 'swallow'; x: number; y: number }
-  | { type: 'rescue'; x: number; y: number }
-  | { type: 'wind'; x: number; y: number }
-  | { type: 'crack'; x: number; y: number; c: number }
-  | { type: 'gem'; x: number; y: number; score: number }
-  | { type: 'choke'; x: number; y: number; at: { x: number; y: number; power: Power }[] }
-  | { type: 'spit'; x: number; y: number; tx: number; ty: number; c: number }
-  | { type: 'stun'; x: number; y: number }
-  | { type: 'dodge'; x: number; y: number }
-  | { type: 'bossDown'; x: number; y: number }
-  | { type: 'cascade'; x: number; y: number; c: number };
+export * from './state';
+import { type Ball, type BossState, type Chain, type Command, DT, type GameEvent, type GameState, K, Power, type Shot, TICK_HZ, TUNING, WILD } from './state';
 
 // ------------------------------------------------------------------ setup
 
@@ -1046,7 +737,6 @@ function steerShot(st: GameState, level: Level, sh: Shot, spd: number) {
 }
 
 function stepShots(st: GameState, level: Level, ev: GameEvent[]) {
-  const hd2 = TUNING.hitDist * TUNING.hitDist;
   for (let si = st.shots.length - 1; si >= 0; si--) {
     const sh = st.shots[si];
     const spd = Math.sqrt(sh.vx * sh.vx + sh.vy * sh.vy);
@@ -1056,97 +746,13 @@ function stepShots(st: GameState, level: Level, ev: GameEvent[]) {
     for (let k = 0; k < sub && !done; k++) {
       sh.x += (sh.vx * DT) / sub;
       sh.y += (sh.vy * DT) / sub;
-      // Gap detection: flying between two balls separated by a gap.
-      for (let ci = 0; ci < st.chains.length; ci++) {
-       const balls = st.chains[ci].balls;
-       const tr = level.tracks[ci];
-       for (let i = 1; i < balls.length; i++) {
-        const a = balls[i - 1];
-        const b = balls[i];
-        const gap = b.s - a.s - BALL_D;
-        if (gap < 4 || !hittable(a, tr) || !hittable(b, tr)) continue;
-        pointAt(tr, a.s, tmp);
-        pointAt(tr, b.s, tmp2);
-        const ex = tmp2.x - tmp.x;
-        const ey = tmp2.y - tmp.y;
-        const el2 = ex * ex + ey * ey;
-        const t = ((sh.x - tmp.x) * ex + (sh.y - tmp.y) * ey) / el2;
-        if (t <= 0 || t >= 1) continue;
-        const px = tmp.x + ex * t - sh.x;
-        const py = tmp.y + ey * t - sh.y;
-        if (px * px + py * py < BALL_R * BALL_R && !sh.gaps.includes(b.id)) {
-          sh.gaps.push(b.id);
-          sh.minGap = Math.min(sh.minGap, gap);
-        }
-       }
-      }
-      // Collision with chain: swept circle test over this substep, earliest contact wins.
-      // Same maths as raycast(), so the aim preview and the real shot always agree.
-      const segX = (sh.vx * DT) / sub;
-      const segY = (sh.vy * DT) / sub;
-      const segL = Math.sqrt(segX * segX + segY * segY);
-      const ux = segX / segL;
-      const uy = segY / segL;
-      const ox = sh.x - segX;
-      const oy = sh.y - segY;
-      let best = -1;
-      let bestC = 0;
-      let bestT = Infinity;
-      for (let ci = 0; ci < st.chains.length; ci++) {
-       const balls = st.chains[ci].balls;
-       const tr = level.tracks[ci];
-       for (let i = 0; i < balls.length; i++) {
-        const b = balls[i];
-        if (!hittable(b, tr)) continue;
-        pointAt(tr, b.s, tmp);
-        const fx = ox - tmp.x;
-        const fy = oy - tmp.y;
-        const c = fx * fx + fy * fy - hd2;
-        let t: number;
-        if (c <= 0) t = 0; // already overlapping at the start of the substep
-        else {
-          const bq = fx * ux + fy * uy;
-          const disc = bq * bq - c;
-          if (disc < 0) continue;
-          t = -bq - Math.sqrt(disc);
-          if (t < 0 || t > segL) continue;
-        }
-        if (t < bestT) {
-          bestT = t;
-          best = i;
-          bestC = ci;
-        }
-       }
-      }
-      if (best >= 0) {
-        sh.x = ox + ux * bestT;
-        sh.y = oy + uy * bestT;
-      }
-      // Coins float above the board: a shot passing through collects it and flies on.
-      const coin = st.coin;
-      if (coin) {
-        const cx = sh.x - coin.x;
-        const cy = sh.y - coin.y;
-        const cr = TUNING.coinR + BALL_R * 0.6;
-        if (cx * cx + cy * cy < cr * cr) {
-          st.coin = null;
-          st.score += TUNING.coinValue;
-          st.extra += TUNING.coinValue;
-          st.stats.coins++;
-          earn(st, 'floating', COINS.floating);
-          ev.push({ type: 'coinGet', x: coin.x, y: coin.y, score: TUNING.coinValue });
-        }
-      }
+      markGaps(st, level, sh);
+      const hit = sweptHit(st, level, sh, (sh.vx * DT) / sub, (sh.vy * DT) / sub);
+      collectCoin(st, sh, ev);
       const B = level.bossFight;
-      let bossHit = false;
-      if (best < 0 && B && st.boss && !st.boss.dead) {
-        const bx = sh.x - B.x;
-        const by = sh.y - B.y;
-        const br = (B.kind === 'serpent' && st.boss.wind > 0 ? B.r * TUNING.serpentTargetK : B.r) + BALL_R * 0.7;
-        bossHit = bx * bx + by * by < br * br;
-      }
-      if (best >= 0) {
-        insertShot(st, level, sh, bestC, best, ev);
+      const bossHit = !hit && touchesBoss(st, level, sh);
+      if (hit) {
+        insertShot(st, level, sh, hit.ci, hit.i, ev);
         st.shots.splice(si, 1);
         done = true;
       } else if (bossHit && B!.kind === 'serpent' && st.boss!.wind <= 0) {
@@ -1176,6 +782,107 @@ function stepShots(st: GameState, level: Level, ev: GameEvent[]) {
       }
     }
   }
+}
+
+/** Gap detection: a shot flying between two marbles separated by a gap remembers it (for the gap bonus). */
+function markGaps(st: GameState, level: Level, sh: Shot) {
+  for (let ci = 0; ci < st.chains.length; ci++) {
+    const balls = st.chains[ci].balls;
+    const tr = level.tracks[ci];
+    for (let i = 1; i < balls.length; i++) {
+      const a = balls[i - 1];
+      const b = balls[i];
+      const gap = b.s - a.s - BALL_D;
+      if (gap < 4 || !hittable(a, tr) || !hittable(b, tr)) continue;
+      pointAt(tr, a.s, tmp);
+      pointAt(tr, b.s, tmp2);
+      const ex = tmp2.x - tmp.x;
+      const ey = tmp2.y - tmp.y;
+      const el2 = ex * ex + ey * ey;
+      const t = ((sh.x - tmp.x) * ex + (sh.y - tmp.y) * ey) / el2;
+      if (t <= 0 || t >= 1) continue;
+      const px = tmp.x + ex * t - sh.x;
+      const py = tmp.y + ey * t - sh.y;
+      if (px * px + py * py < BALL_R * BALL_R && !sh.gaps.includes(b.id)) {
+        sh.gaps.push(b.id);
+        sh.minGap = Math.min(sh.minGap, gap);
+      }
+    }
+  }
+}
+
+/**
+ * Collision with the chains over the substep that just moved the shot by (segX, segY): a swept
+ * circle test, earliest contact wins. On contact the shot is moved back to the contact point.
+ * Same maths as raycast(), so the aim preview and the real shot always agree.
+ */
+function sweptHit(st: GameState, level: Level, sh: Shot, segX: number, segY: number): { ci: number; i: number } | null {
+  const hd2 = TUNING.hitDist * TUNING.hitDist;
+  const segL = Math.sqrt(segX * segX + segY * segY);
+  const ux = segX / segL;
+  const uy = segY / segL;
+  const ox = sh.x - segX;
+  const oy = sh.y - segY;
+  let best = -1;
+  let bestC = 0;
+  let bestT = Infinity;
+  for (let ci = 0; ci < st.chains.length; ci++) {
+    const balls = st.chains[ci].balls;
+    const tr = level.tracks[ci];
+    for (let i = 0; i < balls.length; i++) {
+      const b = balls[i];
+      if (!hittable(b, tr)) continue;
+      pointAt(tr, b.s, tmp);
+      const fx = ox - tmp.x;
+      const fy = oy - tmp.y;
+      const c = fx * fx + fy * fy - hd2;
+      let t: number;
+      if (c <= 0) t = 0; // already overlapping at the start of the substep
+      else {
+        const bq = fx * ux + fy * uy;
+        const disc = bq * bq - c;
+        if (disc < 0) continue;
+        t = -bq - Math.sqrt(disc);
+        if (t < 0 || t > segL) continue;
+      }
+      if (t < bestT) {
+        bestT = t;
+        best = i;
+        bestC = ci;
+      }
+    }
+  }
+  if (best < 0) return null;
+  sh.x = ox + ux * bestT;
+  sh.y = oy + uy * bestT;
+  return { ci: bestC, i: best };
+}
+
+/** Coins float above the board: a shot passing through collects it and flies on. */
+function collectCoin(st: GameState, sh: Shot, ev: GameEvent[]) {
+  const coin = st.coin;
+  if (!coin) return;
+  const cx = sh.x - coin.x;
+  const cy = sh.y - coin.y;
+  const cr = TUNING.coinR + BALL_R * 0.6;
+  if (cx * cx + cy * cy < cr * cr) {
+    st.coin = null;
+    st.score += TUNING.coinValue;
+    st.extra += TUNING.coinValue;
+    st.stats.coins++;
+    earn(st, 'floating', COINS.floating);
+    ev.push({ type: 'coinGet', x: coin.x, y: coin.y, score: TUNING.coinValue });
+  }
+}
+
+/** Is the shot touching a living boss? (A rearing serpent is a bigger target.) */
+function touchesBoss(st: GameState, level: Level, sh: Shot): boolean {
+  const B = level.bossFight;
+  if (!B || !st.boss || st.boss.dead) return false;
+  const bx = sh.x - B.x;
+  const by = sh.y - B.y;
+  const br = (B.kind === 'serpent' && st.boss.wind > 0 ? B.r * TUNING.serpentTargetK : B.r) + BALL_R * 0.7;
+  return bx * bx + by * by < br * br;
 }
 
 /** Shared by the simulation and the aim preview: is the impact in front (toward the skull)? */
@@ -1520,64 +1227,69 @@ function activatePower(st: GameState, level: Level, ci: number, b: Ball, ev: Gam
   else if (p === Power.Scorpion) st.scorps.push({ ci, s: level.tracks[ci].length + BALL_D, left: TUNING.scorpionEats * st.mods.scorpionEatsMul });
   else if (p === Power.Magnet) st.magnetT = TUNING.magnetTime;
   else if (p === Power.BlackHole) st.holes.push({ ci, s: b.s, t: TUNING.holeTime, left: TUNING.holeEats, n: 0.15 });
-  else if (p === Power.ColorCloud) {
-    // The 4 marbles on each side take its colour, so the gap snaps shut into a big combo.
-    const balls = st.chains[ci].balls;
-    const tr = level.tracks[ci];
-    const i = balls.indexOf(b);
-    const pts: { x: number; y: number }[] = [];
-    for (const dir of [-1, 1]) {
-      let left = 4;
-      for (let k = i + dir; k >= 0 && k < balls.length && left > 0; k += dir) {
-        const o = balls[k];
-        if (o.clr >= 0) continue;
-        if (o.s < tr.visibleFrom || inTunnel(tr, o.s)) break;
-        o.c = b.c;
-        delete o.cm;
-        left--;
-        pointAt(tr, o.s, tmp);
-        pts.push({ x: tmp.x, y: tmp.y });
-      }
-    }
-    pev.zaps = pts;
-  }
+  else if (p === Power.ColorCloud) pev.zaps = colourCloud(level, st.chains[ci].balls, ci, b);
   else if (p === Power.Lightning) {
-    // Every visible marble of the power marble's colour, on every track, is struck.
-    const zaps: { x: number; y: number }[] = [];
-    for (let oc = 0; oc < st.chains.length; oc++) {
-      const tr = level.tracks[oc];
-      for (const o of st.chains[oc].balls) {
-        if (o.clr >= 0 || o.c !== b.c || o.s < tr.visibleFrom || inTunnel(tr, o.s)) continue;
-        pointAt(tr, o.s, tmp);
-        zaps.push({ x: tmp.x, y: tmp.y });
-        startClear(st, level, oc, o, b.combo, ev);
-      }
-    }
-    // Lightning Rod: a second colour is struck too, in the front half of each track.
-    if (st.mods.lightningRod) {
-      let mask = 0;
-      st.chains.forEach((ch, oc) => {
-        const tr = level.tracks[oc];
-        for (const o of ch.balls) if (o.clr < 0 && o.c !== b.c && o.s > tr.length * 0.5 && !inTunnel(tr, o.s)) mask |= 1 << o.c;
-      });
-      const cols: number[] = [];
-      for (let c = 0; c < 8; c++) if (mask & (1 << c)) cols.push(c);
-      if (cols.length) {
-        const c2 = cols[Math.floor(rand(st, 'bonus') * cols.length)];
-        for (let oc = 0; oc < st.chains.length; oc++) {
-          const tr = level.tracks[oc];
-          for (const o of st.chains[oc].balls) {
-            if (o.clr >= 0 || o.c !== c2 || o.s <= tr.length * 0.5 || inTunnel(tr, o.s)) continue;
-            pointAt(tr, o.s, tmp);
-            zaps.push({ x: tmp.x, y: tmp.y });
-            startClear(st, level, oc, o, b.combo, ev);
-          }
-        }
-      }
-    }
+    const zaps = lightning(st, level, b, ev);
     st.score += 10 * zaps.length;
     pev.zaps = zaps;
   } else if (p === Power.Bomb) blast(st, level, bx, by, b.combo, ev);
+}
+
+/** Colour Cloud: the 4 marbles on each side take its colour, so the gap snaps shut into a big combo. Returns where they are. */
+function colourCloud(level: Level, balls: Ball[], ci: number, b: Ball): Pt[] {
+  const tr = level.tracks[ci];
+  const i = balls.indexOf(b);
+  const pts: Pt[] = [];
+  for (const dir of [-1, 1]) {
+    let left = 4;
+    for (let k = i + dir; k >= 0 && k < balls.length && left > 0; k += dir) {
+      const o = balls[k];
+      if (o.clr >= 0) continue;
+      if (o.s < tr.visibleFrom || inTunnel(tr, o.s)) break;
+      o.c = b.c;
+      delete o.cm;
+      left--;
+      pointAt(tr, o.s, tmp);
+      pts.push({ x: tmp.x, y: tmp.y });
+    }
+  }
+  return pts;
+}
+
+/**
+ * Lightning: every visible marble of the power marble's colour, on every track, is struck.
+ * Lightning Rod adds a second (random) colour, in the front half of each track. Returns the strike points.
+ */
+function lightning(st: GameState, level: Level, b: Ball, ev: GameEvent[]): Pt[] {
+  const zaps: Pt[] = [];
+  strike(st, level, b.combo, ev, zaps, (o, tr) => o.c === b.c && o.s >= tr.visibleFrom);
+  if (st.mods.lightningRod) {
+    let mask = 0;
+    st.chains.forEach((ch, oc) => {
+      const tr = level.tracks[oc];
+      for (const o of ch.balls) if (o.clr < 0 && o.c !== b.c && o.s > tr.length * 0.5 && !inTunnel(tr, o.s)) mask |= 1 << o.c;
+    });
+    const cols: number[] = [];
+    for (let c = 0; c < 8; c++) if (mask & (1 << c)) cols.push(c);
+    if (cols.length) {
+      const c2 = cols[Math.floor(rand(st, 'bonus') * cols.length)];
+      strike(st, level, b.combo, ev, zaps, (o, tr) => o.c === c2 && o.s > tr.length * 0.5);
+    }
+  }
+  return zaps;
+}
+
+/** Clear every uncleared marble outside tunnels that `hit` picks, on every track, recording where. */
+function strike(st: GameState, level: Level, combo: number, ev: GameEvent[], zaps: Pt[], hit: (o: Ball, tr: Track) => boolean) {
+  for (let oc = 0; oc < st.chains.length; oc++) {
+    const tr = level.tracks[oc];
+    for (const o of st.chains[oc].balls) {
+      if (o.clr >= 0 || !hit(o, tr) || inTunnel(tr, o.s)) continue;
+      pointAt(tr, o.s, tmp);
+      zaps.push({ x: tmp.x, y: tmp.y });
+      startClear(st, level, oc, o, combo, ev);
+    }
+  }
 }
 
 /** Bomb blast at (x, y): pops every visible marble in range, on every track. */
