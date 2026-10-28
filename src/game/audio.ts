@@ -112,13 +112,13 @@ export class Audio {
    * pitched in the current chord. Combo steps climb the scale, so combos play an arpeggio.
    */
   private popOnBeat(now: number, pitch: number) {
-    const st = (p: number) => Math.pow(2, p / 12);
+    const semitones = (p: number) => Math.pow(2, p / 12);
     this.noise(now, 0.12, 0.25, 'bandpass', 5000, 1200, 1.5);
     const grid = this.stepLen / 4;
     const t = this.stepT + Math.max(0, Math.ceil((now - this.stepT) / grid)) * grid;
     const scale = this.clear ? CLEAR_SCALE : this.key.scale;
     const deg = Math.round(pitch / 2);
-    const f = this.chordRoot * 2 * st(scale[deg % 5] + 12 * Math.floor(deg / 5));
+    const f = this.chordRoot * 2 * semitones(scale[deg % 5] + 12 * Math.floor(deg / 5));
     this.tone(t, 'sine', f * 2, f, 0.12, 0.45);
     this.tone(t + 0.01, 'triangle', f * 3, f * 1.5, 0.18, 0.18);
     this.tone(t + 0.05, 'sine', f * 4, f * 4.2, 0.22, 0.06);
@@ -159,18 +159,18 @@ export class Audio {
   }
 
   private buildVoices() {
-    const st = (p: number) => Math.pow(2, p / 12);
+    const semitones = (p: number) => Math.pow(2, p / 12);
     this.voices = {
       shoot: (t, p) => {
-        this.noise(t, 0.09, 0.35, 'bandpass', 2400 * st(p), 600, 2);
-        this.tone(t, 'triangle', 520 * st(p), 160, 0.1, 0.25);
+        this.noise(t, 0.09, 0.35, 'bandpass', 2400 * semitones(p), 600, 2);
+        this.tone(t, 'triangle', 520 * semitones(p), 160, 0.1, 0.25);
       },
       clack: (t, p) => {
-        this.tone(t, 'sine', 1300 * st(p * 0.7), 900, 0.05, 0.4);
+        this.tone(t, 'sine', 1300 * semitones(p * 0.7), 900, 0.05, 0.4);
         this.noise(t, 0.03, 0.3, 'highpass', 3000, 2000, 0.7);
       },
       pop: (t, p) => {
-        const f = 440 * st(p);
+        const f = 440 * semitones(p);
         this.tone(t, 'sine', f * 2, f, 0.12, 0.45);
         this.tone(t + 0.01, 'triangle', f * 3, f * 1.5, 0.18, 0.18);
         this.noise(t, 0.12, 0.25, 'bandpass', 5000, 1200, 1.5);
@@ -181,7 +181,7 @@ export class Audio {
         this.noise(t, 0.35, 0.18, 'bandpass', 300, 1800, 4);
       },
       thunk: (t, p) => {
-        this.tone(t, 'sine', 220 * st(p), 70, 0.16, 0.6);
+        this.tone(t, 'sine', 220 * semitones(p), 70, 0.16, 0.6);
         this.noise(t, 0.05, 0.3, 'lowpass', 1800, 300, 1);
       },
       boom: (t) => {
@@ -209,26 +209,26 @@ export class Audio {
         this.tone(t, 'sine', 700, 1050, 0.06, 0.2);
       },
       barfull: (t) => {
-        [0, 4, 7, 12].forEach((n, i) => this.tone(t + i * 0.09, 'triangle', 523 * st(n), 523 * st(n), 0.3, 0.25));
+        [0, 4, 7, 12].forEach((n, i) => this.tone(t + i * 0.09, 'triangle', 523 * semitones(n), 523 * semitones(n), 0.3, 0.25));
       },
       win: (t) => {
-        [0, 4, 7, 12, 16, 19, 24].forEach((n, i) => this.tone(t + i * 0.08, 'triangle', 392 * st(n), 392 * st(n), 0.35, 0.22));
+        [0, 4, 7, 12, 16, 19, 24].forEach((n, i) => this.tone(t + i * 0.08, 'triangle', 392 * semitones(n), 392 * semitones(n), 0.35, 0.22));
       },
       lose: (t) => {
-        [0, -3, -7, -12].forEach((n, i) => this.tone(t + i * 0.18, 'sawtooth', 330 * st(n), 300 * st(n), 0.35, 0.12));
+        [0, -3, -7, -12].forEach((n, i) => this.tone(t + i * 0.18, 'sawtooth', 330 * semitones(n), 300 * semitones(n), 0.35, 0.12));
         this.noise(t, 1.2, 0.3, 'lowpass', 800, 60, 1);
       },
       heart: (t) => {
         this.tone(t, 'sine', 70, 40, 0.12, 0.6);
         this.tone(t + 0.16, 'sine', 65, 38, 0.1, 0.4);
       },
-      tick: (t, p) => this.tone(t, 'sine', 1800 * st(p), 1700, 0.018, 0.08),
+      tick: (t, p) => this.tone(t, 'sine', 1800 * semitones(p), 1700, 0.018, 0.08),
       ui: (t) => this.tone(t, 'sine', 880, 990, 0.05, 0.15),
       cancel: (t) => {
         this.tone(t, 'sine', 520, 260, 0.12, 0.18);
         this.noise(t, 0.08, 0.08, 'lowpass', 900, 300, 1);
       },
-      count: (t, p) => this.tone(t, 'square', 1200 * st(p), 1200 * st(p), 0.02, 0.05),
+      count: (t, p) => this.tone(t, 'square', 1200 * semitones(p), 1200 * semitones(p), 0.02, 0.05),
       coinAppear: (t) => {
         this.tone(t, 'sine', 1568, 1568, 0.08, 0.12);
         this.tone(t + 0.07, 'sine', 2093, 2093, 0.14, 0.1);
@@ -237,14 +237,14 @@ export class Audio {
         // Classic two-note coin + sparkle
         this.tone(t, 'square', 988, 988, 0.07, 0.12);
         this.tone(t + 0.07, 'square', 1319, 1319, 0.28, 0.12);
-        for (let i = 0; i < 4; i++) this.tone(t + 0.1 + i * 0.05, 'sine', 2637 * st(i * 2), 2637 * st(i * 2), 0.08, 0.05);
+        for (let i = 0; i < 4; i++) this.tone(t + 0.1 + i * 0.05, 'sine', 2637 * semitones(i * 2), 2637 * semitones(i * 2), 0.08, 0.05);
       },
       crunch: (t, p) => {
-        this.noise(t, 0.07, 0.4, 'bandpass', 1800 * st(p), 700, 1.5);
+        this.noise(t, 0.07, 0.4, 'bandpass', 1800 * semitones(p), 700, 1.5);
         this.tone(t, 'square', 180, 90, 0.05, 0.1);
       },
       wild: (t) => {
-        [0, 4, 7, 11, 14, 19].forEach((n, i) => this.tone(t + i * 0.045, 'triangle', 660 * st(n), 660 * st(n), 0.16, 0.14));
+        [0, 4, 7, 11, 14, 19].forEach((n, i) => this.tone(t + i * 0.045, 'triangle', 660 * semitones(n), 660 * semitones(n), 0.16, 0.14));
       },
       scorpion: (t) => {
         for (let i = 0; i < 8; i++) this.noise(t + i * 0.03, 0.025, 0.25, 'highpass', 4000, 3000, 1);
@@ -284,11 +284,11 @@ export class Audio {
       bossDown: (t) => {
         this.tone(t, 'sine', 90, 25, 1.2, 0.9);
         this.noise(t, 1.1, 0.7, 'lowpass', 2500, 60, 0.8);
-        [0, 4, 7, 12, 16, 19, 24].forEach((n, i) => this.tone(t + 0.35 + i * 0.07, 'triangle', 392 * st(n), 392 * st(n), 0.3, 0.2));
+        [0, 4, 7, 12, 16, 19, 24].forEach((n, i) => this.tone(t + 0.35 + i * 0.07, 'triangle', 392 * semitones(n), 392 * semitones(n), 0.3, 0.2));
       },
       ace: (t) => {
-        [0, 7, 12, 16, 19, 24].forEach((n, i) => this.tone(t + i * 0.06, 'square', 523 * st(n), 523 * st(n), 0.22, 0.09));
-        this.tone(t + 0.36, 'triangle', 523 * st(24), 523 * st(24), 0.6, 0.16);
+        [0, 7, 12, 16, 19, 24].forEach((n, i) => this.tone(t + i * 0.06, 'square', 523 * semitones(n), 523 * semitones(n), 0.22, 0.09));
+        this.tone(t + 0.36, 'triangle', 523 * semitones(24), 523 * semitones(24), 0.6, 0.16);
       },
     };
   }
@@ -324,9 +324,9 @@ export class Audio {
     const beat = 0.42 - m.danger * 0.12;
     this.musicTimer += beat;
     const t = this.ctx.currentTime + 0.02;
-    const st = (p: number) => Math.pow(2, p / 12);
+    const semitones = (p: number) => Math.pow(2, p / 12);
     const scale = clear ? CLEAR_SCALE : this.key.scale;
-    const root = this.key.root * st(this.key.prog[Math.floor(this.musicStep / 16) % 4]);
+    const root = this.key.root * semitones(this.key.prog[Math.floor(this.musicStep / 16) % 4]);
     const k = this.musicStep % 16;
     this.stepT = t;
     this.stepLen = beat;
@@ -341,12 +341,12 @@ export class Audio {
     if (k % 4 === 0) this.tone(t, 'sine', root / 2, root / 2, beat * 3.6, 0.25, this.music, 0.08); // pad
     if (k % 2 === 0 || m.danger > 0.6) {
       const n = scale[(this.musicStep * 5 + (k >> 1)) % scale.length] + (k % 8 === 6 ? 12 : 0);
-      this.tone(t, 'triangle', root * st(n), root * st(n), 0.35, 0.09 + m.danger * 0.05, this.music);
+      this.tone(t, 'triangle', root * semitones(n), root * semitones(n), 0.35, 0.09 + m.danger * 0.05, this.music);
     }
     // Layers are only scheduled while audible (or fading), to keep the node count down.
     if (bass > 0.01 || this.layer.bass.gain.value > 0.01) {
       const walk = [0, 0, 12, 0, 7, 0, 12, 5][k % 8];
-      if (k % 2 === 0) this.tone(t, 'triangle', (root / 2) * st(walk), (root / 2) * st(walk), beat * 0.9, 0.3, this.layer.bass, 0.01);
+      if (k % 2 === 0) this.tone(t, 'triangle', (root / 2) * semitones(walk), (root / 2) * semitones(walk), beat * 0.9, 0.3, this.layer.bass, 0.01);
     }
     if (drums > 0.01 || this.layer.drums.gain.value > 0.01) {
       if (k % 4 === 0) this.tone(t, 'sine', 150, 45, 0.16, 0.7, this.layer.drums, 0.002); // kick

@@ -42,6 +42,21 @@ export interface TraderApi {
 /** Which build is running: commit hash and build date, shown on the home screen. */
 export const BUILD_LABEL = `build ${__BUILD_SHA__} · ${new Date(__BUILD_TIME__).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`;
 
+/** Shop and trader messages for a failed purchase. */
+function failMessage(f: Fail | null): string {
+  return f === 'coins' ? 'Not enough coins.' : f === 'slots' ? 'No free slot.' : f === 'owned' ? 'You already have that.' : '';
+}
+
+/** With every charm slot full, buying a charm sells one back: the most it can refund. */
+function bestCharmRefund(eco: RunEco): number {
+  return eco.charms.length >= CHARM_SLOTS ? Math.max(...eco.charms.map((c) => Math.floor(c.paid / 2))) : 0;
+}
+
+/** Seconds as m:ss. */
+export function mmss(sec: number) {
+  return `${Math.floor(sec / 60)}:${String(Math.floor(sec % 60)).padStart(2, '0')}`;
+}
+
 const PALETTE_NAMES = ['Red', 'Yellow', 'Green', 'Blue', 'Purple', 'White'];
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -299,7 +314,7 @@ export class UI {
     const by = src.filter(([k]) => (l.coinsBy[k] ?? 0) > 0).map(([k, name]) => `<span>${name} +${l.coinsBy[k]}</span>`).join('');
     const n = o.next;
     const kind = n.meta.boss === 'boss' ? '<b class="warn">Boss fight</b>' : n.meta.boss === 'mini' ? '<b class="warn">Mini-boss: the serpent</b>' : '';
-    const notes = [kind, n.meta.twin ? 'two chains' : '', ...n.meta.mutators.map((m) => `<b>${MUTATOR_INFO[m].name}</b>: ${MUTATOR_INFO[m].desc}`), `ace time ${mm2(n.ace)}`].filter(Boolean);
+    const notes = [kind, n.meta.twin ? 'two chains' : '', ...n.meta.mutators.map((m) => `<b>${MUTATOR_INFO[m].name}</b>: ${MUTATOR_INFO[m].desc}`), `ace time ${mmss(n.ace)}`].filter(Boolean);
     this.show(
       'stage-clear',
       `<div class="panel solid stage-clear">
@@ -311,7 +326,7 @@ export class UI {
           <div><small>Coins</small><b>🪙 ${o.coins.toLocaleString()}</b></div>
         </div>
         <p class="sc-coins">+${l.coins.toLocaleString()} coins this stage${by ? `<span class="sc-by">${by}</span>` : ''}</p>
-        <p class="sc-time">${mm2(l.seconds)}${l.ace ? ' · <b class="ace">Ace time!</b>' : ''}</p>
+        <p class="sc-time">${mmss(l.seconds)}${l.ace ? ' · <b class="ace">Ace time!</b>' : ''}</p>
         <div class="sc-next">
           <small>Up next</small>
           <b>Stage ${n.stage + 1} · ${n.name} ${badges(n.meta)}</b>
@@ -375,7 +390,7 @@ export class UI {
       : `Level ${level.index + 1} · ${level.name}<br><span style="font-size:12px">code ${levelCode(level.campaignSeed, level.index)}</span>`;
     const info = [
       level.boss === 'boss' ? '<b>Boss fight</b>' : level.boss === 'mini' ? '<b>Mini-boss</b>: the skull serpent' : '',
-      `ace time ${mm2(level.ace)}`,
+      `ace time ${mmss(level.ace)}`,
       level.tracks.length > 1 ? 'two chains' : '',
       ...level.mutators.map((m) => `<b>${MUTATOR_INFO[m].name}</b>: ${MUTATOR_INFO[m].desc}`),
     ].filter(Boolean);
@@ -410,7 +425,7 @@ export class UI {
         ${won ? `<div class="stars">${starHtml}</div>` : ''}
         ${!won && tip ? `<div class="tip">💡 ${tip}</div>` : ''}
         <div class="big-score" id="res-score">0</div>
-        ${won && st.bonus ? `<div class="bonus-rows"><div>Track bonus <b>+${st.bonus.sweep.toLocaleString()}</b></div><div class="${st.bonus.ace ? 'ace' : 'miss'}">${st.bonus.ace ? `Ace time! <b>+${st.bonus.ace.toLocaleString()}</b>` : `Ace time ${mm2(level.ace)} <b>missed</b>`}</div>${s.coins ? `<div>Coins <b>${s.coins} × ${TUNING.coinValue}</b></div>` : ''}</div>` : ''}
+        ${won && st.bonus ? `<div class="bonus-rows"><div>Track bonus <b>+${st.bonus.sweep.toLocaleString()}</b></div><div class="${st.bonus.ace ? 'ace' : 'miss'}">${st.bonus.ace ? `Ace time! <b>+${st.bonus.ace.toLocaleString()}</b>` : `Ace time ${mmss(level.ace)} <b>missed</b>`}</div>${s.coins ? `<div>Coins <b>${s.coins} × ${TUNING.coinValue}</b></div>` : ''}</div>` : ''}
         <div class="stats">
           <div>Time <b>${mm}</b></div><div>Best <b>${best.toLocaleString()}</b></div>
           <div>Max combo <b>×${s.maxCombo + 1}</b></div><div>Best chain <b>${s.maxStreak}</b></div>
@@ -615,6 +630,15 @@ export class UI {
     return `<div class="owned"><div class="owned-col"><h3>Your charms</h3>${charms}</div><div class="owned-col"><h3>Your boosts</h3>${boosts}</div></div>`;
   }
 
+  /** The row for `id` is full: choose an owned item to give up. Its buttons fire `replace` (data-i) and `cancel`. */
+  private replaceScreen(eco: RunEco, stage: number, id: ItemId, text: { title?: string; sub?: string; back?: string } = {}) {
+    const d = ITEMS[id];
+    const sub = text.sub ?? `Your ${d.kind}s are full. Pick one to replace with <b>${d.icon} ${d.name}</b>${d.kind === 'charm' ? ' (a bought charm sells for half)' : ''}.`;
+    return `<div class="panel wide fit"><h2>${text.title ?? 'No room'}</h2><p class="sub">${sub}</p>
+            ${this.owned(eco, stage, d.kind === 'charm' ? 'replace-charm' : 'replace-boost')}
+            <div class="fit-actions"><button class="btn ghost" data-a="cancel">${text.back ?? 'Back'}</button></div></div>`;
+  }
+
   /**
    * A free pick: tap a card to choose it (tap another to change your mind), then confirm, or skip.
    * A full row asks which item to replace.
@@ -622,11 +646,8 @@ export class UI {
   pick(o: { title: string; sub: string; eco: RunEco; stage: number; ids: ItemId[]; onPick: (id: ItemId | null, replace?: number) => void }) {
     let picked: ItemId | null = null;
     const render = (choosing: ItemId | null) => {
-      const kind = choosing ? ITEMS[choosing].kind : null;
       const html = choosing
-        ? `<div class="panel wide fit"><h2>No room</h2><p class="sub">Your ${kind}s are full. Pick one to replace with <b>${ITEMS[choosing].icon} ${ITEMS[choosing].name}</b>${kind === 'charm' ? ' (a bought charm sells for half)' : ''}.</p>
-            ${this.owned(o.eco, o.stage, kind === 'charm' ? 'replace-charm' : 'replace-boost')}
-            <div class="fit-actions"><button class="btn ghost" data-a="cancel">Back</button></div></div>`
+        ? this.replaceScreen(o.eco, o.stage, choosing)
         : `<div class="panel wide fit"><h2>${o.title}</h2><p class="sub">${o.sub}</p>
             <div class="cards">${o.ids.map((id) => this.card(id, { price: 0, action: 'take', luckyColor: o.eco.luckyColor, picked: id === picked })).join('')}</div>
             ${this.owned(o.eco, o.stage, 'view')}
@@ -655,7 +676,6 @@ export class UI {
   shop(api: ShopApi) {
     let replacing: ItemId | null = null;
     let msg = '';
-    const fail = (f: Fail | null) => (f === 'coins' ? 'Not enough coins.' : f === 'slots' ? 'No free slot.' : f === 'owned' ? 'You already have that.' : '');
     const render = () => {
       const eco = api.eco;
       const offers = api.offers();
@@ -665,15 +685,17 @@ export class UI {
       const charmCard = (id: ItemId, reserved = false) => {
         const price = priceAt(id, api.stage);
         const hold = reserved ? '<span class="tag">held for you</span>' : eco.reserved ? '' : `<button class="mini-btn hold" data-a="hold" data-id="${id}" ${eco.coins < RESERVE_COST ? 'disabled' : ''}>hold · 🪙${RESERVE_COST}</button>`;
-        const refund = eco.charms.length >= CHARM_SLOTS ? Math.max(...eco.charms.map((c) => Math.floor(c.paid / 2))) : 0;
+        const refund = bestCharmRefund(eco);
         return this.card(id, { price, action: 'buy', disabled: eco.coins + refund < price, hold, luckyColor: eco.luckyColor });
       };
       const charms = [...(offers.reserved ? [charmCard(offers.reserved, true)] : []), ...offers.charms.map((id) => charmCard(id))];
       const boosts = offers.boosts.map((id) => this.card(id, { price: priceAt(id, api.stage), action: 'buy', disabled: eco.coins < priceAt(id, api.stage) || liveBoosts >= BOOST_SLOTS }));
       const html = replacing
-        ? `<div class="panel wide fit"><h2>Replace a charm</h2><p class="sub">Your charms are full. Pick one to give up for <b>${ITEMS[replacing].icon} ${ITEMS[replacing].name}</b>. It sells for half of what you paid.</p>
-            ${this.owned(eco, api.stage, 'replace-charm')}
-            <div class="fit-actions"><button class="btn ghost" data-a="cancel">Back to shop</button></div></div>`
+        ? this.replaceScreen(eco, api.stage, replacing, {
+            title: 'Replace a charm',
+            sub: `Your charms are full. Pick one to give up for <b>${ITEMS[replacing].icon} ${ITEMS[replacing].name}</b>. It sells for half of what you paid.`,
+            back: 'Back to shop',
+          })
         : `<div class="panel wide fit shop">
             <div class="shop-head"><h2>Shop</h2><span class="coins-big">🪙 ${eco.coins.toLocaleString()}</span></div>
             <p class="sub">Next world: stages ${next + 1}–${boss + 1}. Boosts last until its boss is beaten.</p>
@@ -701,11 +723,11 @@ export class UI {
               replacing = id;
               return render();
             }
-            msg = fail(api.buy(id));
+            msg = failMessage(api.buy(id));
             render();
           },
           replace: (el) => {
-            msg = fail(api.buy(replacing!, Number(el.dataset.i)));
+            msg = failMessage(api.buy(replacing!, Number(el.dataset.i)));
             replacing = null;
             render();
           },
@@ -719,11 +741,11 @@ export class UI {
             render();
           },
           hold: (el) => {
-            msg = fail(api.reserve(el.dataset.id as ItemId));
+            msg = failMessage(api.reserve(el.dataset.id as ItemId));
             render();
           },
           reroll: () => {
-            msg = fail(api.reroll());
+            msg = failMessage(api.reroll());
             render();
           },
           go: () => api.done(),
@@ -743,7 +765,6 @@ export class UI {
     // The free boost is only chosen here; it is taken when you press Continue, so you can change your mind.
     let picked: ItemId | null = null;
     let msg = '';
-    const fail = (f: Fail | null) => (f === 'coins' ? 'Not enough coins.' : f === 'slots' ? 'No free slot.' : f === 'owned' ? 'You already have that.' : '');
     const render = () => {
       const { eco, visit } = api;
       const boss = bossStageFor(api.stage + 1);
@@ -760,15 +781,13 @@ export class UI {
           if (visit.bought.includes(id))
             return api.canUndo(id) ? this.card(id, { price, action: 'unbuy', picked: '✓ bought · tap to undo' }) : this.card(id, { disabled: true, hold: '<span class="tag got">✓ bought</span>' });
           const charm = ITEMS[id].kind === 'charm';
-          const refund = charm && eco.charms.length >= CHARM_SLOTS ? Math.max(...eco.charms.map((c) => Math.floor(c.paid / 2))) : 0;
+          const refund = charm ? bestCharmRefund(eco) : 0;
           const off = charm ? eco.coins + refund < price : eco.coins < price || liveBoosts >= BOOST_SLOTS;
           return this.card(id, { price, action: 'buy', disabled: off, luckyColor: eco.luckyColor });
         })
         .join('');
       const html = replacing
-        ? `<div class="panel wide fit"><h2>No room</h2><p class="sub">Your ${ITEMS[replacing.id].kind}s are full. Pick one to replace with <b>${ITEMS[replacing.id].icon} ${ITEMS[replacing.id].name}</b>${ITEMS[replacing.id].kind === 'charm' ? ' (a bought charm sells for half)' : ''}.</p>
-            ${this.owned(eco, api.stage, ITEMS[replacing.id].kind === 'charm' ? 'replace-charm' : 'replace-boost')}
-            <div class="fit-actions"><button class="btn ghost" data-a="cancel">Back</button></div></div>`
+        ? this.replaceScreen(eco, api.stage, replacing.id)
         : `<div class="panel wide fit shop trader">
             <div class="shop-head"><h2>Serpent slain!</h2><span class="coins-big">🪙 ${eco.coins.toLocaleString()}</span></div>
             <p class="sub">Take a free boost and see what the trader has. Boosts last until this world's boss (stage ${boss + 1}).</p>
@@ -802,7 +821,7 @@ export class UI {
               replacing = { id, free: false };
               return render();
             }
-            msg = fail(api.buy(id));
+            msg = failMessage(api.buy(id));
             render();
           },
           unbuy: (el) => {
@@ -812,7 +831,7 @@ export class UI {
           },
           replace: (el) => {
             const r = replacing!;
-            msg = fail(r.free ? api.take(r.id, Number(el.dataset.i)) : api.buy(r.id, Number(el.dataset.i)));
+            msg = failMessage(r.free ? api.take(r.id, Number(el.dataset.i)) : api.buy(r.id, Number(el.dataset.i)));
             replacing = null;
             if (r.free && !msg) return api.done();
             render();
@@ -827,7 +846,7 @@ export class UI {
                 replacing = { id: picked, free: true };
                 return render();
               }
-              msg = fail(api.take(picked));
+              msg = failMessage(api.take(picked));
               if (msg) return render();
             }
             api.done();
@@ -927,7 +946,7 @@ export class UI {
     const left = level.ace - st.tick / TICK_HZ;
     const [cls, text] = st.bonus
       ? st.bonus.ace ? ['got', 'ACE TIME!'] : ['missed', 'ACE MISSED']
-      : left <= 0 ? ['missed', 'ACE MISSED'] : [left <= 10 ? 'close' : '', `ACE ${mm2(Math.ceil(left))}`];
+      : left <= 0 ? ['missed', 'ACE MISSED'] : [left <= 10 ? 'close' : '', `ACE ${mmss(Math.ceil(left))}`];
     if (cls + text !== this.lastAce) {
       this.lastAce = cls + text;
       const el = $('hud-ace');
@@ -1017,10 +1036,6 @@ const AIM_HINTS = {
   tap: 'Tap where you want to shoot · hold and slide to keep shooting',
   pad: 'Drag anywhere to nudge the crosshair (finer than your finger, never covers the target), tap to shoot · hold to keep shooting',
 } as const;
-
-function mm2(sec: number) {
-  return `${Math.floor(sec / 60)}:${String(Math.floor(sec % 60)).padStart(2, '0')}`;
-}
 
 export interface LevelMeta {
   name: string;

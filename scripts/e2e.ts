@@ -61,7 +61,8 @@ async function touchDrag(page: Page, pts: { x: number; y: number }[]) {
 async function runProfile(name: string, opts: BrowserContextOptions) {
   console.log(`\n▶ ${name} ${opts.viewport!.width}×${opts.viewport!.height}${opts.hasTouch ? ' touch' : ''}`);
   const browser = await chromium.launch({ executablePath: browserPath(), args: ['--autoplay-policy=no-user-gesture-required'] });
-  const ctx = await browser.newContext(opts);
+  // No service worker: its first install can reload the page mid-test (pwa-check covers it).
+  const ctx = await browser.newContext({ ...opts, serviceWorkers: 'block' });
   const page = await ctx.newPage();
   // Record vibration calls with the event they happened in (sync-in-gesture matters on iOS).
   // (String, not a function: tsx would inject helpers the page doesn't have.)
@@ -755,7 +756,7 @@ async function runNotch() {
   const name = 'iphoneNotch';
   console.log(`\n▶ ${name} 390×844 touch, safe-area 59/34 applied after load`);
   const browser = await chromium.launch({ executablePath: browserPath() });
-  const ctx = await browser.newContext(PROFILES.phone);
+  const ctx = await browser.newContext({ ...PROFILES.phone, serviceWorkers: 'block' });
   const page = await ctx.newPage();
   await page.goto(base);
   await page.evaluate(() => localStorage.clear());

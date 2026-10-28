@@ -32,7 +32,7 @@ npm run e2e                 # browser checks on 7 device profiles (about 5 min)
 | `npm run preview` | Serves `dist/` on `0.0.0.0:5173`. Use it to test the PWA, offline mode and the exact production bundle. |
 | `npm test` | Vitest: all of `tests/*.test.ts`. |
 | `npm run typecheck` | Type-check only. |
-| `npm run e2e` | Browser end-to-end checks against `http://localhost:5173/`. A dev or preview server must already be running. |
+| `npm run e2e` | Browser end-to-end checks against `http://localhost:5173/`. A server must already be running. Prefer `npm run preview`: the dev server can reload the page mid-test after source changes. Pass another URL as an argument (`npm run e2e -- http://localhost:5174/`). |
 | `npm run pwa-check` | Verifies the build is installable and works offline (run `npm run build` first). |
 | `npm run sim -- <seed> <levels> [preset…]` | Bot playthroughs per level: outcome, time, peak danger, combos. |
 | `npm run balance -- <campaigns> <levels…>` | Win-rate and average-time table per bot skill. |

@@ -41,7 +41,7 @@ import { Particles } from './game/fx';
 import { FEEL, feedbackFor, shakeOffset, springAngle } from './game/feel';
 import { Audio } from './game/audio';
 import { Haptics } from './game/haptics';
-import { levelMeta, UI } from './game/ui';
+import { levelMeta, mmss, UI } from './game/ui';
 import {
   dailySeed,
   type EndlessRun,
@@ -252,7 +252,8 @@ function playStage(r: EndlessRun) {
 /** After a mini-boss: a free boost. After a boss: a free charm, then the shop. */
 function betweenStages(r: EndlessRun) {
   const eco = r.eco!;
-  const won = r.stage - 1;
+  // Index of the stage just beaten (r.stage already points at the next one).
+  const clearedStage = r.stage - 1;
   const meta = withStarters((save.meta ??= newMeta()));
   mode = 'result';
   ui.showHud(false);
@@ -264,25 +265,25 @@ function betweenStages(r: EndlessRun) {
   if (r.pending === 'mini') {
     // One screen: a free boost plus the trader (drawn once, so reopening the app can't re-roll it).
     if (!r.trader) {
-      const free = miniPicks(eco, r.seed, won, meta.unlocked);
-      const t = traderOffers(eco, r.seed, won, meta.unlocked, free);
+      const free = miniPicks(eco, r.seed, clearedStage, meta.unlocked);
+      const t = traderOffers(eco, r.seed, clearedStage, meta.unlocked, free);
       r.trader = { free, buy: [...t.boosts, ...t.charms], took: null, bought: [] };
       persist();
     }
     const visit = r.trader;
     ui.trader({
       eco,
-      stage: won,
+      stage: clearedStage,
       visit,
       take: (id, replace) => {
         if (visit.took) return 'owned';
-        const f = gain(eco, id, r.seed, won, { free: true, replace });
+        const f = gain(eco, id, r.seed, clearedStage, { free: true, replace });
         if (!f) visit.took = id;
         persist();
         return f;
       },
       buy: (id, replace) => {
-        const res = buyUndoable(eco, id, r.seed, won, replace);
+        const res = buyUndoable(eco, id, r.seed, clearedStage, replace);
         if (typeof res === 'string') return res;
         visit.bought.push(id);
         (visit.receipts ??= []).push(res);
@@ -304,10 +305,10 @@ function betweenStages(r: EndlessRun) {
       title: 'Boss defeated!',
       sub: 'Pick a free charm. Charms stay with you for the rest of the run.',
       eco,
-      stage: won,
-      ids: bossPicks(eco, r.seed, won, meta.unlocked),
+      stage: clearedStage,
+      ids: bossPicks(eco, r.seed, clearedStage, meta.unlocked),
       onPick: (id, replace) => {
-        if (id) gain(eco, id, r.seed, won, { free: true, replace });
+        if (id) gain(eco, id, r.seed, clearedStage, { free: true, replace });
         r.pending = 'shop';
         persist();
         betweenStages(r);
@@ -321,9 +322,9 @@ function betweenStages(r: EndlessRun) {
     };
     ui.shop({
       eco,
-      stage: won,
-      offers: () => shopOffers(eco, r.seed, won, meta.unlocked),
-      buy: (id, replace) => act(() => gain(eco, id, r.seed, won, { replace })),
+      stage: clearedStage,
+      offers: () => shopOffers(eco, r.seed, clearedStage, meta.unlocked),
+      buy: (id, replace) => act(() => gain(eco, id, r.seed, clearedStage, { replace })),
       sell: (i) => act(() => sellCharm(eco, i)),
       reroll: () => act(() => reroll(eco)),
       reserve: (id) => act(() => reserve(eco, id)),
@@ -365,10 +366,6 @@ function levelBanner(): string[] {
   if (level.tracks.length > 1) notes.push('Two chains — watch both skulls!');
   for (const m of level.mutators) notes.push(`${MUTATOR_INFO[m].name}: ${MUTATOR_INFO[m].desc}`);
   return notes;
-}
-
-function mmss(sec: number) {
-  return `${Math.floor(sec / 60)}:${String(Math.floor(sec % 60)).padStart(2, '0')}`;
 }
 
 /** Boss fights on touch screens use their own controls: drag moves the frog, the Fire button shoots. */
@@ -1743,7 +1740,7 @@ function updateSweep(dt: number) {
     audio.play('ace');
     haptics.pulse([20, 30, 20, 30, 50]);
   }
-  if (sw.t > sw.dur + 0.7 && tally.done && (!tally.ace || tally.aceShown)) view.sweep = sw.t > sw.dur + 0.6 ? null : sw;
+  if (sw.t > sw.dur + 0.7 && tally.done && (!tally.ace || tally.aceShown)) view.sweep = null;
 }
 
 // ------------------------------------------------------------------ platform glue

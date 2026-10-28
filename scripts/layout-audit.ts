@@ -53,7 +53,8 @@ const click = async (page: Page, sel: string) => {
 const browser = await chromium.launch({ executablePath: browserPath() });
 for (const [name, opts] of Object.entries(PROFILES)) {
   if (only && !only.includes(name)) continue;
-  const page = await (await browser.newContext(opts)).newPage();
+  // No service worker: its first install can reload the page mid-audit.
+  const page = await (await browser.newContext({ ...opts, serviceWorkers: 'block' })).newPage();
   await page.goto(base);
   await page.evaluate(() => {
     localStorage.clear();
