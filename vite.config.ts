@@ -42,7 +42,8 @@ export default defineConfig({
           { src: 'icons/icon.svg', sizes: 'any', type: 'image/svg+xml' },
         ],
       },
-      workbox: { globPatterns: ['**/*.{js,css,html,svg,png,webmanifest}'] },
+      // og.png is only for link previews: don't make every player download it.
+      workbox: { globPatterns: ['**/*.{js,css,html,svg,png,webmanifest}'], globIgnores: ['og.png'] },
     }),
   ],
 });
