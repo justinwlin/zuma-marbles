@@ -1,11 +1,23 @@
 import { defineConfig } from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
+import { execSync } from 'node:child_process';
+
+/** The commit this build came from (shown on the home screen), "-dirty" if built with uncommitted changes. */
+function buildSha() {
+  const git = (cmd: string) => execSync(`git ${cmd}`, { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
+  try {
+    return git('rev-parse --short HEAD') + (git('status --porcelain') ? '-dirty' : '');
+  } catch {
+    return (process.env.GITHUB_SHA ?? 'unknown').slice(0, 7);
+  }
+}
 
 export default defineConfig({
   base: './',
   server: { host: '0.0.0.0', port: 5173, allowedHosts: true },
   preview: { host: '0.0.0.0', port: 5173, allowedHosts: true },
   build: { target: 'es2022' },
+  define: { __BUILD_SHA__: JSON.stringify(buildSha()), __BUILD_TIME__: JSON.stringify(new Date().toISOString()) },
   plugins: [
     VitePWA({
       registerType: 'autoUpdate',

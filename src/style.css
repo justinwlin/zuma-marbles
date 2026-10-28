@@ -157,6 +157,7 @@ h2 { font-size: 30px; font-weight: 900; letter-spacing: .5px; }
 .btn.ghost { background: transparent; box-shadow: none; border-color: transparent; color: var(--muted); font-size: 15px; padding: 8px; }
 .row { display: flex; gap: 10px; }
 .row > * { flex: 1; }
+.build-tag { position: fixed; right: calc(var(--sar) + 10px); bottom: calc(var(--sab) + 6px); font-size: 10px; color: var(--muted); opacity: .6; pointer-events: none; font-variant-numeric: tabular-nums; }
 .foot { margin-top: 20px; color: var(--muted); font-size: 12px; text-align: center; }
 
 .levels-head { width: min(720px, 100%); display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }

@@ -35,6 +35,9 @@ export interface TraderApi {
   done(): void;
 }
 
+/** Which build is running: commit hash and build date, shown on the home screen. */
+export const BUILD_LABEL = `build ${__BUILD_SHA__} · ${new Date(__BUILD_TIME__).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`;
+
 const PALETTE_NAMES = ['Red', 'Yellow', 'Green', 'Blue', 'Purple', 'White'];
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -143,7 +146,8 @@ export class UI {
         </div>
         ${this.canInstall ? `<button class="btn ghost" data-a="install">⬇ Install app</button>` : ''}
       </div>
-      ${isIOS && !standalone ? '<div class="foot">Tip: Share → <b>Add to Home Screen</b> to play full-screen & offline.</div>' : ''}`,
+      ${isIOS && !standalone ? '<div class="foot">Tip: Share → <b>Add to Home Screen</b> to play full-screen & offline.</div>' : ''}
+      <div class="build-tag" id="build-tag">${BUILD_LABEL}</div>`,
       {
         continue: () => this.a.continueSnapshot(),
         play: () => this.a.play(save.unlocked),
