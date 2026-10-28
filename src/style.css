@@ -121,7 +121,7 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
 }
 .screen > * { flex-shrink: 0; }
 .screen > :first-child { margin-top: auto; }
-.screen > :last-child { margin-bottom: auto; }
+.screen > :last-child, .screen > :has(+ .build-tag:last-child) { margin-bottom: auto; }
 .screen.clear { background: rgba(5,10,18,0.25); }
 @keyframes fadein { from { opacity: 0; } }
 .panel {
