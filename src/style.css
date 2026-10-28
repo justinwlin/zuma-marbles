@@ -537,8 +537,10 @@ body.rail-touch .cancel-zone { display: none; }
 .sc-next .warn { color: #ff8fa3; }
 .sc-items { font-size: 20px; letter-spacing: 4px; }
 @media (max-height: 520px) {
+  .stage-clear .sub { display: none; }
   .sc-row { margin: 4px 0 6px; }
   .sc-row div { padding: 5px 4px; }
+  .sc-row b { font-size: 16px; }
   .sc-time { margin-bottom: 6px; }
   .sc-next { padding: 6px 12px; margin-bottom: 8px; gap: 2px; }
 }
