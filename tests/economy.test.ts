@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { generateLevel } from '../src/sim/levelgen';
 import { createGame, Power, progress, stateHash, step, TICK_HZ, TUNING } from '../src/sim/game';
 import { boostedLevel, ITEMS, modsFor, NO_MODS } from '../src/sim/items';
-import { activeItems, bossPicks, priceAt, gain, miniPicks, modsForStage, newEco, reroll, rerollCost, reserve, sellCharm, settleStage, shopOffers, traderOffers, TRADER_BOOSTS, TRADER_CHARMS, retryCost, canRetry, payRetry, RETRY_MIN } from '../src/sim/economy';
+import { activeItems, bossPicks, buyUndoable, undoBuy, priceAt, gain, miniPicks, modsForStage, newEco, reroll, rerollCost, reserve, sellCharm, settleStage, shopOffers, traderOffers, TRADER_BOOSTS, TRADER_CHARMS, retryCost, canRetry, payRetry, RETRY_MIN } from '../src/sim/economy';
 import { checkUnlocks, LevelTracker, newMeta } from '../src/sim/achievements';
 import { runExpedition } from '../src/sim/expedition';
 import { BOT_PRESETS } from '../src/sim/bot';
@@ -543,6 +543,39 @@ describe('new achievements', () => {
     chokes(9);
     expect(meta.best?.lightningRod).toBe(6);
     expect(meta.unlocked).toContain('lightningRod');
+  });
+});
+
+describe('undoing a trader purchase', () => {
+  it('a boost: refunds it and leaves the run exactly as before', () => {
+    const eco = newEco();
+    eco.coins = 3000;
+    const before = JSON.stringify(eco);
+    const r = buyUndoable(eco, 'slowpoke', 'u', 4);
+    expect(typeof r).not.toBe('string');
+    expect(eco.coins).toBeLessThan(3000);
+    undoBuy(eco, r as Exclude<typeof r, string>);
+    expect(JSON.stringify(eco)).toBe(before);
+  });
+
+  it('a charm that replaced one: the old charm comes back with what you paid for it', () => {
+    const eco = newEco();
+    eco.coins = 5000;
+    for (const id of ['shockwave', 'bomber', 'quickDraw'] as const) expect(gain(eco, id, 'u', 4)).toBeNull();
+    const before = JSON.stringify(eco);
+    const r = buyUndoable(eco, 'luckyColor', 'u', 4, 1);
+    expect(typeof r).not.toBe('string');
+    expect(eco.charms.map((c) => c.id)).toEqual(['shockwave', 'quickDraw', 'luckyColor']);
+    undoBuy(eco, r as Exclude<typeof r, string>);
+    expect(JSON.stringify(eco)).toBe(before);
+  });
+
+  it('a failed purchase returns the reason and changes nothing', () => {
+    const eco = newEco();
+    eco.coins = 10;
+    const before = JSON.stringify(eco);
+    expect(buyUndoable(eco, 'slowpoke', 'u', 4)).toBe('coins');
+    expect(JSON.stringify(eco)).toBe(before);
   });
 });
 

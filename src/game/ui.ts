@@ -32,6 +32,10 @@ export interface TraderApi {
   /** Take the free boost (replace = live boost to give up when full). */
   take(id: ItemId, replace?: number): Fail | null;
   buy(id: ItemId, replace?: number): Fail | null;
+  /** Was this bought on this visit (so it can be handed back)? */
+  canUndo(id: ItemId): boolean;
+  /** Hand back a purchase for a full refund (until Continue). */
+  unbuy(id: ItemId): void;
   done(): void;
 }
 
@@ -579,14 +583,14 @@ export class UI {
   }
 
   /** An item as a compact card. `price` 0 = free. */
-  private card(id: ItemId, o: { price?: number; action?: string; disabled?: boolean; hold?: string; luckyColor?: number; picked?: boolean } = {}) {
+  private card(id: ItemId, o: { price?: number; action?: string; disabled?: boolean; hold?: string; luckyColor?: number; picked?: boolean | string } = {}) {
     const d = ITEMS[id];
     const desc = id === 'luckyColor' && o.luckyColor !== undefined ? `${PALETTE_NAMES[o.luckyColor]} pays triple coins` : d.desc;
     const price = o.price === undefined ? '' : o.price === 0 ? '<span class="price free">FREE</span>' : `<span class="price">🪙 ${o.price.toLocaleString()}</span>`;
     return `<div class="item-card ${d.kind} ${o.disabled ? 'off' : ''} ${o.picked ? 'picked' : ''}">
       <button class="item-main" ${o.action && !o.disabled ? `data-a="${o.action}" data-id="${id}"` : 'disabled'}>
         <span class="item-ico">${d.icon}</span><b>${d.name}</b><span class="item-desc">${desc}</span>${price}
-      </button>${o.picked ? '<span class="tag got">✓ picked</span>' : (o.hold ?? '')}</div>`;
+      </button>${o.picked ? `<span class="tag got">${o.picked === true ? '✓ picked' : o.picked}</span>` : (o.hold ?? '')}</div>`;
   }
 
   /** Owned charms and live boosts as one compact strip of 6 slots. */
@@ -752,8 +756,9 @@ export class UI {
         .join('');
       const buyCards = visit.buy
         .map((id) => {
-          if (visit.bought.includes(id)) return this.card(id, { disabled: true, hold: '<span class="tag got">✓ bought</span>' });
           const price = priceAt(id, api.stage);
+          if (visit.bought.includes(id))
+            return api.canUndo(id) ? this.card(id, { price, action: 'unbuy', picked: '✓ bought · tap to undo' }) : this.card(id, { disabled: true, hold: '<span class="tag got">✓ bought</span>' });
           const charm = ITEMS[id].kind === 'charm';
           const refund = charm && eco.charms.length >= CHARM_SLOTS ? Math.max(...eco.charms.map((c) => Math.floor(c.paid / 2))) : 0;
           const off = charm ? eco.coins + refund < price : eco.coins < price || liveBoosts >= BOOST_SLOTS;
@@ -772,7 +777,7 @@ export class UI {
               <div class="shop-offers">
                 <h3>Free boost <small>${visit.took ? 'taken' : picked ? 'yours when you continue' : 'pick one'}</small></h3>
                 <div class="cards">${freeCards || '<p class="sub">Nothing left to offer.</p>'}</div>
-                <h3>Trader <small>a taste of the shop</small></h3>
+                <h3>Trader <small>change your mind until you continue</small></h3>
                 <div class="cards">${buyCards || '<p class="sub">Nothing left to offer.</p>'}</div>
               </div>
               <div class="shop-side">
@@ -798,6 +803,11 @@ export class UI {
               return render();
             }
             msg = fail(api.buy(id));
+            render();
+          },
+          unbuy: (el) => {
+            api.unbuy(el.dataset.id as ItemId);
+            msg = '';
             render();
           },
           replace: (el) => {

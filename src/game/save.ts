@@ -2,7 +2,7 @@
 // the tab (or the PWA being killed on a phone) resumes exactly where you were.
 
 import type { MetaProgress } from '../sim/achievements';
-import type { RunEco } from '../sim/economy';
+import type { Receipt, RunEco } from '../sim/economy';
 import type { GameState } from '../sim/game';
 import type { ItemId } from '../sim/items';
 import { GEN_VERSION, isLargeCampaign, LARGE_PREFIX } from '../sim/levelgen';
@@ -106,6 +106,8 @@ export interface TraderVisit {
   /** The free boost taken (null = not yet). */
   took: ItemId | null;
   bought: ItemId[];
+  /** One per item in `bought`, so a purchase can be undone until Continue (missing in older saves). */
+  receipts?: Receipt[];
 }
 
 /** Endless seeds: a daily one everybody shares, or a random one. */

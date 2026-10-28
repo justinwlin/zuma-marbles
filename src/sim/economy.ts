@@ -172,6 +172,42 @@ export function gain(eco: RunEco, id: ItemId, seed: string, stage: number, opts:
   return null;
 }
 
+/** What one purchase changed, so it can be undone exactly (the trader lets you change your mind until Continue). */
+export interface Receipt {
+  id: ItemId;
+  /** Coins this purchase cost, net of any refund for a replaced charm. */
+  spent: number;
+  /** The item it replaced (a full row), and where it was. */
+  replaced: { index: number; item: Owned | OwnedBoost } | null;
+  prev: Pick<RunEco, 'luckyColor' | 'reserved' | 'boughtBoost'>;
+}
+
+/** gain() for a paid item, returning a receipt that undoBuy() can reverse. */
+export function buyUndoable(eco: RunEco, id: ItemId, seed: string, stage: number, replace?: number): Fail | Receipt {
+  const charm = ITEMS[id].kind === 'charm';
+  const before = (charm ? eco.charms : eco.boosts).slice();
+  const coins = eco.coins;
+  const prev = { luckyColor: eco.luckyColor, reserved: eco.reserved, boughtBoost: eco.boughtBoost };
+  const f = gain(eco, id, seed, stage, { replace });
+  if (f) return f;
+  const now: Owned[] = charm ? eco.charms : eco.boosts;
+  const gone = before.findIndex((x) => !now.includes(x));
+  return { id, spent: coins - eco.coins, replaced: gone >= 0 ? { index: gone, item: before[gone] } : null, prev };
+}
+
+/** Reverse a purchase: take the item back, refund what it cost, and restore anything it replaced. */
+export function undoBuy(eco: RunEco, r: Receipt) {
+  const list: Owned[] = ITEMS[r.id].kind === 'charm' ? eco.charms : eco.boosts;
+  const i = list.findIndex((x) => x.id === r.id);
+  if (i < 0) return;
+  list.splice(i, 1);
+  if (r.replaced) list.splice(Math.min(r.replaced.index, list.length), 0, r.replaced.item);
+  eco.coins += r.spent;
+  eco.luckyColor = r.prev.luckyColor;
+  eco.reserved = r.prev.reserved;
+  eco.boughtBoost = r.prev.boughtBoost;
+}
+
 export function sellCharm(eco: RunEco, index: number) {
   const c = eco.charms[index];
   if (!c) return;

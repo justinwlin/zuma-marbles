@@ -551,6 +551,12 @@ async function runProfile(name: string, opts: BrowserContextOptions) {
   await page.waitForTimeout(150);
   const tr1 = await page.evaluate(() => ({ coins: (window as any).__zuma.run().eco.coins }));
   check('trader: buying costs coins', tr1.coins < tr0.coins, `${tr0.coins} → ${tr1.coins}`);
+  await page.locator('[data-screen=trader] [data-a=unbuy]').first().click();
+  await page.waitForTimeout(150);
+  const tr1u = await page.evaluate(() => ({ coins: (window as any).__zuma.run().eco.coins, items: (window as any).__zuma.run().eco.boosts.length + (window as any).__zuma.run().eco.charms.length }));
+  check('trader: tapping a bought item hands it back for a full refund', tr1u.coins === tr0.coins && tr1u.items === 0, JSON.stringify(tr1u));
+  await page.locator('[data-screen=trader] [data-a=buy]').first().click();
+  await page.waitForTimeout(150);
   await page.screenshot({ path: `${OUT}/${name}-17b-trader-bought.png` });
   await page.locator('[data-screen=trader] [data-a=go]').click();
   await page.waitForTimeout(700);

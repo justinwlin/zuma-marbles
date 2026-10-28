@@ -31,7 +31,7 @@ import { assistAim, type Slot } from './sim/aim';
 import { characterNoun } from './game/characters';
 import { Rng } from './sim/rng';
 import { checkUnlocks, LevelTracker, newMeta, withStarters } from './sim/achievements';
-import { activeItems, afterStage, bossPicks, canRetry, closeShop, gain, miniPicks, modsForStage, newEco, payRetry, reroll, reserve, retryCost, sellCharm, settleStage, shopOffers, traderOffers, worldOf } from './sim/economy';
+import { activeItems, afterStage, bossPicks, buyUndoable, canRetry, closeShop, gain, miniPicks, modsForStage, newEco, payRetry, reroll, reserve, retryCost, sellCharm, settleStage, shopOffers, traderOffers, undoBuy, worldOf } from './sim/economy';
 import { boostedLevel, ITEMS, type Mods, NO_MODS } from './sim/items';
 import { pointAt, type Pt } from './sim/track';
 import { computeLayout, type Layout, screenToWorld } from './game/layout';
@@ -278,10 +278,20 @@ function betweenStages(r: EndlessRun) {
         return f;
       },
       buy: (id, replace) => {
-        const f = gain(eco, id, r.seed, won, { replace });
-        if (!f) visit.bought.push(id);
+        const res = buyUndoable(eco, id, r.seed, won, replace);
+        if (typeof res === 'string') return res;
+        visit.bought.push(id);
+        (visit.receipts ??= []).push(res);
         persist();
-        return f;
+        return null;
+      },
+      canUndo: (id) => !!visit.receipts?.some((x) => x.id === id),
+      unbuy: (id) => {
+        const i = visit.receipts?.findIndex((x) => x.id === id) ?? -1;
+        if (i < 0) return;
+        undoBuy(eco, visit.receipts!.splice(i, 1)[0]);
+        visit.bought.splice(visit.bought.indexOf(id), 1);
+        persist();
       },
       done: () => playStage(r),
     });
