@@ -31,14 +31,14 @@ import { assistAim, type Slot } from './sim/aim';
 import { characterNoun } from './game/characters';
 import { Rng } from './sim/rng';
 import { themeFor, worldIndex } from './game/themes';
-import { checkUnlocks, LevelTracker, newMeta, withStarters } from './sim/achievements';
-import { activeItems, afterStage, bossPicks, buyUndoable, canRetry, closeShop, gain, miniPicks, modsForStage, newEco, payRetry, reroll, reserve, retryCost, sellCharm, settleStage, shopOffers, traderOffers, undoBuy, worldOf } from './sim/economy';
+import { checkUnlocks, LevelTracker, type MetaProgress, newMeta, withStarters } from './sim/achievements';
+import { activeItems, afterStage, bossPicks, buyUndoable, canRetry, closeShop, gain, miniPicks, modsForStage, newEco, payRetry, reroll, reserve, retryCost, type RunEco, sellCharm, settleStage, shopOffers, traderOffers, undoBuy, worldOf } from './sim/economy';
 import { boostedLevel, ITEMS, type Mods, NO_MODS } from './sim/items';
 import { pointAt, type Pt } from './sim/track';
 import { computeLayout, type Layout, screenToWorld } from './game/layout';
 import { BOLT_LIFE, Renderer, PALETTE, type ViewState } from './game/render';
 import { Particles } from './game/fx';
-import { FEEL, feedbackFor, shakeOffset, springAngle } from './game/feel';
+import { FEEL, type Feedback, feedbackFor, shakeOffset, springAngle } from './game/feel';
 import { Audio } from './game/audio';
 import { Haptics } from './game/haptics';
 import { levelMeta, mmss, UI } from './game/ui';
@@ -52,6 +52,7 @@ import {
   loadSave,
   parseLevelCode,
   type SaveData,
+  type StageSummary,
   starsFor,
   switchCampaign,
   writeSave,
@@ -249,107 +250,135 @@ function playStage(r: EndlessRun) {
   beginPlay();
 }
 
-/** After a mini-boss: a free boost. After a boss: a free charm, then the shop. */
+/** What every between-stages screen needs: the run, its economy, the stage just beaten, unlocks, and a save hook. */
+interface Between {
+  r: EndlessRun;
+  eco: RunEco;
+  /** Index of the stage just beaten (r.stage already points at the next one). */
+  stage: number;
+  meta: MetaProgress;
+  persist: () => void;
+}
+
+/** After a mini-boss: a free boost and the trader. After a boss: a free charm, then the shop. Otherwise the stage-clear page. */
 function betweenStages(r: EndlessRun) {
-  const eco = r.eco!;
-  // Index of the stage just beaten (r.stage already points at the next one).
-  const clearedStage = r.stage - 1;
-  const meta = withStarters((save.meta ??= newMeta()));
   mode = 'result';
   ui.showHud(false);
   releaseWakeLock();
-  const persist = () => {
-    save.endless = r;
-    writeSave(save);
+  const b: Between = {
+    r,
+    eco: r.eco!,
+    stage: r.stage - 1,
+    meta: withStarters((save.meta ??= newMeta())),
+    persist: () => {
+      save.endless = r;
+      writeSave(save);
+    },
   };
-  if (r.pending === 'mini') {
-    // One screen: a free boost plus the trader (drawn once, so reopening the app can't re-roll it).
-    if (!r.trader) {
-      const free = miniPicks(eco, r.seed, clearedStage, meta.unlocked);
-      const t = traderOffers(eco, r.seed, clearedStage, meta.unlocked, free);
-      r.trader = { free, buy: [...t.boosts, ...t.charms], took: null, bought: [] };
+  if (r.pending === 'mini') openTrader(b);
+  else if (r.pending === 'boss') openBossPick(b);
+  else if (r.pending === 'shop') openShop(b);
+  else if (r.pending === 'next' && r.last) openStageClear(b, r.last);
+  else playStage(r);
+}
+
+/** One screen: a free boost plus the trader (drawn once, so reopening the app can't re-roll it). */
+function openTrader(b: Between) {
+  const { r, eco, stage: clearedStage, meta, persist } = b;
+  if (!r.trader) {
+    const free = miniPicks(eco, r.seed, clearedStage, meta.unlocked);
+    const t = traderOffers(eco, r.seed, clearedStage, meta.unlocked, free);
+    r.trader = { free, buy: [...t.boosts, ...t.charms], took: null, bought: [] };
+    persist();
+  }
+  const visit = r.trader;
+  ui.trader({
+    eco,
+    stage: clearedStage,
+    visit,
+    take: (id, replace) => {
+      if (visit.took) return 'owned';
+      const f = gain(eco, id, r.seed, clearedStage, { free: true, replace });
+      if (!f) visit.took = id;
       persist();
-    }
-    const visit = r.trader;
-    ui.trader({
-      eco,
-      stage: clearedStage,
-      visit,
-      take: (id, replace) => {
-        if (visit.took) return 'owned';
-        const f = gain(eco, id, r.seed, clearedStage, { free: true, replace });
-        if (!f) visit.took = id;
-        persist();
-        return f;
-      },
-      buy: (id, replace) => {
-        const res = buyUndoable(eco, id, r.seed, clearedStage, replace);
-        if (typeof res === 'string') return res;
-        visit.bought.push(id);
-        (visit.receipts ??= []).push(res);
-        persist();
-        return null;
-      },
-      canUndo: (id) => !!visit.receipts?.some((x) => x.id === id),
-      unbuy: (id) => {
-        const i = visit.receipts?.findIndex((x) => x.id === id) ?? -1;
-        if (i < 0) return;
-        undoBuy(eco, visit.receipts!.splice(i, 1)[0]);
-        visit.bought.splice(visit.bought.indexOf(id), 1);
-        persist();
-      },
-      done: () => playStage(r),
-    });
-  } else if (r.pending === 'boss') {
-    ui.pick({
-      title: 'Boss defeated!',
-      sub: 'Pick a free charm. Charms stay with you for the rest of the run.',
-      eco,
-      stage: clearedStage,
-      ids: bossPicks(eco, r.seed, clearedStage, meta.unlocked),
-      onPick: (id, replace) => {
-        if (id) gain(eco, id, r.seed, clearedStage, { free: true, replace });
-        r.pending = 'shop';
-        persist();
-        betweenStages(r);
-      },
-    });
-  } else if (r.pending === 'shop') {
-    const act = <T,>(f: () => T) => {
-      const out = f();
+      return f;
+    },
+    buy: (id, replace) => {
+      const res = buyUndoable(eco, id, r.seed, clearedStage, replace);
+      if (typeof res === 'string') return res;
+      visit.bought.push(id);
+      (visit.receipts ??= []).push(res);
       persist();
-      return out;
-    };
-    ui.shop({
-      eco,
-      stage: clearedStage,
-      offers: () => shopOffers(eco, r.seed, clearedStage, meta.unlocked),
-      buy: (id, replace) => act(() => gain(eco, id, r.seed, clearedStage, { replace })),
-      sell: (i) => act(() => sellCharm(eco, i)),
-      reroll: () => act(() => reroll(eco)),
-      reserve: (id) => act(() => reserve(eco, id)),
-      done: () => {
-        closeShop(eco);
-        playStage(r);
-      },
-    });
-  } else if (r.pending === 'next' && r.last) {
-    const lv = boostedLevel(generateLevel(r.seed, r.stage), modsForStage(eco, r.stage));
-    ui.stageClear({
-      last: r.last,
-      runScore: r.runScore,
-      coins: eco.coins,
-      daily: r.daily,
-      next: { stage: r.stage, name: lv.name, meta: levelMeta(r.seed, r.stage), ace: lv.ace },
-      items: activeItems(eco, r.stage),
-      onNext: () => playStage(r),
-      onMenu: () => {
-        // The run is saved with this page pending: Continue comes back here.
-        persist();
-        toTitle();
-      },
-    });
-  } else playStage(r);
+      return null;
+    },
+    canUndo: (id) => !!visit.receipts?.some((x) => x.id === id),
+    unbuy: (id) => {
+      const i = visit.receipts?.findIndex((x) => x.id === id) ?? -1;
+      if (i < 0) return;
+      undoBuy(eco, visit.receipts!.splice(i, 1)[0]);
+      visit.bought.splice(visit.bought.indexOf(id), 1);
+      persist();
+    },
+    done: () => playStage(r),
+  });
+}
+
+function openBossPick(b: Between) {
+  const { r, eco, stage: clearedStage, meta, persist } = b;
+  ui.pick({
+    title: 'Boss defeated!',
+    sub: 'Pick a free charm. Charms stay with you for the rest of the run.',
+    eco,
+    stage: clearedStage,
+    ids: bossPicks(eco, r.seed, clearedStage, meta.unlocked),
+    onPick: (id, replace) => {
+      if (id) gain(eco, id, r.seed, clearedStage, { free: true, replace });
+      r.pending = 'shop';
+      persist();
+      betweenStages(r);
+    },
+  });
+}
+
+function openShop(b: Between) {
+  const { r, eco, stage: clearedStage, meta, persist } = b;
+  const act = <T,>(f: () => T) => {
+    const out = f();
+    persist();
+    return out;
+  };
+  ui.shop({
+    eco,
+    stage: clearedStage,
+    offers: () => shopOffers(eco, r.seed, clearedStage, meta.unlocked),
+    buy: (id, replace) => act(() => gain(eco, id, r.seed, clearedStage, { replace })),
+    sell: (i) => act(() => sellCharm(eco, i)),
+    reroll: () => act(() => reroll(eco)),
+    reserve: (id) => act(() => reserve(eco, id)),
+    done: () => {
+      closeShop(eco);
+      playStage(r);
+    },
+  });
+}
+
+function openStageClear(b: Between, last: StageSummary) {
+  const { r, eco, persist } = b;
+  const lv = boostedLevel(generateLevel(r.seed, r.stage), modsForStage(eco, r.stage));
+  ui.stageClear({
+    last,
+    runScore: r.runScore,
+    coins: eco.coins,
+    daily: r.daily,
+    next: { stage: r.stage, name: lv.name, meta: levelMeta(r.seed, r.stage), ace: lv.ace },
+    items: activeItems(eco, r.stage),
+    onNext: () => playStage(r),
+    onMenu: () => {
+      // The run is saved with this page pending: Continue comes back here.
+      persist();
+      toTitle();
+    },
+  });
 }
 
 /** Level-start banner: boss / mini-boss / level number, plus a note for twists and two chains. */
@@ -1239,50 +1268,11 @@ function handleEvents(events: GameEvent[]) {
         break;
       }
       case 'hit': {
-        const col = PALETTE[e.c];
-        fx.burst(e.x, e.y, col.base, col.light, fb.particles, 0.5);
-        // Ripple through the chain from the impact point.
-        let best = -1;
-        let bestC = 0;
-        let bd = Infinity;
-        st.chains.forEach((ch, ci) => {
-          for (const b of ch.balls) {
-            const p = pointAt(level.tracks[ci], b.s);
-            const d = Math.hypot(p.x - e.x, p.y - e.y);
-            if (d < bd) {
-              bd = d;
-              best = b.s;
-              bestC = ci;
-            }
-          }
-        });
-        view.ripple0 = { s: best, t: view.time, c: bestC };
+        hitRipple(e, fb);
         break;
       }
       case 'pop': {
-        const col = PALETTE[e.c];
-        if (e.combo >= 2) audio.release();
-        const per = Math.max(4, Math.floor(fb.particles / e.balls.length));
-        for (const b of e.balls) {
-          fx.burst(b.x, b.y, col.base, col.light, per, 1 + e.combo * 0.15);
-          fx.ring(b.x, b.y, col.light, 6, 240 + e.combo * 60, 0.32);
-        }
-        fx.text(e.x, e.y, `+${e.score}`, '#fff', 24 + e.combo * 4);
-        if (e.combo > 0) {
-          const words = ['', 'COMBO ×2', 'COMBO ×3!', 'AMAZING ×4!', 'INCREDIBLE ×5!!'];
-          fx.text(e.x, e.y, words[Math.min(e.combo, 4)] || `COMBO ×${e.combo + 1}!!`, col.light, 28 + e.combo * 4, 1.2, -38);
-        }
-        if (e.gapBonus) fx.text(e.x, e.y, `GAP BONUS +${e.gapBonus}`, '#7cf7ff', 20, 1.2, 32);
-        if (e.chainBonus) fx.text(e.x, e.y, `CHAIN ×${st.streak} +${e.chainBonus}`, '#ffd86b', 20, 1.2, e.gapBonus ? 58 : 32);
-        if (fb.slowmo) fx.text(e.x, e.y, 'CLOSE CALL!', '#ff8fa3', 30, 1.3, e.combo > 0 ? -76 : -40);
-        // Boss fights: each popped marble flies into the boss as a spark.
-        if (level.bossFight && st.boss && !attract) {
-          for (const [i, b] of e.balls.slice(0, 8).entries()) {
-            const mx = (b.x + level.bossFight.x) / 2;
-            const my = (b.y + level.bossFight.y) / 2;
-            view.homing.push({ x: b.x, y: b.y, cx: mx + (fx.rand() - 0.5) * 420, cy: my + (fx.rand() - 0.5) * 420, t: -i * 0.04, color: col.light });
-          }
-        }
+        popFx(e, fb);
         break;
       }
       case 'cascade': {
@@ -1386,52 +1376,7 @@ function handleEvents(events: GameEvent[]) {
         break;
       }
       case 'power': {
-        const label = POWER_NAMES[e.power].toUpperCase() + '!';
-        if (e.power === Power.Reverse) audio.release();
-        if (e.power === Power.Lightning) {
-          // Chain lightning: hop from the power marble to the nearest struck marble, and on.
-          const col = PALETTE[e.c];
-          const left = [...(e.zaps ?? [])];
-          let from = { x: e.x, y: e.y };
-          while (left.length) {
-            let k = 0;
-            for (let i = 1; i < left.length; i++) if (Math.hypot(left[i].x - from.x, left[i].y - from.y) < Math.hypot(left[k].x - from.x, left[k].y - from.y)) k = i;
-            const to = left.splice(k, 1)[0];
-            view.bolts.push({ pts: jagged(from, to), t: 0, color: col.light });
-            fx.burst(to.x, to.y, col.base, '#fff', 8, 0.9);
-            from = to;
-          }
-          fx.ring(e.x, e.y, '#fff3a0', 8, 700, 0.4);
-          fx.text(e.x, e.y, `ZAP ×${(e.zaps?.length ?? 0) + 1}`, '#ffe14a', 38, 1.1, -34);
-        } else if (e.power === Power.Wild) {
-          fx.confetti(e.x, e.y, PALETTE.slice(0, 5).map((p) => p.base), 40);
-          fx.ring(e.x, e.y, '#ff9df0', 10, 520, 0.5);
-          fx.text(e.x, e.y, 'WILD SHOT!', '#ff9df0', 32, 1.2, -34);
-        } else if (e.power === Power.Scorpion) {
-          fx.ring(e.x, e.y, '#ffb347', 10, 520, 0.5);
-          fx.text(e.x, e.y, 'SCORPION!', '#ffb347', 32, 1.2, -34);
-        } else if (e.power === Power.ColorCloud) {
-          const col = PALETTE[e.c];
-          for (const z of e.zaps ?? []) fx.burst(z.x, z.y, col.base, col.light, 10, 0.8);
-          fx.ring(e.x, e.y, col.light, 12, 600, 0.5);
-          fx.text(e.x, e.y, 'COLOUR CLOUD!', col.light, 32, 1.2, -34);
-        } else if (e.power === Power.BlackHole) {
-          fx.ring(e.x, e.y, '#a35bff', 14, 500, 0.6);
-          fx.text(e.x, e.y, 'BLACK HOLE!', '#c9a0ff', 32, 1.2, -34);
-        } else if (e.power === Power.Magnet) {
-          fx.ring(e.x, e.y, '#ff5a6a', 12, 520, 0.5);
-          fx.text(e.x, e.y, 'MAGNET SHOTS!', '#ff8a96', 32, 1.2, -34);
-        } else if (e.power === Power.Bomb) {
-          fx.ring(e.x, e.y, '#ffd86b', 10, 900, 0.45);
-          fx.ring(e.x, e.y, '#fff', 4, 600, 0.3);
-          fx.burst(e.x, e.y, '#ff8a3d', '#ffe08a', fb.particles, 1.6);
-          fx.text(e.x, e.y, 'BOOM!', '#ffd86b', 40, 1.1, -34);
-        } else {
-          const c = e.power === Power.Slow ? '#7cc4ff' : '#ffd86b';
-          fx.ring(e.x, e.y, c, 10, 500, 0.5);
-          fx.burst(e.x, e.y, c, '#fff', fb.particles, 0.8);
-          fx.text(e.x, e.y, label, c, 30, 1.2, -34);
-        }
+        powerFx(e, fb);
         break;
       }
       case 'barFull':
@@ -1446,29 +1391,135 @@ function handleEvents(events: GameEvent[]) {
         else resultTimer = 0.6;
         break;
       case 'won': {
-        if (attract) {
-          startAttract();
-          break;
-        }
-        view.banner = { text: run ? 'Stage clear!' : 'Level clear!', sub: run ? `Run score ${(run.runScore + st.score).toLocaleString()} · +${st.coinsEarned.total} 🪙` : undefined, t: 0, color: '#7dffcf' };
-        const lc = launcherAt(st, level);
-        fx.confetti(lc.x, lc.y, PALETTE.slice(0, 6).map((p) => p.base), fb.particles);
-        resultTimer = 1.8;
-        // Light sweep along the empty track, counting up the track bonus; then ace time.
-        const b = st.bonus;
-        if (b && b.sweep > 0) {
-          const dur = Math.min(2, 0.5 + (b.sweep / (100 * TUNING.sweepPerPct)) * 1.8);
-          view.sweep = { t: 0, dur, from: b.from };
-          tally = { sweep: b.sweep, ace: b.ace, ticks: 0, done: false, aceShown: false };
-          resultTimer = dur + (b.ace ? 1.9 : 1.2);
-        } else if (b?.ace) {
-          tally = { sweep: 0, ace: b.ace, ticks: 0, done: true, aceShown: false };
-          view.sweep = { t: 0, dur: 0.01, from: b.from };
-          resultTimer = 2.4;
-        }
+        wonFx(fb);
         break;
       }
     }
+  }
+}
+
+type EventOf<T extends GameEvent['type']> = Extract<GameEvent, { type: T }>;
+
+/** A shot landed: a burst, and a ripple through the chain from the marble nearest the impact. */
+function hitRipple(e: EventOf<'hit'>, fb: Feedback) {
+  const col = PALETTE[e.c];
+  fx.burst(e.x, e.y, col.base, col.light, fb.particles, 0.5);
+  // Ripple through the chain from the impact point.
+  let best = -1;
+  let bestC = 0;
+  let bd = Infinity;
+  st.chains.forEach((ch, ci) => {
+    for (const b of ch.balls) {
+      const p = pointAt(level.tracks[ci], b.s);
+      const d = Math.hypot(p.x - e.x, p.y - e.y);
+      if (d < bd) {
+        bd = d;
+        best = b.s;
+        bestC = ci;
+      }
+    }
+  });
+  view.ripple0 = { s: best, t: view.time, c: bestC };
+}
+
+/** Pops: bursts, score and combo text, and sparks flying into a boss. */
+function popFx(e: EventOf<'pop'>, fb: Feedback) {
+  const col = PALETTE[e.c];
+  if (e.combo >= 2) audio.release();
+  const per = Math.max(4, Math.floor(fb.particles / e.balls.length));
+  for (const b of e.balls) {
+    fx.burst(b.x, b.y, col.base, col.light, per, 1 + e.combo * 0.15);
+    fx.ring(b.x, b.y, col.light, 6, 240 + e.combo * 60, 0.32);
+  }
+  fx.text(e.x, e.y, `+${e.score}`, '#fff', 24 + e.combo * 4);
+  if (e.combo > 0) {
+    const words = ['', 'COMBO ×2', 'COMBO ×3!', 'AMAZING ×4!', 'INCREDIBLE ×5!!'];
+    fx.text(e.x, e.y, words[Math.min(e.combo, 4)] || `COMBO ×${e.combo + 1}!!`, col.light, 28 + e.combo * 4, 1.2, -38);
+  }
+  if (e.gapBonus) fx.text(e.x, e.y, `GAP BONUS +${e.gapBonus}`, '#7cf7ff', 20, 1.2, 32);
+  if (e.chainBonus) fx.text(e.x, e.y, `CHAIN ×${st.streak} +${e.chainBonus}`, '#ffd86b', 20, 1.2, e.gapBonus ? 58 : 32);
+  if (fb.slowmo) fx.text(e.x, e.y, 'CLOSE CALL!', '#ff8fa3', 30, 1.3, e.combo > 0 ? -76 : -40);
+  // Boss fights: each popped marble flies into the boss as a spark.
+  if (level.bossFight && st.boss && !attract) {
+    for (const [i, b] of e.balls.slice(0, 8).entries()) {
+      const mx = (b.x + level.bossFight.x) / 2;
+      const my = (b.y + level.bossFight.y) / 2;
+      view.homing.push({ x: b.x, y: b.y, cx: mx + (fx.rand() - 0.5) * 420, cy: my + (fx.rand() - 0.5) * 420, t: -i * 0.04, color: col.light });
+    }
+  }
+}
+
+/** Power-ups: each has its own burst, ring and label (Lightning draws chain bolts). */
+function powerFx(e: EventOf<'power'>, fb: Feedback) {
+  const label = POWER_NAMES[e.power].toUpperCase() + '!';
+  if (e.power === Power.Reverse) audio.release();
+  if (e.power === Power.Lightning) {
+    // Chain lightning: hop from the power marble to the nearest struck marble, and on.
+    const col = PALETTE[e.c];
+    const left = [...(e.zaps ?? [])];
+    let from = { x: e.x, y: e.y };
+    while (left.length) {
+      let k = 0;
+      for (let i = 1; i < left.length; i++) if (Math.hypot(left[i].x - from.x, left[i].y - from.y) < Math.hypot(left[k].x - from.x, left[k].y - from.y)) k = i;
+      const to = left.splice(k, 1)[0];
+      view.bolts.push({ pts: jagged(from, to), t: 0, color: col.light });
+      fx.burst(to.x, to.y, col.base, '#fff', 8, 0.9);
+      from = to;
+    }
+    fx.ring(e.x, e.y, '#fff3a0', 8, 700, 0.4);
+    fx.text(e.x, e.y, `ZAP ×${(e.zaps?.length ?? 0) + 1}`, '#ffe14a', 38, 1.1, -34);
+  } else if (e.power === Power.Wild) {
+    fx.confetti(e.x, e.y, PALETTE.slice(0, 5).map((p) => p.base), 40);
+    fx.ring(e.x, e.y, '#ff9df0', 10, 520, 0.5);
+    fx.text(e.x, e.y, 'WILD SHOT!', '#ff9df0', 32, 1.2, -34);
+  } else if (e.power === Power.Scorpion) {
+    fx.ring(e.x, e.y, '#ffb347', 10, 520, 0.5);
+    fx.text(e.x, e.y, 'SCORPION!', '#ffb347', 32, 1.2, -34);
+  } else if (e.power === Power.ColorCloud) {
+    const col = PALETTE[e.c];
+    for (const z of e.zaps ?? []) fx.burst(z.x, z.y, col.base, col.light, 10, 0.8);
+    fx.ring(e.x, e.y, col.light, 12, 600, 0.5);
+    fx.text(e.x, e.y, 'COLOUR CLOUD!', col.light, 32, 1.2, -34);
+  } else if (e.power === Power.BlackHole) {
+    fx.ring(e.x, e.y, '#a35bff', 14, 500, 0.6);
+    fx.text(e.x, e.y, 'BLACK HOLE!', '#c9a0ff', 32, 1.2, -34);
+  } else if (e.power === Power.Magnet) {
+    fx.ring(e.x, e.y, '#ff5a6a', 12, 520, 0.5);
+    fx.text(e.x, e.y, 'MAGNET SHOTS!', '#ff8a96', 32, 1.2, -34);
+  } else if (e.power === Power.Bomb) {
+    fx.ring(e.x, e.y, '#ffd86b', 10, 900, 0.45);
+    fx.ring(e.x, e.y, '#fff', 4, 600, 0.3);
+    fx.burst(e.x, e.y, '#ff8a3d', '#ffe08a', fb.particles, 1.6);
+    fx.text(e.x, e.y, 'BOOM!', '#ffd86b', 40, 1.1, -34);
+  } else {
+    const c = e.power === Power.Slow ? '#7cc4ff' : '#ffd86b';
+    fx.ring(e.x, e.y, c, 10, 500, 0.5);
+    fx.burst(e.x, e.y, c, '#fff', fb.particles, 0.8);
+    fx.text(e.x, e.y, label, c, 30, 1.2, -34);
+  }
+}
+
+/** Level won: banner, confetti, then the track-bonus light sweep and the ace-time tally. */
+function wonFx(fb: Feedback) {
+  if (attract) {
+    startAttract();
+    return;
+  }
+  view.banner = { text: run ? 'Stage clear!' : 'Level clear!', sub: run ? `Run score ${(run.runScore + st.score).toLocaleString()} · +${st.coinsEarned.total} 🪙` : undefined, t: 0, color: '#7dffcf' };
+  const lc = launcherAt(st, level);
+  fx.confetti(lc.x, lc.y, PALETTE.slice(0, 6).map((p) => p.base), fb.particles);
+  resultTimer = 1.8;
+  // Light sweep along the empty track, counting up the track bonus; then ace time.
+  const b = st.bonus;
+  if (b && b.sweep > 0) {
+    const dur = Math.min(2, 0.5 + (b.sweep / (100 * TUNING.sweepPerPct)) * 1.8);
+    view.sweep = { t: 0, dur, from: b.from };
+    tally = { sweep: b.sweep, ace: b.ace, ticks: 0, done: false, aceShown: false };
+    resultTimer = dur + (b.ace ? 1.9 : 1.2);
+  } else if (b?.ace) {
+    tally = { sweep: 0, ace: b.ace, ticks: 0, done: true, aceShown: false };
+    view.sweep = { t: 0, dur: 0.01, from: b.from };
+    resultTimer = 2.4;
   }
 }
 
