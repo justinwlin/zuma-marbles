@@ -521,6 +521,22 @@ describe('new achievements', () => {
     expect(gain(eco, 'pocketBomb', 'u', 9)).toBeNull();
     expect(unlocks(new LevelTracker(), undefined, eco, l19)).not.toContain('colourCut');
   });
+
+  it('goal progress keeps the best value, capped at the target', () => {
+    const meta = newMeta();
+    const chokes = (n: number) => {
+      const t = new LevelTracker();
+      t.feed(Array.from({ length: n }, () => ({ type: 'choke' }) as never));
+      checkUnlocks(meta, t, level, { won: false, peakDanger: 0.7 });
+    };
+    chokes(4);
+    expect(meta.best?.lightningRod).toBe(4);
+    chokes(2);
+    expect(meta.best?.lightningRod).toBe(4);
+    chokes(9);
+    expect(meta.best?.lightningRod).toBe(6);
+    expect(meta.unlocked).toContain('lightningRod');
+  });
 });
 
 describe('expedition simulator', () => {

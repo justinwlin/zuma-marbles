@@ -250,7 +250,7 @@ export class UI {
           ${run ? `<button class="btn gold" data-a="cont">Continue run<small>${run.daily ? 'Daily' : 'Random'} · stage ${run.stage + 1} · ${run.runScore.toLocaleString()} pts</small></button>` : ''}
           <button class="btn primary" data-a="random">Random run<small>${fmt(save.endlessBest)}</small></button>
           <button class="btn" data-a="daily">Daily run<small>Same stages for everyone today · ${fmt(daily)}</small></button>
-          <button class="btn" data-a="collection">Collection<small>${save.meta?.unlocked.length ?? STARTER_ITEMS.length} of ${Object.keys(ITEMS).length} items unlocked</small></button>
+          <button class="btn" data-a="collection">Collection &amp; goals<small>${save.meta?.unlocked.length ?? STARTER_ITEMS.length} of ${Object.keys(ITEMS).length} items · ${UNLOCKS.filter((u) => save.meta?.unlocked.includes(u.id)).length} of ${UNLOCKS.length} goals</small></button>
           <button class="btn ghost" data-a="back">Back</button>
         </div>
         ${run ? '<p class="sub" style="font-size:12px;margin-top:10px">Starting a new run ends the one in progress.</p>' : ''}</div>`,
@@ -826,8 +826,9 @@ export class UI {
       `<div class="panel wide fit"><h2>Collection</h2><p class="sub">${n} of ${ids.length} unlocked. Locked items join the shop when you earn them.</p>
         <div class="col-grid">${ids.map(tile).join('')}</div>
         <p class="col-info" id="col-info">Tap an item to see what it does.</p>
-        <div class="fit-actions"><button class="btn primary" data-a="back">Back</button></div></div>`,
+        <div class="fit-actions row"><button class="btn gold" data-a="goals">Goals<small>${UNLOCKS.filter((u) => meta.unlocked.includes(u.id)).length} of ${UNLOCKS.length} done</small></button><button class="btn primary" data-a="back">Back</button></div></div>`,
       {
+        goals: () => this.goals(meta, () => this.collection(meta, back)),
         info: (el) => {
           document.querySelectorAll('.col-tile.on').forEach((t) => t.classList.remove('on'));
           el.classList.add('on');
@@ -835,6 +836,29 @@ export class UI {
         },
         back,
       },
+      'fit-screen',
+    );
+  }
+
+  /** Every unlock goal with its best progress so far. Done goals show the item they unlocked. */
+  goals(meta: MetaProgress, back: () => void) {
+    const row = (u: (typeof UNLOCKS)[number]) => {
+      const done = meta.unlocked.includes(u.id);
+      const v = done ? u.target : Math.min(meta.best?.[u.id] ?? 0, u.target);
+      const d = ITEMS[u.id];
+      const count = u.target === 1 ? (done ? '✓' : '') : `${v.toLocaleString()}/${u.target.toLocaleString()}`;
+      return `<div class="goal${done ? ' done' : ''}"><span class="goal-ico">${done ? d.icon : '🔒'}</span>
+        <div class="goal-main"><span class="goal-hint">${u.hint}</span>${done ? `<small>Unlocked ${d.name}</small>` : ''}
+          <div class="goal-bar"><i style="transform:scaleX(${v / u.target})"></i></div></div>
+        <b class="goal-n">${done && u.target > 1 ? '✓' : count}</b></div>`;
+    };
+    const n = UNLOCKS.filter((u) => meta.unlocked.includes(u.id)).length;
+    this.show(
+      'goals',
+      `<div class="panel wide fit"><h2>Goals</h2><p class="sub">${n} of ${UNLOCKS.length} done. Each one adds a new item to the Endless shop. Bars show your best so far.</p>
+        <div class="goal-grid">${UNLOCKS.map(row).join('')}</div>
+        <div class="fit-actions"><button class="btn primary" data-a="back">Back</button></div></div>`,
+      { back },
       'fit-screen',
     );
   }

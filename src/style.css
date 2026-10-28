@@ -438,6 +438,27 @@ body.rail-touch .cancel-zone { display: none; }
 .col-tile.locked { opacity: .55; }
 .col-tile.on { outline: 2px solid var(--accent); }
 .col-info { min-height: 38px; margin: 10px 0 0; text-align: center; font-size: 13px; color: rgba(255,255,255,.88); }
+.goal-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; text-align: left; }
+.goal { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 12px; background: var(--glass-2); border: 1px solid var(--line); min-width: 0; }
+.goal.done { border-color: rgba(255,216,107,.55); }
+.goal-ico { font-size: 20px; flex: none; }
+.goal:not(.done) .goal-ico { opacity: .55; }
+.goal-main { flex: 1; min-width: 0; }
+.goal-hint { display: block; font-size: 12px; font-weight: 700; line-height: 1.2; }
+.goal-main small { display: block; font-size: 11px; color: #ffd86b; }
+.goal-bar { height: 5px; margin-top: 4px; border-radius: 3px; background: rgba(255,255,255,.12); overflow: hidden; }
+.goal-bar i { display: block; height: 100%; background: linear-gradient(90deg, #7dd3fc, #ffd86b); transform-origin: left; }
+.goal.done .goal-bar { display: none; }
+.goal-n { flex: none; font-size: 12px; font-variant-numeric: tabular-nums; color: rgba(255,255,255,.85); }
+.goal.done .goal-n { color: #ffd86b; font-size: 16px; }
+@media (max-height: 520px) {
+  .goal-grid { grid-template-columns: repeat(3, 1fr); gap: 4px; }
+  .goal { padding: 3px 6px; gap: 6px; }
+  .goal-ico { font-size: 16px; }
+  .goal-hint { font-size: 11px; }
+  .goal-main small { display: none; }
+  .goal-bar { margin-top: 2px; height: 4px; }
+}
 @media (max-width: 620px) {
   .col-grid { grid-template-columns: repeat(4, 1fr); }
 }

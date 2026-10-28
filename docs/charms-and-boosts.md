@@ -193,7 +193,7 @@ At the start, only some items can show up. Achievements add more, so the shop ke
 | Trigger every type of power-up (across runs) | 🎁 Opener (boost) |
 | Crack 5 armored marbles in one level | 🌬️ Second Wind (boost) |
 | Bank 2,000 coins in one run | 💰 Coin Rush (boost) |
-| Reach world 3 without buying a boost (free picks are fine) | ✂️ Colour Cut (boost) |
+| Clear stage 20 without buying a boost (free picks are fine) | ✂️ Colour Cut (boost) |
 
 ---
 

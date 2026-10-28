@@ -20,7 +20,7 @@ const PROFILES: Record<string, BrowserContextOptions> = {
 };
 
 /** Screens that should fit without scrolling. Long reference screens (help, settings) may scroll. */
-const MUST_FIT = new Set(['title', 'endless', 'pause', 'result', 'pick', 'shop', 'collection', 'unlock', 'trader', 'stage-clear']);
+const MUST_FIT = new Set(['title', 'endless', 'pause', 'result', 'pick', 'shop', 'collection', 'goals', 'unlock', 'trader', 'stage-clear']);
 
 interface Row {
   profile: string;
@@ -81,6 +81,8 @@ for (const [name, opts] of Object.entries(PROFILES)) {
   await measure(page, name, 'endless');
   await click(page, '[data-a=collection]');
   await measure(page, name, 'collection');
+  await click(page, '[data-a=goals]');
+  await measure(page, name, 'goals');
   // In a run: pause, the between-stage page, the serpent trader, then the boss pick and the shop (driven through the test hooks).
   await page.evaluate(() => (window as any).__zuma.expedition(2, 2600));
   await page.waitForTimeout(2500);
