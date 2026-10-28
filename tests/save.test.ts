@@ -15,6 +15,14 @@ class MemStorage {
 }
 
 describe('save data', () => {
+  it('turns an owned or unlocked Colour Scout into Brakes', () => {
+    const mem = new MemStorage() as unknown as Storage;
+    const d = freshSave('jade-1234');
+    d.meta = { unlocked: ['shockwave', 'scout' as never], coinsShot: 0 };
+    writeSave(d, mem);
+    expect(loadSave(mem).meta!.unlocked).toEqual(['shockwave', 'brakes']);
+  });
+
   it('round-trips progress, settings and a mid-level snapshot', () => {
     const mem = new MemStorage() as unknown as Storage;
     const d = freshSave('jade-1234');

@@ -1905,20 +1905,6 @@ export class Renderer {
     g2.stroke();
     this.drawMarble(nextC, nx, ny, a, 0, 0.72, rot);
     if (st.gun.b & 2) this.drawBombMark(nx, ny, BALL_R * 0.72, v);
-    // Colour Scout: the marble after next, smaller, further back.
-    if (st.mods.scout && st.gun.after >= 0) {
-      const ad = -64;
-      const ax = cx + Math.cos(a) * ad;
-      const ay = cy + Math.sin(a) * ad;
-      g2.beginPath();
-      g2.arc(ax, ay, BALL_R * 0.62, 0, Math.PI * 2);
-      g2.fillStyle = 'rgba(5,10,18,0.55)';
-      g2.fill();
-      g2.strokeStyle = 'rgba(255,255,255,0.45)';
-      g2.lineWidth = 1.5;
-      g2.stroke();
-      this.drawMarble(st.gun.after, ax, ay, a, 0, 0.5, rot);
-    }
   }
 
   /** Pocket Bomb: a black bomb with a sparking fuse over a marble. */

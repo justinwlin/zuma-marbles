@@ -27,6 +27,8 @@ export const TUNING = {
   dangerFrac: 0.15,
   dangerBlendFrac: 0.12,
   slowFactor: 4,
+  /** Brakes charm: the last fraction of the track it covers. */
+  brakeFrac: 0.3,
   /** Fast-forward (player toggle): cruise speed multiplier outside the danger zone, and how much quicker it gets there. */
   ffFactor: 3,
   ffAccelMul: 6,
@@ -241,8 +243,8 @@ export interface GameState {
   /** Part of the score that doesn't fill the bar (coins, end-of-level bonuses). */
   extra: number;
   streak: number; // consecutive matching shots
-  /** w: wild bits (1 = current marble is wild, 2 = next); b: Pocket Bomb bits, same layout; after: Colour Scout's third marble. */
-  gun: { cur: number; next: number; cool: number; w: number; b: number; after: number };
+  /** w: wild bits (1 = current marble is wild, 2 = next); b: Pocket Bomb bits, same layout. */
+  gun: { cur: number; next: number; cool: number; w: number; b: number };
   /** Rail levels: frog position u along the rail, target tu, queued shot, stun time. */
   rail: { u: number; tu: number; q: boolean; stun: number } | null;
   boss: BossState | null;
@@ -344,7 +346,7 @@ export function createGame(level: Level, mods: Mods = NO_MODS): GameState {
     score: 0,
     extra: 0,
     streak: 0,
-    gun: { cur: 0, next: 0, cool: 0.6, w: 0, b: mods.pocketBomb ? 1 : 0, after: -1 },
+    gun: { cur: 0, next: 0, cool: 0.6, w: 0, b: mods.pocketBomb ? 1 : 0 },
     rail: level.rail ? { u: level.rail.len / 2, tu: level.rail.len / 2, q: false, stun: 0 } : null,
     boss: level.bossFight
       ? { hp: level.bossFight.hp, max: level.bossFight.hp, t: level.bossFight.kind === 'serpent' ? TUNING.serpentFirst : TUNING.bossFirstAttack, wind: 0, hitT: 0, dead: false, n: 0, spitC: 0, shots: [] }
@@ -374,7 +376,6 @@ export function createGame(level: Level, mods: Mods = NO_MODS): GameState {
   }
   st.gun.cur = randColor(st, level, 'gun');
   st.gun.next = randColor(st, level, 'gun');
-  if (mods.scout) st.gun.after = randColor(st, level, 'gun');
   return st;
 }
 
@@ -662,10 +663,7 @@ function fireShot(st: GameState, level: Level, lx: number, ly: number, dx: numbe
   st.gun.cur = st.gun.next;
   st.gun.w >>= 1;
   st.gun.b >>= 1;
-  if (st.mods.scout) {
-    st.gun.next = st.gun.after;
-    st.gun.after = randColor(st, level, 'gun');
-  } else st.gun.next = randColor(st, level, 'gun');
+  st.gun.next = randColor(st, level, 'gun');
   // Rainbow: every Nth shot is Wild (shown on the marble before it's fired).
   const N = st.mods.wildEvery;
   if (N > 0 && (st.stats.shots + 1) % N === 0) st.gun.w |= 1;
@@ -1004,7 +1002,6 @@ function rerollGun(st: GameState, level: Level) {
   const mask = presentMask(st);
   if (!(mask & (1 << st.gun.cur))) st.gun.cur = randColor(st, level, 'gun');
   if (!(mask & (1 << st.gun.next))) st.gun.next = randColor(st, level, 'gun');
-  if (st.mods.scout && !(mask & (1 << st.gun.after))) st.gun.after = randColor(st, level, 'gun');
 }
 
 // ------------------------------------------------------------------ shots
@@ -1259,6 +1256,8 @@ function stepChain(st: GameState, level: Level, ci: number, ev: GameEvent[]) {
     target = target * (1 - f) + (target / TUNING.slowFactor) * f;
   }
   if (st.slowT > 0) target /= TUNING.slowFactor;
+  // Brakes: the last stretch before the skull is slower still.
+  if (st.mods.brakeMul !== 1 && firstEnd > L * (1 - TUNING.brakeFrac)) target *= st.mods.brakeMul;
   // Fast-forward only speeds up a chain that is still clear of the danger zone.
   const ff = st.ff && !ch.rolling && firstEnd <= danger - blend;
   if (ff) target *= TUNING.ffFactor;
@@ -1741,7 +1740,6 @@ export function normalizeState(st: GameState): GameState {
   st.coinsEarned ??= emptyLedger();
   st.lives ??= 0;
   st.gun.b ??= 0;
-  st.gun.after ??= -1;
   st.holes ??= [];
   st.magnetT ??= 0;
   st.coinFrac ??= 0;

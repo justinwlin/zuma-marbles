@@ -36,7 +36,7 @@ interface Mods {
   bombRadiusMul: number;   // Bomber
   shotSpeedMul: number;    // Quick Draw
   wildEvery: number;       // Rainbow (0 = off)
-  scout: boolean;          // Colour Scout
+  brakeMul: number;        // Brakes
   pocketBomb: boolean;     // Pocket Bomb
   lives: number;           // Extra Life
   shockwave: boolean;      // Shockwave

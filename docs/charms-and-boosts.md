@@ -92,7 +92,7 @@ Each charm nudges you toward a play style. With only 3 slots, picking your 3 is 
 | 🧨 **Bomber** | Bombs blast 50% wider | Power-ups | 650 |
 | 🏹 **Quick Draw** | Your shots fly 25% faster | Fast aim | 600 |
 | 🌈 **Rainbow** | Every 15th shot is Wild | Flexible | 850 |
-| 🔭 **Colour Scout** | See the marble after next, not just the next one | Planning | 500 |
+| 🛑 **Brakes** | Chains roll 30% slower in the last 30% of the track | Defence | 500 |
 | 🍀 **Lucky Colour** | One colour (rolled when you get it, shown on the charm) pays triple coins | One colour | 700 |
 | 👑 **Combo King** | Combos pay double coins | Setting up chains | 800 |
 | 🔥 **Daredevil** | Pops while the chain is past 75% of the track pay double coins | Risky play | 700 |
@@ -127,7 +127,7 @@ The shop opens after every boss (after levels 10, 20, 30…).
 ```
 ┌────────────────────────────────────────────────────────┐
 │  BOSS DEFEATED!  Pick a free charm:                    │
-│     [ 💥 Shockwave ] [ 🧨 Bomber ]    [ 🔭 Colour Scout ] │
+│     [ 💥 Shockwave ] [ 🧨 Bomber ]    [ 🛑 Brakes       ] │
 ├────────────────────────────────────────────────────────┤
 │  SHOP                           🪙 1,850   Next: idol  │
 │                                                        │
@@ -171,7 +171,7 @@ In `npm run expedition` (64 runs, greedy policy), runs that beat a serpent bough
 At the start, only some items can show up. Achievements add more, so the shop keeps surprising you. This is how The Binding of Isaac keeps runs fresh. A **collection screen** shows locked items as silhouettes with their unlock hint.
 
 **Available from the start:**
-- **Charms:** Shockwave, Bomber, Quick Draw, Rainbow, Colour Scout, Deep Freeze, Hungry Scorpion.
+- **Charms:** Shockwave, Bomber, Quick Draw, Rainbow, Brakes, Deep Freeze, Hungry Scorpion.
 - **Boosts:** Slowpoke, Power Surge, Pocket Bomb, Long Fuse.
 
 **Unlocked by playing:**
@@ -244,4 +244,4 @@ Every item's effect lives in the game simulation and stays deterministic. Shop o
 
 1. Is the mini-boss pick too generous on top of the free boss charm? Check after playtesting.
 2. Should the first stages of a run be gentler, so fewer runs end before the first shop?
-3. The bot can't judge Colour Scout, Pocket Bomb or Snake Charmer well, so their numbers in the simulator undersell them. Playtesting decides those.
+3. The bot can't judge Pocket Bomb or Snake Charmer well, so their numbers in the simulator undersell them. Playtesting decides those.

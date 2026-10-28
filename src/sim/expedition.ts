@@ -15,7 +15,7 @@ export type Policy = 'none' | 'greedy' | 'random';
 /** Rough value order the greedy policy buys and picks by (best first). */
 export const PRIORITY: ItemId[] = [
   'extraLife', 'colourCut', 'slowpoke', 'secondWind', 'headStart', 'shockwave', 'rainbow', 'lightningRod', 'bomber', 'powerSurge', 'comboKing',
-  'deepFreeze', 'quickDraw', 'bossBreaker', 'longFuse', 'rewinder', 'hungryScorpion', 'doubleWild', 'luckyColor', 'daredevil', 'pocketBomb', 'scavenger', 'scout', 'snakeCharmer', 'opener', 'coinRush', 'aceHunter',
+  'deepFreeze', 'quickDraw', 'bossBreaker', 'longFuse', 'rewinder', 'hungryScorpion', 'doubleWild', 'luckyColor', 'daredevil', 'pocketBomb', 'scavenger', 'brakes', 'snakeCharmer', 'opener', 'coinRush', 'aceHunter',
 ];
 const rank = (id: ItemId) => PRIORITY.indexOf(id);
 

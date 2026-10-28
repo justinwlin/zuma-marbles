@@ -157,12 +157,19 @@ describe('items', () => {
     expect(st.gun.w & 1).toBe(1);
   });
 
-  it('Colour Scout: the marble after next becomes the next one', () => {
-    const { level, st } = frozenGame([0, 1, 2, 3], { mods: { scout: true } });
-    const after = st.gun.after;
-    expect(after).toBeGreaterThanOrEqual(0);
-    run(st, level, 0.1, [{ type: 'fire', x: level.launcher.x, y: -2000 }]);
-    expect(st.gun.next).toBe(after);
+  it('Brakes: chains roll 30% slower in the last stretch before the skull', () => {
+    const level = generateLevel('brakes-test', 6);
+    const L = level.tracks[0].length;
+    const speedAt = (brakeMul: number, frac: number) => {
+      const st = createGame(level, { ...NO_MODS, brakeMul });
+      while (st.phase === 'playing' && (st.chains[0].balls.at(-1)?.s ?? 0) < L * frac) step(st, level);
+      // Braking is immediate (deceleration is fast); a few ticks let it settle.
+      for (let i = 0; i < 10; i++) step(st, level);
+      return st.chains[0].speed;
+    };
+    // Before the brake zone: same speed. Inside it (but before the danger crawl): 30% slower.
+    expect(speedAt(0.7, 0.5)).toBeCloseTo(speedAt(1, 0.5), 5);
+    expect(speedAt(0.7, 0.71)).toBeCloseTo(speedAt(1, 0.71) * 0.7, 1);
   });
 
   it('Lightning Rod: lightning also strikes a second colour', () => {
@@ -225,7 +232,7 @@ describe('items', () => {
 
 describe('run economy', () => {
   const seed = 'endless-eco';
-  const all = ['shockwave', 'bomber', 'quickDraw', 'rainbow', 'scout', 'slowpoke', 'powerSurge', 'pocketBomb', 'longFuse'] as const;
+  const all = ['shockwave', 'bomber', 'quickDraw', 'rainbow', 'brakes', 'slowpoke', 'powerSurge', 'pocketBomb', 'longFuse'] as const;
 
   it('buying charms: coins, slots, replacing sells for half', () => {
     const P = (id: keyof typeof ITEMS) => priceAt(id, 9);
@@ -236,12 +243,12 @@ describe('run economy', () => {
     expect(eco.coins).toBe(5000 - P('shockwave'));
     expect(gain(eco, 'shockwave', seed, 9)).toBe('owned');
     expect(gain(eco, 'bomber', seed, 9)).toBeNull();
-    expect(gain(eco, 'scout', seed, 9, { free: true })).toBeNull();
+    expect(gain(eco, 'brakes', seed, 9, { free: true })).toBeNull();
     expect(gain(eco, 'quickDraw', seed, 9)).toBe('slots');
     const before = eco.coins;
     expect(gain(eco, 'quickDraw', seed, 9, { replace: 0 })).toBeNull(); // Shockwave out for half its price
     expect(eco.coins).toBe(before + Math.floor(P('shockwave') / 2) - P('quickDraw'));
-    expect(eco.charms.map((c) => c.id)).toEqual(['bomber', 'scout', 'quickDraw']);
+    expect(eco.charms.map((c) => c.id)).toEqual(['bomber', 'brakes', 'quickDraw']);
     const c0 = eco.coins;
     sellCharm(eco, 1); // free charm sells for nothing
     expect(eco.coins).toBe(c0);
@@ -322,7 +329,7 @@ describe('run economy', () => {
 
 describe('serpent trader', () => {
   const seed = 'endless-trader';
-  const unlocked = ['shockwave', 'bomber', 'quickDraw', 'rainbow', 'scout', 'slowpoke', 'powerSurge', 'pocketBomb', 'longFuse'] as const;
+  const unlocked = ['shockwave', 'bomber', 'quickDraw', 'rainbow', 'brakes', 'slowpoke', 'powerSurge', 'pocketBomb', 'longFuse'] as const;
 
   it('offers 2 boosts and 1 charm, never the free picks or anything owned, the same every time', () => {
     const eco = newEco();

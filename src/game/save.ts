@@ -175,7 +175,8 @@ export function loadSave(storage: Storage = localStorage): SaveData {
   try {
     const raw = storage.getItem(KEY);
     if (raw) {
-      const d = JSON.parse(raw) as SaveData;
+      // Colour Scout was replaced by Brakes: owned or unlocked Scouts become Brakes.
+      const d = JSON.parse(raw.replace(/"scout"/g, '"brakes"')) as SaveData;
       if (d && d.v === 1 && typeof d.campaignSeed === 'string') {
         d.settings = { ...DEFAULT_SETTINGS, ...d.settings };
         d.best ??= {};

@@ -25,7 +25,7 @@ export type ItemId =
   | 'bomber'
   | 'quickDraw'
   | 'rainbow'
-  | 'scout'
+  | 'brakes'
   | 'luckyColor'
   | 'comboKing'
   | 'daredevil'
@@ -65,7 +65,7 @@ export const ITEMS: Record<ItemId, ItemDef> = {
   bomber: { id: 'bomber', kind: 'charm', name: 'Bomber', icon: '🧨', desc: 'Bombs blast 50% wider', price: 650, starter: true },
   quickDraw: { id: 'quickDraw', kind: 'charm', name: 'Quick Draw', icon: '🏹', desc: 'Your shots fly 25% faster', price: 600, starter: true },
   rainbow: { id: 'rainbow', kind: 'charm', name: 'Rainbow', icon: '🌈', desc: 'Every 15th shot is Wild', price: 850, starter: true },
-  scout: { id: 'scout', kind: 'charm', name: 'Colour Scout', icon: '🔭', desc: 'See the marble after next', price: 500, starter: true },
+  brakes: { id: 'brakes', kind: 'charm', name: 'Brakes', icon: '🛑', desc: 'Chains roll 30% slower in the last stretch before the skull', price: 500, starter: true },
   luckyColor: { id: 'luckyColor', kind: 'charm', name: 'Lucky Colour', icon: '🍀', desc: 'Your lucky colour pays triple coins', price: 700, starter: false },
   comboKing: { id: 'comboKing', kind: 'charm', name: 'Combo King', icon: '👑', desc: 'Combos pay double coins', price: 800, starter: false },
   daredevil: { id: 'daredevil', kind: 'charm', name: 'Daredevil', icon: '🔥', desc: 'Pops with the chain past 75% of the track pay double coins', price: 700, starter: false },
@@ -88,8 +88,8 @@ export interface Mods {
   shotSpeedMul: number;
   /** Every Nth shot is Wild (0 = off). */
   wildEvery: number;
-  /** Show the marble after next. */
-  scout: boolean;
+  /** Speed multiplier in the last stretch before the skull (Brakes). */
+  brakeMul: number;
   /** Start the level with a Bomb shot loaded. */
   pocketBomb: boolean;
   /** Rescues left this level (Extra Life). */
@@ -130,7 +130,7 @@ export const NO_MODS: Mods = {
   bombRadiusMul: 1,
   shotSpeedMul: 1,
   wildEvery: 0,
-  scout: false,
+  brakeMul: 1,
   pocketBomb: false,
   lives: 0,
   shockwave: false,
@@ -176,7 +176,7 @@ export function modsFor(items: readonly ItemId[], opts: { luckyColor?: number; l
       case 'bomber': m.bombRadiusMul = 1.5; break;
       case 'quickDraw': m.shotSpeedMul = 1.25; break;
       case 'rainbow': m.wildEvery = 15; break;
-      case 'scout': m.scout = true; break;
+      case 'brakes': m.brakeMul = 0.7; break;
       case 'luckyColor': m.luckyColor = opts.luckyColor ?? 0; break;
       case 'comboKing': m.comboCoinMul = 2; break;
       case 'daredevil': m.dangerCoinMul = 2; break;
